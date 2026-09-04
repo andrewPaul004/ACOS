@@ -1,0 +1,75 @@
+# ACOS S1A local development environment.
+#
+# NON-PRODUCTION. These credentials are local-only development values, deliberately
+# committed so the environment is reproducible from a clean clone. No real vendor
+# credential, no real money and no production identity exists anywhere in this repo.
+#
+# Two containers are provided:
+#
+#   control  — the S1A money-path substrate. Every exposure-ledger test runs here.
+#   audit    — used only by the durable-execution spike, to hold a second physical
+#              database so a cross-database claim can be tested rather than assumed.
+#
+# `phase2-v1.3-implementation-brief.md §4` requires the production audit plane to be a
+# separately provisioned account on a separate provider. Two local containers are NOT
+# that, and nothing in S1A may be read as satisfying it. They are two Postgres servers
+# on one machine, and that is all they are.
+
+services:
+  control:
+    image: postgres:16.9-alpine
+    container_name: acos-s1a-control
+    environment:
+      POSTGRES_USER: acos
+      POSTGRES_PASSWORD: acos_local_dev
+      POSTGRES_DB: acos_control
+      # Deterministic clock semantics for window-instance keying. `24 §3.1` evaluates
+      # instances "in the company timezone on the database clock"; the company timezone
+      # is a column, so the server itself is pinned to UTC and never contributes one.
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      # Targeted interleaving needs a transaction to be able to sit at a barrier for
+      # longer than a default deadlock check would tolerate, and needs lock waits to
+      # be visible rather than silently timing out.
+      - -c
+      - deadlock_timeout=200ms
+      - -c
+      - log_lock_waits=on
+      - -c
+      - max_connections=100
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+    ports:
+      - '55432:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U acos -d acos_control']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  audit:
+    image: postgres:16.9-alpine
+    container_name: acos-s1a-audit
+    environment:
+      POSTGRES_USER: acos
+      POSTGRES_PASSWORD: acos_local_dev
+      POSTGRES_DB: acos_audit
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - '55433:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U acos -d acos_audit']
+      interval: 2s
+      timeout: 3s
+      retries: 30

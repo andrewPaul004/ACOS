@@ -1,0 +1,49 @@
+==============================================================================
+ACOS v1.2 — INDEPENDENT RECOMPUTATION (I7 reference oracle)
+==============================================================================
+
+--- Stage-2 fixture, MIE basis = p50 ---
+  28-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=120.00  MAL_total(month)=602.40
+  29-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=120.00  MAL_total(month)=602.40
+  30-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=120.00  MAL_total(month)=602.40
+  31-day month:  MAL_monetary(month)=300.00  Standing(month)=186.00  MIE_cost(month)=120.00  MAL_total(month)=606.00
+  day horizon:   MAL_monetary(day)=62.50  Standing(day)=12.00  MIE_cost(day)=105.00  MAL_total(day)=179.50
+  30 x MAL_total(day) = 5385.00   vs MAL_total(month) = 606.00
+
+--- Stage-2 fixture, MIE basis = p95 ---
+  28-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=270.00  MAL_total(month)=752.40
+  29-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=270.00  MAL_total(month)=752.40
+  30-day month:  MAL_monetary(month)=300.00  Standing(month)=182.40  MIE_cost(month)=270.00  MAL_total(month)=752.40
+  31-day month:  MAL_monetary(month)=300.00  Standing(month)=186.00  MIE_cost(month)=270.00  MAL_total(month)=756.00
+  day horizon:   MAL_monetary(day)=62.50  Standing(day)=12.00  MIE_cost(day)=255.00  MAL_total(day)=329.50
+  30 x MAL_total(day) = 9885.00   vs MAL_total(month) = 756.00
+
+--- MAL_monetary per-window detail (month) ---
+  W_MONTH_CREDIT         grant-sum=50.00  window.max_monetary=50.00  -> 50.00   
+  W_MONTH_REFUND         grant-sum=250.00  window.max_monetary=250.00  -> 250.00   
+
+--- Reachability (brute force, honouring every window) ---
+  28-day month:
+    refund.create            day=2 month=10 -> realisable n=10  value=250.00
+    goodwill.credit.issue    day=1 month=4 -> realisable n=4  value=50.00
+    realisable monetary total = 300.00
+  31-day month:
+    refund.create            day=2 month=10 -> realisable n=10  value=250.00
+    goodwill.credit.issue    day=1 month=4 -> realisable n=4  value=50.00
+    realisable monetary total = 300.00
+
+--- Composition fixture F2 (non-degenerate) ---
+  28-day month: MAL_monetary=480.00  Standing=334.40  MAL_total(excl. MIE)=814.40
+  30-day month: MAL_monetary=480.00  Standing=334.40  MAL_total(excl. MIE)=814.40
+  31-day month: MAL_monetary=480.00  Standing=341.00  MAL_total(excl. MIE)=821.00
+    F2_W_MONTH_SHARED        grant-sum=510.00  cap=300.00  -> 300.00  [WINDOW CAP BINDS]
+    F2_W_MONTH_UNBOUNDED     grant-sum=180.00  cap=UNBOUNDED  -> 180.00  [GRANT SUM BINDS]
+
+--- min() convention exercised in both directions ---
+  min(UNBOUNDED, 250.00) = 250.00
+  min(250.00, 250.00)    = 250.00
+  min(300.00, 410.00)    = 300.00   [cap binds]
+  min(300.00, 160.00)    = 160.00   [grant binds]
+
+--- Realisable cash line (LIM-10) ---
+  MAL_total(month) p95 = 756.00  + cost ceilings 150.00  = 906.00

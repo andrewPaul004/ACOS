@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant C as Customer
+    participant IN as Ingress (Z1)
+    participant Q as Quarantine (Z4)
+    participant TR as Triage worker (Z3)
+    participant R as Router (Z1, deterministic)
+    participant RE as Refund engine (Z1, deterministic)
+    participant EG as Effect Gateway
+    participant PE as Policy engine
+    participant EX as Exposure ledger
+    participant AD as Commerce adapter (Z2)
+    participant UG as Utterance Gate
+    participant AU as Audit store
+
+    C->>IN: message
+    IN->>Q: raw text, isolated context
+    Q->>IN: Claim{intent=return, order_ref, stated_reason} [CLAIM grade]
+    IN->>TR: assembled context (case-scoped)
+    TR->>R: classification + structured return claim
+    Note over R: deterministic: RED class? → escalate.<br/>Otherwise map reason → eligibility rule
+    R->>RE: eligibility verdict + order_id
+    Note over RE: amount computed from the order record.<br/>No model in this step.
+    RE->>EG: EffectProposal{refund, order_id, amount, instrument=original}
+    EG->>PE: principal + proposal + state fetched by PE
+    PE-->>EG: PERMIT (amount ≤ cap, order exists, instrument matches, reason ∈ enum)
+    EG->>EX: reserve(amount) — atomic with authorisation
+    EG->>AU: authorization decision + gate_class=UNGATED_LOGGED
+    EG->>AD: refundCreate(idempotency_key)
+    AD-->>EG: 200
+    EG->>AU: effect ATTEMPTING→ADAPTER_OK
+    EG->>UG: notify_customer(template=refund_issued, slots from order record)
+    UG->>EG: EffectProposal{email, template_id, no free text}
+    EG->>AD: send
+    Note over EG: verification scheduled
+    EG-->>AU: on settlement reconciliation → VERIFIED, reservation → realised

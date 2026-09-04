@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant S as Scheduler
+    participant D as Discovery task (t0)
+    participant Q as Quarantine
+    participant EV as Evidence Store
+    participant E as Evaluation task (t1)
+    participant DR as Decision Registry
+    participant OW as Owner
+
+    S->>D: market_scan contract, budget $X, N sources
+    D->>Q: fetch requests (URLs)
+    Q->>EV: EvidenceItems + Claims [CLAIM grade, provenance, tier, access_status]
+    D->>EV: structured findings citing item ids
+    Note over D: discovery reasoning trace is stored<br/>but is NOT in the evaluation context
+    S->>E: evaluation contract at t1, context = EV claims only
+    E->>DR: scored assessment + dissent if any
+    DR->>DR: deterministic corroboration gate (§24 13)
+    alt corroboration + coverage sufficient AND exposure below threshold
+      DR->>DR: DECISION recorded, evidence set frozen by hash
+    else
+      DR->>OW: escalation with named evidence gap
+    end

@@ -1,0 +1,34 @@
+stateDiagram-v2
+    [*] --> QUEUED: trigger accepted
+    QUEUED --> ASSEMBLING: worker slot free
+    ASSEMBLING --> REASONING: context hashed
+    ASSEMBLING --> FAILED_PRECONDITION: required state missing/STALE
+    REASONING --> VALIDATING: output produced
+    REASONING --> TERMINATED_BUDGET: budget exhausted
+    REASONING --> TERMINATED_TIMEOUT: wall clock
+    VALIDATING --> PROPOSED: schema + citations + grounding OK
+    VALIDATING --> REJECTED_OUTPUT: schema or grounding fail
+    PROPOSED --> AUTHORIZING: effect proposed
+    PROPOSED --> COMPLETED: no effect (internal artifact only)
+    AUTHORIZING --> AWAITING_APPROVAL: REQUIRE_APPROVAL
+    AUTHORIZING --> DENIED: policy deny
+    AUTHORIZING --> EXECUTING: permit + reservation held
+    AWAITING_APPROVAL --> EXECUTING: approved (proposal hash matches)
+    AWAITING_APPROVAL --> DENIED: rejected or expired
+    EXECUTING --> VERIFYING: adapter returned
+    EXECUTING --> ATTEMPT_UNRESOLVED: timeout / ambiguous
+    ATTEMPT_UNRESOLVED --> VERIFYING: reconciler resolved
+    ATTEMPT_UNRESOLVED --> INCIDENT: unresolved past SLA
+    VERIFYING --> COMPLETED: external state confirms
+    VERIFYING --> COMPENSATING: mismatch, compensator exists
+    VERIFYING --> INCIDENT: mismatch, no compensator
+    COMPENSATING --> COMPLETED: compensated
+    COMPENSATING --> INCIDENT: compensation failed
+    REJECTED_OUTPUT --> QUEUED: retry within attempt cap
+    REJECTED_OUTPUT --> INCIDENT: attempt cap reached
+    DENIED --> COMPLETED: recorded, no effect
+    FAILED_PRECONDITION --> INCIDENT
+    TERMINATED_BUDGET --> COMPLETED: partial output flagged
+    TERMINATED_TIMEOUT --> INCIDENT
+    INCIDENT --> [*]
+    COMPLETED --> [*]

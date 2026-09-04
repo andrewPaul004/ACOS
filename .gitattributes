@@ -1,0 +1,11 @@
+# Normalise line endings for everything this repository authors.
+* text=auto eol=lf
+
+# The architecture package is an IMMUTABLE INPUT. It must round-trip byte-identically
+# against _input/acos-phase2-architecture-v1.3.1.zip, so git performs no line-ending
+# conversion on it in either direction. A checkout on a machine with core.autocrlf=true
+# would otherwise rewrite every file in it and break that property.
+docs/architecture/** -text
+
+_input/*.zip binary
+package-lock.json -diff

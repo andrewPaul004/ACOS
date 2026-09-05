@@ -337,3 +337,70 @@ describe('reversed acquisition order DOES deadlock — the negative control', ()
     }
   });
 });
+
+describe('the dedupe key separator is a SOURCE ESCAPE, not a raw byte', () => {
+  it('lockOrder.ts contains zero physical NUL bytes', async () => {
+    // The separator must be written `\0` in the TypeScript source. A raw 0x00 byte in a
+    // .ts file makes Git classify the file as binary: `git diff` degrades to "Bin N -> M
+    // bytes", so every future change to THE one lock-order module becomes unreviewable.
+    // The runtime value is identical either way; only the on-disk encoding differs.
+    const path = join(process.cwd(), 'src', 'kernel', 'exposure', 'lockOrder.ts');
+    const bytes = await readFile(path);
+
+    const nulOffsets: number[] = [];
+    for (let i = 0; i < bytes.length; i += 1) {
+      if (bytes[i] === 0x00) nulOffsets.push(i);
+    }
+
+    expect(nulOffsets, `raw 0x00 bytes at offsets ${nulOffsets.join(', ')}`).toEqual([]);
+    // ...and the escape is still there, so this test cannot pass by the separator having
+    // been deleted outright.
+    expect(bytes.toString('utf8')).toContain(
+      '`${instance.windowId}\\0${instance.windowInstanceKey}`',
+    );
+  });
+
+  it('duplicate window instances are still locked exactly once', async () => {
+    // The behavioural half: whatever the separator's encoding, dedupe must collapse
+    // repeated instances so a single transaction does not re-lock a row it already holds.
+    const client = await harness.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      const observed: string[] = [];
+      const originalQuery = client.query.bind(client);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client as any).query = (...args: unknown[]) => {
+        const text = typeof args[0] === 'string' ? args[0] : '';
+        if (text.includes('FOR UPDATE') && text.includes('window_balance')) {
+          const params = args[1] as unknown[] | undefined;
+          observed.push(String(params?.[1]));
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (originalQuery as any)(...args);
+      };
+
+      const day = { windowId: 'W_DAY_REFUND', windowInstanceKey: instanceOf('W_DAY_REFUND', AT).key };
+      const month = {
+        windowId: 'W_MONTH_REFUND',
+        windowInstanceKey: instanceOf('W_MONTH_REFUND', AT).key,
+      };
+
+      const locked = await acquireMoneyPathLocks(client, {
+        companyId: COMPANY_ID,
+        // Each instance supplied three times, interleaved and out of order.
+        windowInstances: [month, day, month, day, day, month],
+        includeStandingRows: false,
+        includeJournalCounter: false,
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client as any).query = originalQuery;
+      await client.query('ROLLBACK');
+
+      expect(observed).toEqual(['W_DAY_REFUND', 'W_MONTH_REFUND']);
+      expect(locked.map((row) => row.windowId)).toEqual(['W_DAY_REFUND', 'W_MONTH_REFUND']);
+    } finally {
+      client.release();
+    }
+  });
+});

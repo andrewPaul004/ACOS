@@ -32,12 +32,77 @@ export interface ClusterSpec {
 
 const SUPERUSER = 'acos';
 const PASSWORD = 'acos_local_dev';
+/** The database `CREATE DATABASE` is issued from. Never itself created. */
+const MAINTENANCE_DATABASE = 'postgres';
 
 export const CONTROL: ClusterSpec = { name: 'control', port: 55432, database: 'acos_control' };
 export const AUDIT: ClusterSpec = { name: 'audit', port: 55433, database: 'acos_audit' };
 
+/**
+ * DBOS's SYSTEM database — S1A-H1.
+ *
+ * Candidate A of the durable-execution spike keeps workflow status and step outputs in a
+ * database that is NOT the application database. `docker compose up` creates
+ * `acos_control` and `acos_audit` and nothing else, so before this repair the spike
+ * derived a URL naming a database that had never been created and five candidate-A tests
+ * failed with `3D000: database "acos_dbos_sys" does not exist`. The original S1A run was
+ * only green because the database had been created by hand.
+ *
+ * It is provisioned here, on the audit SERVER, because that server is a convenient second
+ * physical PostgreSQL and for no other reason. It is NOT the architecture's audit plane
+ * (`phase2-v1.3-implementation-brief.md §4`), and `docker-compose.yml` says so.
+ */
+export const DBOS_SYSTEM_DATABASE = 'acos_dbos_sys';
+
+/**
+ * Every database name this harness is permitted to create.
+ *
+ * PostgreSQL does not accept a parameter in `CREATE DATABASE`, so the name is
+ * interpolated. This set is the reason that is safe: a name reaching `ensureDatabase` is
+ * checked against these static, in-repository constants before it is ever interpolated,
+ * so a name arriving from an environment variable — including one carrying a URL a
+ * developer edited — cannot become DDL.
+ */
+const TRUSTED_DATABASES: ReadonlySet<string> = new Set([
+  CONTROL.database,
+  AUDIT.database,
+  DBOS_SYSTEM_DATABASE,
+]);
+
 export function urlFor(spec: ClusterSpec): string {
   return `postgres://${SUPERUSER}:${PASSWORD}@127.0.0.1:${spec.port}/${spec.database}`;
+}
+
+/**
+ * Rewrite a PostgreSQL URL to name a different database on the SAME server, preserving
+ * host, port, credentials and query parameters.
+ *
+ * Used for two things: deriving the DBOS system URL from the configured audit URL, and
+ * deriving the maintenance (`postgres`) URL that `CREATE DATABASE` has to be issued from.
+ * Both providers go through this one function, so the external/Docker path and the local
+ * PostgreSQL-binary path cannot disagree about where the system database lives.
+ */
+export function withDatabase(url: string, database: string): string {
+  const parsed = new URL(url);
+  parsed.pathname = `/${database}`;
+  return parsed.toString();
+}
+
+/** The DBOS system database URL, on the same server as the given audit URL. */
+export function dbosSystemUrlFor(auditUrl: string): string {
+  return withDatabase(auditUrl, DBOS_SYSTEM_DATABASE);
+}
+
+/**
+ * Provision the DBOS system database — S1A-H1's actual repair.
+ *
+ * Idempotent, and exported so the regression test can assert both that it is idempotent
+ * and that the prerequisite it establishes is really present. Called by `provision()`
+ * on BOTH providers.
+ */
+export async function ensureDbosSystemDatabase(auditUrl: string): Promise<string> {
+  await ensureDatabase(auditUrl, DBOS_SYSTEM_DATABASE);
+  return dbosSystemUrlFor(auditUrl);
 }
 
 function binRoot(): string {
@@ -176,29 +241,59 @@ function startCluster(spec: ClusterSpec): void {
 }
 
 /**
- * Create the cluster's database if it is absent, over a `pg` connection to the
- * maintenance database.
+ * Create `database` on the server `serverUrl` addresses, if it is absent.
  *
  * Deliberately not `psql`/`createdb`: the CLI adds an argument-parsing surface with no
  * benefit here, and `pg` is already a dependency of the thing under test. An identifier
  * is interpolated rather than bound because PostgreSQL does not accept a parameter in
- * `CREATE DATABASE`; the name is a constant in this file, never external input, and it
- * is validated before use.
+ * `CREATE DATABASE`. The name is therefore checked twice before it reaches the statement:
+ * it must be a member of TRUSTED_DATABASES — a static set of in-repository constants —
+ * and it must match a conservative identifier pattern. A name arriving from an
+ * environment variable cannot satisfy the first check unless it is already one of ours.
+ *
+ * `serverUrl` supplies only host, port and credentials; the database it names is
+ * replaced with the maintenance database. That is what makes this generic across the
+ * Docker/external provider (where the URL comes from the environment) and the local
+ * PostgreSQL-binary provider (where this file builds it).
  */
-async function ensureDatabase(spec: ClusterSpec): Promise<void> {
-  if (!/^[a-z_][a-z0-9_]*$/.test(spec.database)) {
-    throw new Error(`refusing to interpolate database name ${JSON.stringify(spec.database)}`);
+export async function ensureDatabase(serverUrl: string, database: string): Promise<void> {
+  if (!TRUSTED_DATABASES.has(database)) {
+    throw new Error(
+      `refusing to CREATE DATABASE ${JSON.stringify(database)}: not a trusted S1A ` +
+        `database name. Permitted: ${[...TRUSTED_DATABASES].join(', ')}.`,
+    );
   }
-  const adminUrl = `postgres://${SUPERUSER}:${PASSWORD}@127.0.0.1:${spec.port}/postgres`;
+  if (!/^[a-z_][a-z0-9_]*$/.test(database)) {
+    throw new Error(`refusing to interpolate database name ${JSON.stringify(database)}`);
+  }
+
+  const adminUrl = withDatabase(serverUrl, MAINTENANCE_DATABASE);
   const { default: pg } = await import('pg');
   const client = new pg.Client({ connectionString: adminUrl, connectionTimeoutMillis: 15_000 });
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    const redacted = adminUrl.replace(/:[^:@]*@/, ':***@');
+    throw new Error(
+      `cannot reach the PostgreSQL server at ${redacted} to provision "${database}". ` +
+        `Start the documented environment with \`npm run db:up\`.\n` +
+        `  cause: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   try {
     const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [
-      spec.database,
+      database,
     ]);
     if (existing.rowCount === 0) {
-      await client.query(`CREATE DATABASE ${spec.database}`);
+      try {
+        await client.query(`CREATE DATABASE ${database}`);
+      } catch (error) {
+        // 42P04 duplicate_database — another process created it between the check and
+        // the statement. The postcondition this function promises is "it exists", and it
+        // does.
+        const code = (error as { code?: string } | null)?.code;
+        if (code !== '42P04') throw error;
+      }
     }
   } finally {
     await client.end();
@@ -218,6 +313,16 @@ export interface ProvisionResult {
   readonly provider: 'external' | 'local';
   readonly controlUrl: string;
   readonly auditUrl: string;
+  /**
+   * The DBOS SYSTEM database URL — S1A-H1.
+   *
+   * Returned EXPLICITLY rather than left to the consumer to derive. The original defect
+   * was exactly that division of labour: the spike derived
+   * `ACOS_DBOS_SYS_PG_URL` from the audit URL by string substitution, so it depended on
+   * a database that provisioning did not know existed and had never created. The
+   * infrastructure that creates it is now the thing that names it.
+   */
+  readonly dbosSystemUrl: string;
   readonly serverVersion: string;
 }
 
@@ -239,10 +344,16 @@ export async function provision(): Promise<ProvisionResult> {
   const externalAudit = process.env['ACOS_AUDIT_PG_URL'] ?? urlFor(AUDIT);
 
   if (requested !== 'local' && (await isReachable(externalControl))) {
+    // S1A-H1. `docker compose up` creates acos_control and acos_audit. It does NOT create
+    // the DBOS system database, and candidate A of the spike cannot start without it.
+    // Provisioning it here is what makes `db:down; db:up; npm test` reproducible from a
+    // clean environment with no manual SQL.
+    await ensureDbosSystemDatabase(externalAudit);
     return {
       provider: 'external',
       controlUrl: externalControl,
       auditUrl: externalAudit,
+      dbosSystemUrl: dbosSystemUrlFor(externalAudit),
       serverVersion: await serverVersionOf(externalControl),
     };
   }
@@ -273,14 +384,20 @@ export async function provision(): Promise<ProvisionResult> {
   for (const spec of [CONTROL, AUDIT]) {
     initCluster(spec);
     startCluster(spec);
-    await ensureDatabase(spec);
+    await ensureDatabase(urlFor(spec), spec.database);
   }
+
+  // S1A-H1, on the local-binary provider too. The same helper, the same server, the same
+  // guarantee: no candidate-A test ever connects to a database that does not exist.
+  const auditUrl = urlFor(AUDIT);
+  await ensureDbosSystemDatabase(auditUrl);
 
   const controlUrl = urlFor(CONTROL);
   return {
     provider: 'local',
     controlUrl,
-    auditUrl: urlFor(AUDIT),
+    auditUrl,
+    dbosSystemUrl: dbosSystemUrlFor(auditUrl),
     serverVersion: await serverVersionOf(controlUrl),
   };
 }

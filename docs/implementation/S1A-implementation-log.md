@@ -4,6 +4,22 @@ Choices, surprises, and the architecture references behind them. Written as the 
 happened; nothing here is a summary of the result (`S1A-result.md`) or of the contract
 (`S1A-contract.md`).
 
+**Sections 1–15 are the original S1A log.** Sections 16–19 were added during **S1A.1**, the
+narrow local hardening pass that followed the owner's independent review of the repository.
+**Nothing in 1–15 was rewritten and no defect recorded there was removed**; §7 and §8 each
+carry an **appended amendment note** where S1A.1 found the original wording too generous,
+and the original wording is still there above it. Two of the S1A.1 findings are owner clarifications rather than repairs and
+live in `S1A-owner-clarifications.md`; one is a scope narrowing and lives in
+`ADR-IMP-002 §7`.
+
+| ID | Finding | Where |
+|---|---|---|
+| **S1A-H1** | DBOS spike clean-environment bootstrap defect | §16 |
+| **S1A-H2** | `40001` is retryable; `40P01` is pass-revoking | §17 |
+| **S1A-H3** | The irrecoverable standing term is explicitly zero | `S1A-owner-clarifications.md §2` |
+| **S1A-H4** | Durable journal selected for in-database checkpointing, not external exactly-once | `ADR-IMP-002 §7` |
+| — | The money-path lock order, resolving `30 §5.2`'s internal contradiction | `S1A-owner-clarifications.md §1` |
+
 ---
 
 ## 1. The v1.3.1 precedence note, recorded as required
@@ -154,6 +170,16 @@ consistent, and the reconciliation is written out in `S1A-contract.md §7.2`:
 `30 §5.2`'s *"3. Everything else"* is the slot K5 names `standing_window_exposure` into,
 and K5 keeps the counter last, which `30 §5.2` already requires.
 
+**AMENDED BY S1A.1 — this section understated the problem.** Calling the two passages
+simply *"consistent"* glossed over the fact that **`30 §5.2` contradicts itself**: its
+numbered list places `journal_counter` at position **2** with *"everything else"* at
+**3**, and the sentence printed immediately beneath it requires the counter to be
+**last**. Both cannot be followed as printed. That contradiction **is present in the
+architecture**, and S1A.1 does not claim otherwise. `24 §3` K5 and registry `§1.2` `I3`'s
+enforcement column both resolve it the same way, and the resolution is the order S1A
+already implemented and tested. Recorded as an owner clarification in
+`S1A-owner-clarifications.md §1`. **No implemented behaviour changes.**
+
 **One implementation tie-break was added and is not an architecture claim.** `30 §5.2`
 orders by `window_id`. A transaction touching **two instances of one window** — which
 VC-S5's cross-boundary case does — has no order under that rule alone. `lockOrder.ts`
@@ -218,6 +244,13 @@ jitter. With it, all 12 concurrent commitments land and the arithmetic is exact
 **Recorded as an obligation for S1, not resolved here.** The retry's bound, its escalation
 on exhaustion, and its interaction with `I32`'s reservation TTL are S1 work. `26 §7`'s step
 R says nothing about retry, and nothing in S1A required it to.
+
+**AMENDED BY S1A.1 — §17.** As originally written, `retry.ts` treated `40P01` as retryable
+alongside `40001`, and its comment claimed the deadlock count was "surfaced in the
+outcome". **It was not** — `RetryOutcome` has one counter and it does not distinguish the
+two SQLSTATEs. Since S1A.1 a `40P01` is not retried at all, so there is no deadlock count
+to surface and no claim that there is. `40001` retries exactly as measured above; nothing
+in this section's measurements changes.
 
 **A deliberate consequence for the concurrency harness.** `tests/support/barrier.ts` had to
 be made retry-aware: a barrier point that has been released once is left **open**, so a
@@ -344,3 +377,226 @@ were left alone:
   dispatch and `I55`'s sweep are not built.
 - **The expiry sweep.** `I23` needs one. S1A drives status transitions from tests so that
   `I62` and the boundary rule can be exercised; it does not schedule anything.
+
+---
+
+# S1A.1 — the owner review repairs
+
+Everything above is the original S1A log. Everything below was added after the owner's
+independent review of the actual repository. **S1A's core money-path substrate was accepted
+in shape; S1B is not authorised.** No architecture artefact was modified, no authority
+quantity changed, and no historical record was rewritten.
+
+---
+
+## 16. S1A-H1 — DBOS spike clean-environment bootstrap defect
+
+**A TEST-HARNESS DEFECT. Not a money-path defect and not a DBOS semantic failure.**
+
+**Reproduced independently by the owner**, and reproducible from a clean Docker
+environment. `docker compose up` creates:
+
+- `acos_control` on the control server, and
+- `acos_audit` on the audit server.
+
+It creates nothing else. But `spikes/durable-execution/spike.test.ts` derived
+
+```
+ACOS_DBOS_SYS_PG_URL   from   ACOS_AUDIT_PG_URL
+```
+
+by string substitution, and expected the database `acos_dbos_sys` to **already exist** on
+the audit PostgreSQL server. It does not. The result was **five failing DBOS spike tests**:
+
+```
+3D000: database "acos_dbos_sys" does not exist
+```
+
+**The owner created that database by hand in `acos-s1a-audit`, after which all 139 tests
+passed.** That is the fact this section exists to preserve: **the original S1A run required
+a manual `CREATE DATABASE` and its result did not say so.** The repository was not
+reproducible from a clean clone, and a green suite on one machine was not evidence of a
+green suite anywhere.
+
+### The repair
+
+**No manual database creation is required, on either provider.**
+
+`tests/support/localPostgres.ts`:
+
+- `DBOS_SYSTEM_DATABASE = 'acos_dbos_sys'` is declared as a constant, alongside
+  `CONTROL.database` and `AUDIT.database`, in a `TRUSTED_DATABASES` set.
+- `withDatabase(url, database)` rewrites a PostgreSQL URL to name a different database on
+  the **same server**, preserving host, port, credentials and query parameters. Both the
+  system-database URL and the maintenance-database URL go through it, so the two providers
+  cannot disagree about where the system database lives.
+- `ensureDatabase(serverUrl, database)` connects to the **maintenance database**
+  (`postgres`) over `pg`, checks `pg_database`, and issues `CREATE DATABASE` only if the
+  row is absent. It tolerates `42P04 duplicate_database` if it loses a race, so the
+  postcondition it promises — *the database exists* — holds under concurrency.
+- **It does not shell out to `psql` or `createdb`.** The CLI would add an argument-parsing
+  surface for no benefit, and `pg` is already a dependency of the thing under test.
+- The interpolated identifier is checked **twice** before it reaches the statement: it must
+  be a member of `TRUSTED_DATABASES` — static, in-repository constants — and it must match
+  `^[a-z_][a-z0-9_]*$`. A name arriving from an edited environment variable cannot become
+  DDL.
+- `ensureDbosSystemDatabase(auditUrl)` wraps that for the system database and is called by
+  `provision()` on **both** the Docker/external provider and the local
+  PostgreSQL-binary provider.
+
+**Provisioning now NAMES what it CREATES.** `ProvisionResult` gained `dbosSystemUrl`, and
+`tests/support/globalSetup.ts` publishes it as `ACOS_DBOS_SYS_PG_URL`. The spike **reads**
+that variable and throws a directed error if it is unset. It no longer derives
+infrastructure that provisioning does not know exists — which was the actual defect, more
+than the missing `CREATE DATABASE` was.
+
+### The regression assertion
+
+`tests/integration/harness/dbos-system-database.test.ts`, six assertions:
+
+1. `ACOS_DBOS_SYS_PG_URL` is published and names `acos_dbos_sys`.
+2. It is a **different database on the same server** as the audit URL.
+3. **The prerequisite itself** — connecting to it succeeds and `current_database()` is
+   `acos_dbos_sys`. This is the exact connection that raised `3D000` before the repair.
+4. `pg_database` on the audit server lists it.
+5. Provisioning is **idempotent** and returns the same URL twice.
+6. An untrusted database name is **refused** rather than interpolated.
+
+### The clean reproduction
+
+```
+npm run db:down   →   npm run db:up   →   npm test
+```
+
+with **no manual SQL**. The two containers use `tmpfs` for their data directories and
+`db:down` passes `-v`, so `db:down` genuinely destroys the manually created database and
+the run that follows is a real clean-environment run.
+
+**The two local containers are still not the audit plane.** `docker-compose.yml` says so,
+§12 says so, and hosting the DBOS system database on the audit *server* does not change it.
+`phase2-v1.3-implementation-brief.md §4` requires a separately provisioned account on a
+separate provider, and nothing in S1A or S1A.1 satisfies that.
+
+---
+
+## 17. S1A-H2 — `40001` is retryable; `40P01` is pass-revoking
+
+`src/kernel/exposure/retry.ts` originally treated **both**
+`40001 SERIALIZATION_FAILURE` and `40P01 DEADLOCK_DETECTED` as retryable, with a comment
+asserting that a retried deadlock's count was *"surfaced in the outcome"*.
+
+**Two things were wrong with that, and the second is worse than the first.**
+
+1. **The count was not surfaced.** `RetryOutcome` carries one `retries` counter and does
+   not distinguish the two SQLSTATEs. A retried deadlock was indistinguishable from
+   ordinary contention.
+2. **A deadlock is not a condition to wait out.** `40001` and `40P01` are not two flavours
+   of one event:
+
+| SQLSTATE | What it means on the ACOS money path | Handling |
+|---|---|---|
+| `40001` | **Expected `SERIALIZABLE` contention** on a correctly ordered path. §8 measured that it is required rather than optional, and registry `§1.1` `I42` already anticipates the retry (*"a serialisation-failure retry regenerates the same key (SR-A4)"*). | **Bounded retry** |
+| `40P01` | **The declared money-path lock order has failed, or an undeclared lock-taking path exists.** `30 §5.2` declares the order once; `24 §3` K5: *"there is one lock order in the system and both writers of the money row obey it"*; `lockOrder.ts` is the single acquisition site. A deadlock contradicts that claim. It is an invariant/implementation defect. | **Propagate immediately** |
+
+Retrying a deadlock is worse than failing on one: it would usually succeed on the second
+attempt and so would **erase the only signal** that the ordering claim the whole deadlock
+proof rests on is no longer true.
+
+### The change
+
+`isRetryable()` now returns `false` for `40P01` before considering anything else, and
+`true` only for `40001`. `40P01` is **not caught, not converted and not hidden** — in
+particular it is never wrapped in `SerialisationRetriesExhausted`, which would have
+replaced the SQLSTATE with a plausible-looking retry-exhaustion error. The exclusion is
+written as an explicit branch rather than an omission, so a later edit has to argue with a
+comment instead of quietly "fixing" a gap.
+
+**No production escalation system was chosen.** That belongs to the next S1 increment. The
+required S1A behaviour is to fail immediately, and that is all this does.
+
+### The tests
+
+`tests/integration/exposure/retry-deadlock-not-retried.test.ts`:
+
+| Test | Asserts |
+|---|---|
+| A `40P01` raised by PostgreSQL inside the work function | the work ran **exactly once** against `maxAttempts: 10`; the `40P01` reached the caller **as itself**; it is **not** a `SerialisationRetriesExhausted` |
+| A `40001` raised twice then succeeding | **retried**, `retries === 2`, work ran 3 times — so the test above is discriminating rather than proving the helper retries nothing |
+| **A real reversed-order deadlock driven THROUGH the helper**, two real backends held at the dangerous boundary by `tests/support/barrier.ts` | exactly one real `40P01` occurred (else the test proves nothing); the helper attempted its work **exactly once** whichever backend PostgreSQL chose as victim; if the helper's side was the victim, the `40P01` propagated unchanged |
+
+**Retained, unmodified:** `lock-order.test.ts`'s real reversed-order deadlock negative
+control, its zero-`40P01`-under-the-declared-order assertion with no retry in the path, and
+its `SERIALIZABLE` contention test proving `40001` retries succeed and that twelve `$0.01`
+commitments still sum to exactly `$0.12`.
+
+### Documentation corrected
+
+Any statement that deadlock retry counts are surfaced is now wrong twice over — they were
+never surfaced, and deadlocks are no longer retried. `retry.ts`'s comment is rewritten and
+§8 above carries an amendment note. No other document made the claim.
+
+---
+
+## 18. The two owner clarifications, and where they live
+
+Two S1A.1 findings are **owner implementation clarifications**, not repairs, and neither
+changes implemented behaviour. They are recorded in
+`docs/implementation/S1A-owner-clarifications.md` rather than here because they are
+readings the owner issued, not choices this implementation made:
+
+- **The money-path lock order.** `30 §5.2` prints a numbered list placing
+  `journal_counter` at position 2 with *"everything else"* at 3, and then states in the
+  next sentence that *"the counter is taken last"*. **That is a literal contradiction and
+  it is present in the architecture.** `24 §3` K5 and registry `I3`'s enforcement column
+  both resolve it the same way, and the clarification records the order S1A already
+  implemented and tested: `window_balance` → `standing_window_exposure` →
+  `journal_counter` **last** → other non-money-path state.
+- **S1A-H3, the irrecoverable standing term.** `I3` describes four conceptual terms per
+  ledger; K5's authoritative `window_balance` schema declares three for the irrecoverable
+  ledger and deliberately no `standing_irrecoverable`. The clarification: that term is
+  **definitionally `0`** under the current `StandingAuthorization` model, so the implemented
+  guard has three stored operands plus an implicit zero. `standing_irrecoverable` is **not**
+  added and the guard arithmetic is **not** changed;
+  `tests/integration/exposure/irrecoverable-standing-zero.test.ts` makes the implicit zero
+  explicit and mechanical so a future `StandingAuthorization` type carrying
+  irrecoverable-unit forward exposure cannot silently reuse this schema.
+
+**S1A-H4** — that the durable journal was selected for in-database checkpointing and not
+for external exactly-once — is a narrowing of a decision record and lives in
+`ADR-IMP-002 §7`, with its negative control in
+`spikes/durable-execution/external-step-race.test.ts`.
+
+---
+
+## 19. An incidental finding S1A.1 did NOT act on: a raw NUL byte in `lockOrder.ts`
+
+Found while reviewing the S1A.1 diffs, reported rather than repaired because it is outside
+the four authorised findings.
+
+`src/kernel/exposure/lockOrder.ts`'s `dedupe()` builds its key with a **literal NUL
+character** as the separator:
+
+```
+const key = `${instance.windowId}<NUL>${instance.windowInstanceKey}`;
+```
+
+The technique is sound — `U+0000` cannot occur in a window id or an instance key, so it is
+an unambiguous separator, and it is a standard way to build a composite map key.
+
+**The problem is the byte, not the idea.** The NUL is written as a raw control character
+rather than as the two-character escape `\0`, which makes **git classify the file as binary**. A change
+to this file therefore shows as `Bin 8277 -> 8862 bytes` instead of a reviewable diff. That
+matters here specifically: `lockOrder.ts` is the single money-path lock-acquisition site,
+and it is the one file in `src/` whose changes an owner most needs to be able to read.
+
+**Not changed by S1A.1.** Replacing the raw byte with that escape is byte-identical at
+runtime and would restore diffability, but it is a money-path source edit outside Findings A–E, and the
+S1A.1 mandate is a narrow pass. It is recorded here for the owner to authorise or decline.
+
+The S1A.1 change to this file **is comment-only**, and can be verified as such with:
+
+```
+git diff --text -- src/kernel/exposure/lockOrder.ts
+```
+
+`--text` forces git to diff a file it has classified as binary.

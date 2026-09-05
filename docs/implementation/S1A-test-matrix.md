@@ -3,9 +3,15 @@
 Every test in the S1A suite, and what it does: **PROVES** a property, **ATTACKS** it, or
 **NEGATIVELY CONTROLS** it (deliberately fails, to show the assertion can see the defect).
 
-**Run result: 14 files, 139 tests, all passing, against real PostgreSQL 16.9.**
+**Run result: 18 files, 155 tests, all passing, against real PostgreSQL 16.9.**
 `npm run verify` = typecheck + lint + full suite. Typecheck clean, lint clean at
 `--max-warnings 0`.
+
+**S1A.1, 2026-09-04.** The run above is a **genuine clean-environment run**:
+`npm run db:down` → `npm run db:up` → `npm test`, **with no manual SQL**. The original S1A
+figure was 14 files / 139 tests and required a manual `CREATE DATABASE acos_dbos_sys`; that
+defect is **S1A-H1** and is recorded in `S1A-implementation-log.md §16`. The four files
+S1A.1 adds are §§13–16 below; sections 1–12 are unchanged.
 
 Legend:
 
@@ -247,7 +253,66 @@ recovery.
 
 ---
 
-## 13. Coverage against the S1A mandate
+# S1A.1 — the four files added by the owner review repairs
+
+Sections 1–12 are the original S1A suite and are unchanged. Nothing was removed, weakened
+or renamed.
+
+## 13. `tests/integration/harness/dbos-system-database.test.ts` — 6 tests
+
+**S1A-H1**, the DBOS spike's clean-environment bootstrap prerequisite. A **test-harness**
+regression assertion — not a money-path test.
+
+| # | Test | Kind | Basis |
+|---|---|---|---|
+| 1 | provisioning published `ACOS_DBOS_SYS_PG_URL`, and it names `acos_dbos_sys` | PROVE | log `§16` |
+| 2 | it is a **different database on the same server** as the audit URL | PROVE | ADR-IMP-002 `§4.1` |
+| 3 | **THE PREREQUISITE** — connecting to it succeeds; `current_database()` is `acos_dbos_sys`. The exact connection that raised `3D000` before the repair | PROVE | log `§16` |
+| 4 | `pg_database` on the audit server lists it | PROVE | log `§16` |
+| 5 | provisioning is **idempotent** and returns the same URL twice | PROVE | log `§16` |
+| 6 | an **untrusted** database name is refused rather than interpolated into `CREATE DATABASE` | ATTACK | log `§16` |
+
+## 14. `tests/integration/exposure/retry-deadlock-not-retried.test.ts` — 3 tests
+
+**S1A-H2.** `40001` is retryable; `40P01` is pass-revoking.
+
+| # | Test | Kind | Basis |
+|---|---|---|---|
+| 1 | a PostgreSQL-raised `40P01` reaching `withSerialisationRetry` is attempted **exactly once** and propagates as itself — not wrapped in `SerialisationRetriesExhausted` | PROVE | log `§17` |
+| 2 | a `40001` raised twice then succeeding **is** retried (`retries === 2`, work ran 3×) — so test 1 is discriminating rather than proving the helper retries nothing | PROVE | log `§17`, `I42`/SR-A4 |
+| 3 | a **real reversed-order deadlock driven through the helper**, two real backends held at the boundary by `tests/support/barrier.ts`: exactly one real `40P01`, the helper attempted its work **once** whichever backend PostgreSQL chose as victim | PROVE | log `§17`, registry `I3` test column |
+
+## 15. `tests/integration/exposure/irrecoverable-standing-zero.test.ts` — 5 tests
+
+**S1A-H3.** The irrecoverable ledger's standing term is explicitly `0`. Makes the implicit
+zero mechanical so a future `StandingAuthorization` type cannot silently reuse the schema.
+
+| # | Test | Kind | Basis |
+|---|---|---|---|
+| 1 | `window_balance` declares exactly the three irrecoverable ledger terms and **no** standing one | PROVE | `24 §3` K5 |
+| 2 | `standing_window_exposure`'s column set is exactly its eight columns — **no** irrecoverable quantity, **no** count quantity | PROVE | `24 §3` K5; `I3` operand row |
+| 3 | **every** column in the schema matching `%irrecoverable%` is one of the seven K5 declares, asserted as an exact set | PROVE | clarifications `§2.4` |
+| 4 | the three stored terms may consume the **whole** ceiling (`5 + 4 + 4 = 13` against `W_DAY_MIE`'s `13`) — which is what an implicit zero fourth term MEANS | PROVE | clarifications `§2.2` |
+| 5 | one unit above the ceiling is still refused with `ACS03` **from the trigger** | ATTACK | `24 §3` K5, VC-L2 |
+
+## 16. `spikes/durable-execution/external-step-race.test.ts` — 2 tests
+
+**S1A-H4.** The durable journal is selected for in-database checkpointing, **not** for
+external exactly-once. Both tests apply the SAME barrier-driven race to the two step
+shapes, so the asymmetry is measured rather than argued.
+
+| # | Test | Kind | Basis |
+|---|---|---|---|
+| 1 | two concurrent workers through the generic `runStep` around an unclaimed external effect: **`dispatch = 2`**, both workers `fulfilled`, and the journal holds **exactly one** checkpoint — it reports one dispatch where two happened | **NEG-CTL** | ADR-IMP-002 `§7.2`; `23 §6` B8, `25 §7`, `33 §1.1` |
+| 2 | the same race against `applyLedgerStep`, whose checkpoint is inside the ledger transaction: **exactly one** commit, the loser refused with **`40001`** and **no `40P01`**, `realised = 40.00`, `standing = 60.00`, `nextSeq = 2`, one checkpoint row | PROVE | ADR-IMP-002 `§7.3` |
+
+**The lesson test 1 carries is `raw step journal + unclaimed external step is
+insufficient`, NOT `fix runStep into the production dispatcher`.** The production outbox is
+S1 work and is deliberately not built here.
+
+---
+
+## 17. Coverage against the S1A mandate
 
 | Mandate item | Where | Status |
 |---|---|---|
@@ -259,9 +324,13 @@ recovery.
 | S1A-6 lock order | §9 | done |
 | S1A-7 concurrency, **VC-S8** + mandatory negative control | §6, §11 | done — **EXPECTED FAILURE OBSERVED** |
 | S1A-8 commitment guard, 10 combinations | §3 | done, 16 cases |
-| S1A-9 DBOS vs step journal spike | §12 | done — see ADR-IMP-002 |
+| S1A-9 DBOS vs step journal spike | §12, §16 | done — see ADR-IMP-002, **claim narrowed by S1A-H4** |
+| **S1A.1-H1** harness provisions the DBOS system database | §13 | done — clean-environment run, no manual SQL |
+| **S1A.1-H2** `40001` retried, `40P01` propagated | §14 | done |
+| **S1A.1-H3** irrecoverable standing term explicitly zero | §15 | done — clarification, no behaviour change |
+| **S1A.1-H4** step journal is not external exactly-once | §16 | done — negative control, decision unchanged |
 
-## 14. Verification cases NOT covered, and why
+## 18. Verification cases NOT covered, and why
 
 | Case | Why not in S1A |
 |---|---|

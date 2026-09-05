@@ -64,8 +64,20 @@ beforeAll(async () => {
   // DBOS keeps workflow status and step outputs in a SEPARATE system database. The
   // audit container is reused as a convenient second server; it is NOT the architecture's
   // audit plane and nothing here should be read as provisioning one.
-  sysUrl = (process.env['ACOS_AUDIT_PG_URL'] ?? '').replace(/\/[^/]*$/, '/acos_dbos_sys');
+  //
+  // S1A-H1. This URL is READ from the environment, published by
+  // `tests/support/globalSetup.ts` from `provision()`, which also CREATES the database.
+  // It is deliberately no longer derived here by string substitution from
+  // ACOS_AUDIT_PG_URL: that derivation named a database `docker compose up` never
+  // creates, and the original S1A run passed only because it had been created by hand.
+  sysUrl = process.env['ACOS_DBOS_SYS_PG_URL'] ?? '';
   if (!appUrl) throw new Error('ACOS_CONTROL_PG_URL is not set');
+  if (!sysUrl) {
+    throw new Error(
+      'ACOS_DBOS_SYS_PG_URL is not set; globalSetup did not provision the DBOS system ' +
+        'database. See tests/support/localPostgres.ts (S1A-H1).',
+    );
+  }
 
   pool = createPool({ connectionString: appUrl, max: 8, applicationName: 'acos-spike' });
   admin = await pool.connect();

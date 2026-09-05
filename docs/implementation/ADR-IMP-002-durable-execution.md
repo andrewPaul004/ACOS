@@ -3,6 +3,15 @@
 **Status: ACCEPTED for S1.** Issued during S1A, 2026-09-04, on the evidence of the
 kill-point matrix in `spikes/durable-execution/`.
 
+**Amended 2026-09-04 during S1A.1 — S1A-H4.** The DECISION IS UNCHANGED. What changed is
+the SCOPE OF THE CORRECTNESS CLAIM, narrowed on an owner review finding: this ADR
+previously said the two candidates were *"equally correct"*, which is broader than the
+evidence. The claim it is entitled to is that **both candidates were correct for the S1A
+application-transaction/checkpoint property under test**. The ACOS step journal alone does
+**NOT** provide external-effect exactly-once semantics. §7 states the limitation, names the
+test that demonstrates it, and records why the fix belongs to S1's dispatch outbox rather
+than to this spike.
+
 **This is an IMPLEMENTATION decision.** It exercises the choice `34 ADR-002` left
 explicitly open: *"DBOS Transact (MIT, v2.23.0, 2026-06-01) as primary — **provisional,
 and subject to an S1 spike against an ACOS-owned Postgres step journal on the same
@@ -18,9 +27,17 @@ spike decides."*
 `34 ADR-002`'s reconsider trigger **(e)** is the one that fired: *"the S1 spike shows the
 hand-rolled journal is simpler to attack and equally correct."*
 
-**This is not a rejection of DBOS's correctness.** Both candidates survived every kill
-point with the ledger applied exactly once and no ACOS invariant weakened. The
+**This is not a rejection of DBOS's correctness.** Both candidates were **correct for the
+S1A application-transaction/checkpoint property under test**: at every kill point tested,
+the ledger delta was applied exactly once across crash and recovery, the TB-04 coupling
+survived, `journal_seq` stayed gap-free, and no ACOS invariant was weakened. The
 discriminator is elsewhere, and it is stated precisely in §4.
+
+**The scope of that claim is exactly as narrow as it reads, and §7 states its limit.**
+Neither candidate was tested for — and the selected candidate does not provide —
+external-effect exactly-once semantics. The trigger-(e) phrase *"equally correct"* is
+`34 ADR-002`'s wording, quoted; the property this spike measured it against is the one
+named above and no other.
 
 ---
 
@@ -61,6 +78,20 @@ this is a data point on it.
 **Kills are real.** `spikes/durable-execution/child.ts` runs each candidate in a separate
 OS process which `SIGKILL`s itself at the named point. No `finally` runs, no connection
 closes politely.
+
+**A harness defect in the ORIGINAL S1A run, recorded and not erased — S1A-H1.** Candidate
+A needs a DBOS **system database**, `acos_dbos_sys`. `docker compose up` creates
+`acos_control` and `acos_audit` and nothing else, and the spike derived the system URL from
+`ACOS_AUDIT_PG_URL` by string substitution. From a genuinely clean environment that
+database does not exist, and **five candidate-A tests failed with
+`3D000: database "acos_dbos_sys" does not exist`**. The original S1A run's candidate-A rows
+below were obtained only after that database had been **created by hand**. That is a
+test-harness reproducibility defect — not a money-path defect and not a DBOS semantic
+failure — and it is repaired in S1A.1: `tests/support/localPostgres.ts` provisions the
+database on both providers and returns its URL, `globalSetup.ts` publishes it, and the
+spike reads it. `npm run db:down && npm run db:up && npm test` now needs no manual SQL.
+Regression assertion: `tests/integration/harness/dbos-system-database.test.ts`. Recorded in
+`S1A-implementation-log.md §16`.
 
 ---
 
@@ -177,7 +208,8 @@ every durable fact about the money path in one database with one lifecycle.
 | Preserves the ACOS application transaction | **Yes** — raw `pg` client, real `FOR UPDATE`, real `SERIALIZABLE`, K5 triggers unaffected | **Yes** — it *is* the ACOS transaction |
 | Checkpoint semantics | Transaction completion in the app db, inside the commit. Workflow state in the system db, outside it | One row, inside the commit. Nothing outside it |
 | Crash recovery | Correct at every kill point tested | Correct at every kill point tested |
-| Duplicate prevention | Exactly once across every kill + recovery | Exactly once across every kill + recovery |
+| Duplicate prevention, **ledger** | Exactly once across every kill + recovery | Exactly once across every kill + recovery |
+| Duplicate prevention, **external effect** | Not provided; not claimed. `31 §3.1` | Not provided; not claimed. **§7** |
 | Kill-point behaviour | No partial ledger state at any point | No partial ledger state at any point; kill points 3 and 5 **collapse to one instant** |
 | Operational complexity | Two databases to provision, back up, restore **together**, and migrate. A `dbos` schema in the app db that survives an app-data reset | One table. Backed up, restored and migrated with the ledger because it is in the ledger's database |
 | Coupling | Workflow functions must be registered under stable names before `launch()`, and the recovering process must register the same names. A framework lifecycle wraps the process | A function call. No registration, no launch, no lifecycle |
@@ -193,6 +225,9 @@ kill at commit, with the dispatch happening on recovery. `23 §6` B8 and `25 §7
 unchanged: duplicate prevention at the dispatch boundary rests on vendor idempotency, a
 vendor query, or **ACOS's own outbox claim** — which is ACOS-owned either way, per
 `phase2-v1.3-implementation-brief.md §4` and `33 §1.1`.
+
+**And the selected candidate does not close a second, wider hole either — the CONCURRENT
+one.** §7 states it, and it is measured rather than reasoned about.
 
 ### 4.4 The argument that did NOT decide it
 
@@ -225,8 +260,9 @@ spike and is not considered here.
 | Gap-free `journal_seq` | ACOS | `journal_counter` row — *"a property of the substrate and not of the workflow engine"* (`phase2-v1.3-implementation-brief.md §4`) |
 
 **The obligations this creates, stated so they are not discovered later.** A step journal
-is not free; it is cheap, which is a different claim. ACOS must now build, and did not
-build in S1A:
+is not free; it is cheap, which is a different claim. Every item below is **carried forward
+unchanged into S1** and is re-declared here after the S1A.1 review. ACOS must now build,
+and did not build in S1A:
 
 1. A **scheduler/dequeuer** — DBOS supplies queues; ACOS must supply an equivalent for S1's
    work orchestrator (`33 §4`'s `work` module, K7).
@@ -235,12 +271,19 @@ build in S1A:
 3. **Step-output serialisation discipline** — `jsonb` in the spike. `30 §5.3`'s
    `ACOS-JCS-1` governs the *journal* chain, not this table, but the two must not be
    confused when S1 builds the chain.
-4. **Concurrency on the work item itself** — kill point 7 showed one of two racing
-   processes exiting non-zero. The ledger stayed correct, but a production dequeuer needs a
-   claim that does not surface as a process failure.
+4. **EXCLUSIVE WORK-ITEM CLAIM / LEASE SEMANTICS** — kill point 7 showed one of two racing
+   processes exiting non-zero, and §7's negative control shows the generic step wrapper
+   admits two concurrent workers outright. The ledger stayed correct in both cases, but a
+   production dequeuer needs an exclusive claim with a lease, and it must not surface a
+   lost race as a process failure.
+5. **THE ACOS-OWNED DISPATCH OUTBOX** — the thing that actually provides external-effect
+   exactly-once, per `23 §6` B8, `25 §7` and `33 §1.1`, together with vendor idempotency.
+   S4 in `37`'s sequence. **This obligation is load-bearing for §7's limitation and is not
+   optional.**
 
 **None of these is on the money path**, which is why they are acceptable as S1 work rather
-than S1A blockers.
+than S1A blockers. Item 5 is the one a reader must not mistake for something the step
+journal already does.
 
 ---
 
@@ -269,3 +312,86 @@ idempotency. That measurement belongs to S3 with `refundCreate` and the ESP, and
 the architecture. `34 ADR-002`'s status is `PROVISIONAL` and its reconsider trigger (e) has
 now fired with evidence. Whether the architecture record is amended is an architecture
 action, not an implementation one; recorded here for the owner's review.
+
+---
+
+## 7. S1A-H4 — what the step journal does NOT provide: external-effect exactly-once
+
+**An owner review finding, recorded as a narrowing of this ADR rather than as a change to
+its decision.** Read with §5 obligations 4 and 5, which are what actually discharge it.
+
+### 7.1 The shape of the generic step wrapper, and the hole in it
+
+`spikes/durable-execution/candidateB-journal.ts`'s generic `runStep()` is:
+
+```
+read completed checkpoint  →  perform step  →  record completed checkpoint
+```
+
+Two things follow, and only the first was previously stated:
+
+1. **The crash window.** A process that dies between the effect and the checkpoint has
+   performed the effect with no record of it. This is `31 §3.1`'s window, which DBOS
+   *"narrows but does not close"* either, and the kill-point matrix shows it for both
+   candidates.
+2. **THE CONCURRENCY HOLE, which is wider.** For a nontransactional or external effect,
+   **two truly concurrent workers can both pass the first read before either records the
+   checkpoint**, and both then perform the effect. No claim is taken. Nothing prevents it.
+   No crash is required.
+
+### 7.2 The negative control, measured
+
+`spikes/durable-execution/external-step-race.test.ts` demonstrates it deterministically,
+driving the real `runStep` through a barrier rather than a reimplementation of it:
+
+| | Measured |
+|---|---|
+| Two concurrent workers, both parked after the checkpoint read, then released together | **`dispatch = 2`** — the mock external effect happened TWICE |
+| Both workers' outcomes | **`fulfilled`, `fulfilled`** — nothing failed, so the duplicate is silent |
+| Step-journal rows for the step | **exactly one** — `ON CONFLICT DO NOTHING` deduplicates the RECORD, not the EFFECT |
+
+**The journal therefore reports one dispatch where two happened.** That is the precise
+shape of the limitation, and it is why the outbox is not a nicety.
+
+**The lesson is `raw step journal + unclaimed external step is insufficient`. It is NOT
+`fix runStep into the production dispatcher`.** S1A does not build the production
+orchestrator; the S1A mandate prohibits it, and `23 §6` B8, `25 §7` and `33 §1.1` already
+assign external exactly-once to an ACOS-owned dispatch outbox with an exclusive claim,
+plus vendor idempotency.
+
+### 7.3 The contrast, measured in the same file, with the same race
+
+The same barrier-driven race applied to `applyLedgerStep()` — where the checkpoint is
+written **inside** the ledger transaction — behaves differently, and the difference is the
+whole reason this ADR selects what it selects:
+
+| | Measured |
+|---|---|
+| Concurrent applications that committed | **exactly one** |
+| The loser's failure | **`40001`**, from its `SELECT … FOR UPDATE` on a `window_balance` row the winner had already committed (`S1A-implementation-log.md §8`) — fail-closed, nothing committed, no journal gap |
+| Deadlock | **none** — `40P01` explicitly asserted absent |
+| `realised` | **`40.00`** — applied exactly once |
+| `standing` | **`60.00`** — the TB-04 coupling held |
+| `journal_seq` | **`nextSeq = 2`** — no second allocation, no gap |
+| Step-journal rows | **exactly one**, written by the transaction that committed the ledger |
+
+Note **what protects the ledger here: the SUBSTRATE, not the journal.** The row lock plus
+`SERIALIZABLE` refuse the second application. The journal's contribution is that its
+checkpoint cannot disagree with the ledger, because one commit decides both.
+
+### 7.4 Consequence for the decision
+
+**None. The winner does not change.**
+
+# SELECT ACOS POSTGRES STEP JOURNAL FOR S1
+
+The reversal condition this finding would have to satisfy is a defect in the
+**application-transaction checkpoint property** itself, and §7.3 shows that property
+holding under exactly the race that breaks the generic external step. The two results are
+independent, and only the narrower one was ever the basis of the selection.
+
+What changes is the language. Everywhere this ADR previously implied a general correctness
+equivalence, the claim is now: **both candidates were correct for the S1A
+application-transaction/checkpoint property under test.** The ACOS step journal alone does
+not provide external-effect exactly-once semantics, and this ADR does not claim that it
+does.

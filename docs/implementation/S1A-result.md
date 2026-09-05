@@ -3,9 +3,20 @@
 **Issued 2026-09-04.** Architecture input: ACOS Operating Spine v1.3, package issue
 v1.3.1, materialised immutably at `docs/architecture/v1.3.1/`.
 
-**Substrate:** PostgreSQL 16.9. **Suite:** 14 files, 139 tests, all passing. Typecheck
+**Amended 2026-09-04 by S1A.1**, the narrow local hardening pass that followed the owner's
+independent review of the actual repository. **The result is unchanged; four findings were
+repaired or clarified and the gate was rerun from a genuinely clean environment.** See
+`§13` for the S1A.1 record. **S1B is not authorised by this document.**
+
+**Substrate:** PostgreSQL 16.9. **Suite:** **18 files, 155 tests, all passing.** Typecheck
 clean. Lint clean at `--max-warnings 0`. Migrations apply from an empty database and are
 torn down and recreated on every test file.
+
+**The run above is a clean-environment run** — `npm run db:down` → `npm run db:up` →
+`npm test`, **with no manual SQL of any kind**. The original S1A figure was 14 files / 139
+tests and, as the owner independently reproduced, it required a manual
+`CREATE DATABASE acos_dbos_sys` on the audit server. That is recorded as **S1A-H1**, was
+repaired, and is **not** erased from this record.
 
 ---
 
@@ -28,6 +39,19 @@ compared one by one. Monetary: `reserved + standing + presumed + realised`, exac
 Count: the same four. Irrecoverable: the three the printed K5 schema declares, which has no
 `standing_irrecoverable` column (see `S1A-implementation-log.md §3` — this is the
 architecture's own schema, not a dropped term).
+
+**S1A.1 makes the irrecoverable reading explicit rather than inferred — S1A-H3.** The owner
+clarification in `S1A-owner-clarifications.md §2` records that for the irrecoverable-units
+ledger the conceptual standing term is **definitionally `0`** under the current
+`StandingAuthorization` model, so the guard has three stored operands **plus an implicit
+zero**. `standing_irrecoverable` was **not** added and the guard arithmetic was **not**
+changed. `tests/integration/exposure/irrecoverable-standing-zero.test.ts` pins it: the
+exact set of every `%irrecoverable%` column in the schema, the fact that
+`standing_window_exposure` carries only monetary forward exposure, and the behavioural
+consequence that the three stored terms may consume the **whole** ceiling — which is what
+an implicit zero fourth term means. A future `StandingAuthorization` type introducing
+irrecoverable-unit forward exposure would have nowhere to store it and would require an
+**architecture** change.
 
 **And a guard omitting the standing term was shown to fail the same fixture**: it admitted
 `$186.00` into a window already fully committed to `$186.00` of standing exposure, for a
@@ -120,6 +144,12 @@ Two further negative controls fail as expected: the three-term guard (§1 above)
 `forward_integral`-as-reservation double count (§2 above). A fourth demonstrates that
 reversed lock acquisition **does** deadlock, so the no-deadlock result is discriminating.
 
+**S1A.1 adds a fifth.** `spikes/durable-execution/external-step-race.test.ts` shows the
+step journal's generic step wrapper admitting **two** concurrent executions of an unclaimed
+external effect — `dispatch = 2`, both workers `fulfilled`, one checkpoint row. It is a
+negative control on a **spike**, not on the money path, and its lesson is that external
+exactly-once belongs to the ACOS-owned dispatch outbox. See `§9` and `ADR-IMP-002 §7`.
+
 ### 5. Was any transient unauthorized headroom observed?
 
 **No — in the production path.**
@@ -202,6 +232,20 @@ adds is the measurement that the retry is **required, not optional**. With a bou
 ACOS-owned retry all twelve commit and the arithmetic is exact. Recorded in
 `S1A-implementation-log.md §8` as an S1 obligation.
 
+**Amended by S1A.1 — S1A-H2.** `40001` and `40P01` are now handled differently, and they
+must be. `40001` is expected `SERIALIZABLE` contention and is retried within the bounded
+policy. **`40P01` propagates immediately, unretried**, because a deadlock means the
+declared lock order has failed or an undeclared lock-taking path exists — an
+invariant/implementation defect, not a condition to wait out. Retrying it would usually
+succeed on the second attempt and would erase the only signal that the ordering claim the
+deadlock proof rests on is no longer true. `retry.ts` previously retried both and claimed
+the deadlock count was surfaced in the outcome; **it was not**, and now there is no count
+because there is no retry. Proven by
+`tests/integration/exposure/retry-deadlock-not-retried.test.ts`: a `40P01` is attempted
+exactly once and propagates as itself, including a real reversed-order deadlock driven
+through the helper. Recorded in `S1A-implementation-log.md §17`. No production escalation
+system was chosen; that is the next S1 increment's decision.
+
 ### 9. Which durable-execution candidate won?
 
 **SELECT ACOS POSTGRES STEP JOURNAL FOR S1.**
@@ -209,7 +253,9 @@ ACOS-owned retry all twelve commit and the arithmetic is exact. Recorded in
 `34 ADR-002`'s reconsider trigger **(e)** fired: *"the S1 spike shows the hand-rolled
 journal is simpler to attack and equally correct."*
 
-**Both candidates were correct.** DBOS Transact 4.27.6 with
+**Both candidates were correct for the S1A application-transaction/checkpoint property
+under test** — the claim is exactly that narrow, and `ADR-IMP-002 §7` states its limit.
+DBOS Transact 4.27.6 with
 `@dbos-inc/node-pg-datasource` 4.27.6 survived every kill point tested, applied the ledger
 delta exactly once across crash and recovery, preserved the TB-04 coupling, kept
 `journal_seq` gap-free, and — importantly — writes `dbos.transaction_completion` into the
@@ -251,10 +297,22 @@ on the money path.
 **Not Temporal.** `31 §3.2`/`§3.3` place it outside this spike; taking it would be an
 explicit return to Option B.
 
-**One thing the spike does not claim.** `31 §3.3` asks for the comparison to run against a
-vendor sandbox for `refundCreate` and the ESP rather than mocks (VAL-04). S1A prohibits
-those adapters, so step 3 is a mock. No conclusion about vendor idempotency is drawn, and
-`phase2-v1.3-implementation-brief.md §6` obligations 7 and 11 remain unmet.
+**Two things the spike does not claim.**
+
+1. `31 §3.3` asks for the comparison to run against a vendor sandbox for `refundCreate` and
+   the ESP rather than mocks (VAL-04). S1A prohibits those adapters, so step 3 is a mock. No
+   conclusion about vendor idempotency is drawn, and
+   `phase2-v1.3-implementation-brief.md §6` obligations 7 and 11 remain unmet.
+2. **S1A-H4 — the ACOS step journal alone does NOT provide external-effect exactly-once
+   semantics.** Its generic step wrapper reads a checkpoint, performs the step and records
+   the checkpoint, so for a nontransactional or external effect two concurrent workers can
+   both pass the read before either records. A deterministic barrier-driven negative
+   control measures it: **two dispatches, two `fulfilled` workers, one checkpoint row** —
+   the journal reports one dispatch where two happened. The same race against the ledger
+   step commits **exactly once**, with the loser refused `40001` and no `40P01`, so the
+   property this ADR selected on is intact and **the winner does not change**. External
+   exactly-once is the ACOS-owned dispatch outbox's job (`23 §6` B8, `25 §7`, `33 §1.1`)
+   and is S1 work.
 
 ### 10. Did any architecture PASS-revocation condition trigger?
 
@@ -325,6 +383,111 @@ Outstanding obligations created or confirmed by S1A, none of them blockers:
 
 ---
 
+## 13. S1A.1 — the owner review repairs
+
+**Issued 2026-09-04**, after the owner's independent review of the actual repository. The
+core S1A money-path substrate was **accepted in shape**. This was a narrow local hardening
+pass: no architecture redesign, no change to authority ceilings or MAL, no Effect
+Canonicaliser, no Cedar, no S1B.
+
+**The immutable architecture package under `docs/architecture/v1.3.1/` was not modified in
+any respect, and no historical artefact was rewritten.**
+
+| ID | Finding | Kind | Outcome |
+|---|---|---|---|
+| **S1A-H1** | DBOS spike clean-environment bootstrap defect | Test-harness defect | **Repaired.** Provisioning creates `acos_dbos_sys` on both providers and returns its URL; the spike reads it. Clean-environment run with no manual SQL. Regression assertion added. `log §16` |
+| **S1A-H2** | `40001` is retryable; `40P01` is pass-revoking | Production defect | **Repaired.** `40P01` propagates immediately, unretried, unconverted. Three tests, including a real reversed-order deadlock driven through the helper. `log §17` |
+| **S1A-H3** | The irrecoverable standing term is explicitly zero | Owner clarification | **Recorded.** No behaviour change; the implicit zero is now mechanical. `clarifications §2` |
+| **S1A-H4** | Durable journal selected for in-database checkpointing, not external exactly-once | Claim narrowing | **Narrowed.** ADR-IMP-002's winner unchanged; negative control added. `ADR-IMP-002 §7` |
+| — | The money-path lock order | Owner clarification | **Recorded.** `30 §5.2` contains a literal contradiction; the clarification records the order S1A already implemented and tested. `clarifications §1` |
+
+### 13.1 The clean-environment gate, rerun in full
+
+```
+npm run db:down          → containers and volumes removed; acos_dbos_sys destroyed
+npm run db:up            → acos_control and acos_audit only; acos_dbos_sys ABSENT
+npm run typecheck        → clean
+npm run lint             → clean at --max-warnings 0
+npm test                 → 18 files, 155 tests, ALL PASSING
+```
+
+**No manual `CREATE DATABASE acos_dbos_sys` was performed at any point.** The database was
+absent from `pg_database` immediately after `db:up` and present immediately after the run,
+created by `tests/support/localPostgres.ts` over a `pg` connection to the maintenance
+database — never by shelling out to `psql`.
+
+| Property re-verified on the clean run | Result |
+|---|---|
+| First clean rate authorisation (VC-S7) | **PERMIT**, unchanged |
+| Unsafe headroom negative control (VC-S8, `REPEATABLE READ`) | **EXPECTED FAILURE OBSERVED** — sum `226.00` against ceiling `186.00` |
+| `SERIALIZABLE` contention is real | **Yes** — real `40001`s under N=12; the retry test still requires at least one |
+| Reversed lock order deadlocks | **Yes** — real `40P01`, one victim, asserted |
+| `40001` retried by the production helper | **Yes** — all 12 commit, `$0.12` exact |
+| `40P01` propagated by the production helper | **Yes** — attempted exactly once, propagates as itself |
+| Three-term guard negative control | **EXPECTED FAILURE OBSERVED** |
+| `forward_integral`-as-reservation negative control | **EXPECTED FAILURE OBSERVED** |
+| Unclaimed external step negative control (new) | **EXPECTED DUPLICATE OBSERVED** — `dispatch = 2` |
+| **Any authority quantity changed** | **No.** No ceiling, rate, `standing_cap`, MAL figure, `51 §2` cell or `51 §3` grant altered |
+
+### 13.2 What S1A.1 did NOT do
+
+- **No Effect Canonicaliser.** Not started, not designed, not stubbed.
+- **No Cedar.**
+- **No S1B.**
+- **No architecture redesign**, and no edit to any file under `docs/architecture/`.
+- **No change to any authority ceiling, rate, standing cap or MAL figure.**
+- **No production escalation system for `40P01`.** The required S1A behaviour is to fail
+  immediately, and that is all that was built. Choosing the escalation mechanism belongs to
+  the next S1 increment.
+- **No production dispatch outbox.** S1A-H4's lesson is that the raw step journal plus an
+  unclaimed external step is insufficient — **not** that `runStep` should become the
+  production dispatcher.
+- **No history rewritten.** The original S1A run's dependence on a manually created
+  `acos_dbos_sys` is recorded in three places (`log §16`, `ADR-IMP-002 §1`, this document's
+  header) rather than erased.
+
+### 13.3 Obligations carried forward unchanged
+
+The five S1 obligations from `ADR-IMP-002 §5` stand, with two now stated explicitly because
+S1A-H4 makes them load-bearing rather than merely tidy:
+
+1. Scheduler/dequeuer.
+2. Recovery detection.
+3. Step-output serialisation discipline.
+4. **Exclusive work-item claim / lease semantics.**
+5. **The ACOS-owned dispatch outbox** — the thing that actually provides external-effect
+   exactly-once, with vendor idempotency.
+
+Plus the S1A obligations already recorded in `§12` above, unchanged: the serialisation
+retry's bound and escalation, the two deferred VC-S5 clauses, `PRESUMED_SETTLED` being
+schema-only, and the four scheduled blocks (TB-07, TB-08(a), TB-11, TB-13).
+
+### 13.4 Result of S1A.1
+
+# S1A.1 PASS — S1A ACCEPTED
+
+**No pass-revocation condition triggered by any S1A.1 finding.**
+
+- **S1A-H1** was a test-harness reproducibility defect, not a money-path or DBOS semantic
+  failure. It is repaired and asserted.
+- **S1A-H2** was a real production defect in the retry helper's classification, repaired
+  and asserted in both the synthetic and the real-deadlock direction. It made the money
+  path **stricter**, not looser.
+- **S1A-H3** and the lock-order clarification change **no implemented behaviour**; both
+  document what S1A already tested.
+- **S1A-H4** narrowed a claim in a decision record. The property the decision rested on —
+  the application-transaction/checkpoint single commit point — was re-attacked with the
+  same race that breaks the generic external step, and **held**.
+
+**ADR-IMP-002's winner is unchanged: `SELECT ACOS POSTGRES STEP JOURNAL FOR S1`.**
+
+**It is safe for the owner to authorise the Effect Canonicaliser increment.** Nothing in
+this document authorises anything beyond it: not production deployment, real customers,
+real money, real advertising, supplier commitments, a public storefront, or autonomous
+operation. **S1B remains unauthorised.**
+
+---
+
 ## Final result
 
 # S1A PASS — PROCEED
@@ -338,6 +501,18 @@ evidence rather than on the architecture's provisional preference.
 
 No pass-revocation condition triggered. No new money-path architecture disagreement was
 found.
+
+**And after S1A.1, the gate is reproducible.** The result above was re-earned from a
+genuinely clean environment — `db:down`, `db:up`, `typecheck`, `lint`, `test` — with **no
+manual SQL**, 18 files and 155 tests passing. Two textual contradictions in the
+architecture were found on re-reading and are recorded rather than erased or explained
+away: `30 §5.2`'s lock-order list contradicting the sentence beneath it, and `I3`'s
+four-term statement against K5's three-column irrecoverable schema. **Neither changes any
+implemented behaviour**, and neither is an architecture amendment — both are owner
+implementation clarifications in `S1A-owner-clarifications.md`. **No authority quantity
+changed.**
+
+# S1A.1 PASS — S1A ACCEPTED
 
 **What this does not authorise.** Nothing beyond the next S1 increment. Not production
 deployment, real customers, real money, real advertising, supplier commitments, a public

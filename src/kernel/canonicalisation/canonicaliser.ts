@@ -206,6 +206,71 @@ export function dispatchPayloadHash(payload: DispatchPayload): string {
 }
 
 /**
+ * The AUTHORITY commitment — the canonical bytes of the request, which include exposure.
+ *
+ * `26 §2.1` prints `dispatch_payload_hash` as the field that "binds this request to exactly
+ * one dispatch payload", and that hash covers the payload only. It therefore cannot move
+ * when the economics move without the vendor request moving — which is exactly the
+ * `refund.create` case, where `total_exposure` and `vendor_amount` are different figures by
+ * construction. A retained fee that changed the reserved quantity while leaving every
+ * declared hash identical would be an authority change nothing committed to.
+ *
+ * So this function states the request's canonical byte form, over the fields that bound
+ * authority: the option identity, the parameters, BOTH exposure figures, every cost
+ * component, the window refs the reservation will be taken against, the class-derived
+ * authority fields, and the payload binding.
+ *
+ * It is a FUNCTION and not a field. `26 §2.1` declares no `request_hash` on the
+ * `AuthorizationRequest`, and S1B.1 is a repair pass — inventing a request field would be
+ * the same class of error as inventing a fee schedule. What it gives S1B is a single
+ * definition of "the bytes this authority commits to", which
+ * `tests/canonicalisation/retained-fee-provenance.test.ts` uses to show that an
+ * authoritative fee change is committed to somewhere, and which a later journal-row
+ * serialiser has one place to adopt.
+ */
+export function authorizationRequestCanonicalHash(request: AuthorizationRequest): Buffer {
+  const exposure = request.exposure;
+  return canonicalHash('acos.authorization_request.v1', [
+    { kind: 'text', value: request.principal.id },
+    { kind: 'text', value: request.actionClass },
+    { kind: 'text', value: request.reasonCode },
+    { kind: 'text', value: request.resourceRef },
+    { kind: 'text', value: request.resource.resourceId },
+    { kind: 'text', value: request.selectedOption.optionId },
+    { kind: 'text', value: request.selectedOption.semanticOptionDigest },
+    { kind: 'text', value: request.enumerationRef.enumerationId },
+    { kind: 'text', value: request.constructorVersion.recordHash },
+    { kind: 'json', value: { ...request.parameters, amount: toDb(request.parameters.amount) } },
+    // --- the exposure commitment ------------------------------------------------------
+    { kind: 'money', value: exposure.vendorAmount },
+    { kind: 'money', value: exposure.totalExposure },
+    { kind: 'text', value: exposure.currency },
+    {
+      kind: 'json',
+      value: exposure.costComponents.map((component) => ({
+        kind: component.kind,
+        amount: toDb(component.amount),
+        source_ref: component.sourceRef,
+      })),
+    },
+    { kind: 'money', value: exposure.forwardIntegral },
+    { kind: 'integer', value: BigInt(exposure.irrecoverableUnits) },
+    // --- class-derived authority, and the reservation target --------------------------
+    { kind: 'text', value: request.recoverability },
+    { kind: 'text', value: request.valueDirection },
+    { kind: 'json', value: [...request.windowRefs] },
+    { kind: 'json', value: [...request.evidenceRefs] },
+    { kind: 'text', value: request.customerNovelty },
+    { kind: 'text', value: request.contextDigest },
+    { kind: 'text', value: request.dispatchPayloadHash },
+  ]);
+}
+
+export function authorizationRequestHash(request: AuthorizationRequest): string {
+  return hex(authorizationRequestCanonicalHash(request));
+}
+
+/**
  * `I18a` and `I18c`, asserted by the kernel at construction time.
  *
  * Registry `I18a` and `I18c` on-violation column, verbatim, for both: "Critical incident.

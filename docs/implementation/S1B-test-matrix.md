@@ -3,15 +3,10 @@
 Every row names the architecture clause it tests, the file that tests it, and its status.
 A row marked **OPEN** is not tested by S1B and is not claimed by S1B.
 
-**Suite shape after S1B.** 31 test files, 357 tests. S1A's 18 files and 157 tests are
-unchanged and still pass; S1B adds 13 files and 200 tests.
-
-| Area | Files | Tests |
-|---|---|---|
-| S1A, accepted baseline, unmodified | 18 | 157 |
-| S1B canonicalisation | 12 | 194 |
-| S1B negative control | 1 | 6 |
-| **Total** | **31** | **357** |
+**Suite shape after S1B.1.** See §6 for the counts and for what the repair pass added.
+S1A's 18 files and 157 tests still pass; S1B.1 changed one S1A **test harness**
+(`vc-s8-realised-standing-atomicity.test.ts`, finding **S1A-H5**) and no S1A production
+source.
 
 ---
 
@@ -27,7 +22,7 @@ unchanged and still pass; S1B adds 13 files and 200 tests.
 | 6 | Signed constructor version verifies | `constructor-version.test.ts` | **PASS** |
 | 7 | Invalid version signature fails closed | `constructor-version.test.ts` | **PASS** |
 | 8 | Refund semantic digest changes for every declared semantic field | `refund-semantic-digest.test.ts` | **PASS** |
-| 9 | `$25.00 + $1.03` constructs `$26.03` | `vc-c1-refund-construction.test.ts` | **PASS** |
+| 9 | `$25.00 + $1.03` constructs `$26.03` | `vc-c1-refund-construction.test.ts`, `retained-fee-provenance.test.ts` | **PASS** |
 | 10 | Dispatch monetary amount remains `$25.00` | `vc-c1-refund-construction.test.ts` | **PASS** |
 | 11 | Wrong `$25.00` `total_exposure` negative control is caught | `negative-controls/retained-fee-escape.test.ts` | **PASS** |
 | 12 | Idempotency key excludes rationale and sequencing | `idempotency-key.test.ts` | **PASS** |
@@ -35,7 +30,7 @@ unchanged and still pass; S1B adds 13 files and 200 tests.
 | 14 | Dispatch hash is deterministic | `hash-binding.test.ts` | **PASS** |
 | 15 | Property insertion order cannot alter the canonical hash | `canonical-bytes.test.ts`, `hash-binding.test.ts` | **PASS** |
 | 16 | Rationale-only mutation cannot alter the dispatch hash | `hash-binding.test.ts`, `rationale-non-authoritative.test.ts` | **PASS** |
-| 17 | Existing S1A 157 tests remain green | full suite | **PASS**, with one load-sensitive intermittent failure in a **pre-existing S1A test harness** — see §5 |
+| 17 | Existing S1A 157 tests remain green | full suite | **PASS**. The load-sensitive S1A harness race S1B found is **repaired in S1B.1** — see §5 and §6 |
 | 18 | No authority quantity changes | `source-rules.test.ts` rule 4; no migration added; no edit under `src/kernel/exposure/` | **PASS** |
 
 ---
@@ -58,13 +53,13 @@ unchanged and still pass; S1B adds 13 files and 200 tests.
 
 | Clause | Test | File |
 |---|---|---|
-| "a test constructing an `AuthorizationRequest` from a fifth `ProposedIntent` field must not compile" | real `tsc --noEmit` over `tests/type-negative/`, five negative files | `i21-type-boundary.test.ts` |
+| "a test constructing an `AuthorizationRequest` from a fifth `ProposedIntent` field must not compile" | real `tsc --noEmit` over `tests/type-negative/`, **six** negative files | `i21-type-boundary.test.ts` |
 | the harness must discriminate | `positive-control.ts` must compile with **zero** diagnostics | `i21-type-boundary.test.ts` |
 | the harness must not pass on the wrong error | every diagnostic must land on an `EXPECT_ERROR TSxxxx` line, and no diagnostic may appear on an unmarked line | `i21-type-boundary.test.ts` |
 | the four permitted fields, and only those | `PermittedIntentFields`'s member list, read out of the source | `i21-type-boundary.test.ts` |
 | nothing in `src/` parses rationale | source-reading rule over the whole `src/` tree | `source-rules.test.ts` rule 1 |
 
-The five compile-negative cases:
+The six compile-negative cases:
 
 | File | Violation | Diagnostic |
 |---|---|---|
@@ -73,6 +68,7 @@ The five compile-negative cases:
 | `fifth-field-request.ts` | a request built from a fifth intent field | TS2353 |
 | `intent-as-context.ts` | a `ProposedIntent` passed as the authoritative context | TS2345 |
 | `model-amount-into-exposure.ts` | a model-supplied `Money` written into `exposure` | TS2322, TS2375 |
+| `model-windows-into-request.ts` **(S1B.1)** | model-supplied `window_refs`, a model-supplied grant/window context, a model-supplied retained fee | TS2322 ×3 |
 
 ### `26 §7` C2 / ADR-021 — the registry
 
@@ -138,15 +134,55 @@ The five compile-negative cases:
 | **I18b** construction half — offered to reservation | `$26.03` | hand-authored | `vc-c1-refund-construction.test.ts` |
 | **I18c** `total_exposure >= vendor_amount` | strict, since the class is not cost-component-free | — | `vc-c1-refund-construction.test.ts` |
 | the dispatch payload | field-for-field against a hand-authored payload | hand-authored | `vc-c1-refund-construction.test.ts` |
-| a second amount | `$40.00 → $1.46 → $41.46` | hand-computed in the test | `vc-c1-refund-construction.test.ts` |
+| a second amount, same authoritative fee | `$40.00 + $1.03 = $41.03` | hand-computed in the test | `vc-c1-refund-construction.test.ts` |
 | **`DENY: PER_ACTION`** | — | — | **OPEN — Cedar slice** |
+
+**S1B.1 note on the second-amount row.** It previously read `$40.00 → $1.46 → $41.46`,
+produced by the withdrawn `S1B-C3` schedule. S1B knows no rate, so a larger refund does not
+scale the fee: the amount is authoritative and so is the fee, and neither is derived from
+the other.
+
+### S1B-C3a — retained-fee provenance (S1B.1)
+
+`tests/canonicalisation/retained-fee-provenance.test.ts`.
+
+| Assertion | Expected | Oracle | Result |
+|---|---|---|---|
+| **A** — fixture: amount `$25.00`, authoritative fee `$1.03` | `total_exposure = $26.03` | hand-authored `2500n`, `103n`, `2603n` | **PASS** |
+| the cost component names the RECORD it came from | `source_ref` is a `record:` reference, never a schedule | — | **PASS** |
+| **B** — authoritative fee `$1.03 → $1.10`, option unchanged | | hand-authored `110n`, `2610n` | |
+| dispatch `monetary_effect` | unchanged, `$25.00` | — | **PASS** |
+| vendor payload, and its hash | unchanged | hand-authored | **PASS** |
+| `option_id`, `semantic_option_digest` | unchanged — the fee is not a digest member (`26 §2.2`) | — | **PASS** |
+| idempotency key | unchanged | — | **PASS** |
+| `total_exposure` | `$26.03 → $26.10` | hand-authored `2610n` | **PASS** |
+| reservation-handoff amount | `$26.03 → $26.10` | — | **PASS** |
+| authority commitment over exposure | **changes** | — | **PASS** |
+| `rationale` | irrelevant throughout | — | **PASS** |
+| an absent fee for a non-cost-component-free class | throws; does not emit zero components | — | **PASS** |
+| a fee in another currency | throws | — | **PASS** |
+| a larger refund does not scale the fee | `$40.00 + $1.03 = $41.03` | — | **PASS** |
+
+### S1B-C5a — `window_refs` provenance (S1B.1)
+
+`tests/canonicalisation/window-ref-provenance.test.ts`.
+
+| Required property | Test | Result |
+|---|---|---|
+| raw/model intent cannot supply `window_refs` | `MALFORMED / EXTRA_FIELD` at the top level; `SELECTOR_MALFORMED / EXTRA_FIELD` nested in the selector; the parsed intent has no window key; plus the compile-negative `model-windows-into-request.ts` | **PASS** |
+| changing the authoritative grant/window context changes `window_refs` | narrowing narrows; an empty grant set empties it; a window outside catalogue scope is carried verbatim; the authority commitment moves with it | **PASS** |
+| changing `rationale` cannot change them | injection-shaped rationale naming other windows leaves both the refs and the authority commitment identical | **PASS** |
+| the catalogue alone cannot manufacture a different set | no catalogue entry carries a window field; the catalogue source names no window id; the constructor reads `context.grantWindows.windowRefs`; the same class/resource/option yields different sets | **PASS** |
+| S1B claims no grant resolution | `resolvedBy` says `fixture:`; `grantWindows.ts` has no executable statement | **PASS** |
 
 ### `36 §0` — the oracle discipline and the negative control
 
 | Rule | Test | File |
 |---|---|---|
 | the oracle imports nothing from `src/` | source rule; the oracle has **no imports at all** | `source-rules.test.ts` rule 3 |
-| the oracle agrees with itself | its own arithmetic reproduces `103n` and `2603n` | `source-rules.test.ts` rule 3 |
+| the oracle agrees with itself | its own arithmetic reproduces `103n`, `2603n` and `2610n` | `source-rules.test.ts` rule 3 |
+| **S1B knows no fee schedule** (S1B.1) | no fee-schedule type, rate constant or rounding primitive on the S1B surface; no multiplication in the refund constructor | `source-rules.test.ts` rule 5 |
+| **`window_refs` are not catalogue-derived** (S1B.1) | the catalogue declares no windows; no module reads a catalogue window field; the grant boundary resolves nothing | `source-rules.test.ts` rule 6 |
 | the negative control reproduces the escape | `total_exposure = vendor_amount = $25.00`, no cost components | `negative-controls/retained-fee-escape.test.ts` |
 | the escape passes every check that ignores `total_exposure` | I18a holds; the vendor request is correct | `negative-controls/retained-fee-escape.test.ts` |
 | **the fixture catches it** | `$25.00 ≠ $26.03`; the fee component is absent | `negative-controls/retained-fee-escape.test.ts` |
@@ -215,7 +251,13 @@ type checking. Neither change affects runtime behaviour or any authority quantit
 
 ---
 
-## 5. One observed defect, in the S1A test harness, NOT repaired by S1B
+## 5. One observed defect, in the S1A test harness — found by S1B, REPAIRED IN S1B.1
+
+**Status: REPAIRED.** The section below is the S1B finding as originally written, retained
+because S1B found the race rather than hiding it and the record should show that. The repair
+is `S1A-H5`, described in §6 and in `S1A-implementation-log.md` §20.
+
+---
 
 **`tests/integration/exposure/vc-s8-realised-standing-atomicity.test.ts` → "no
 interleaving exposes headroom acquirable without the `window_balance` lock" is
@@ -261,3 +303,65 @@ and it belongs in a bounded S1A.2 alongside the same latent race in ORDERING A a
 ORDERING B.
 
 This is the single reason the S1B result is **CONDITIONAL** rather than **PASS**.
+
+---
+
+## 6. S1B.1 — the conditional gate repair pass
+
+S1B was accepted **CONDITIONAL** on three local repairs. All three are done.
+
+### Suite shape after S1B.1
+
+| Area | Files | Tests |
+|---|---|---|
+| S1A, accepted baseline — production unmodified, one **test harness** repaired (S1A-H5) | 18 | 157 |
+| S1B canonicalisation, including the two S1B.1 provenance files | 14 | 229 |
+| S1B negative control (`retained-fee-escape`) | 1 | 7 |
+| **Total** | **33** | **393** |
+
+Measured, per area: `tests/canonicalisation` 14 files / 229 tests; `tests/integration`
+13 / 130; `tests/negative-controls` 4 / 15; `spikes/durable-execution` 2 / 19.
+
+Compile-negative fixtures: **six** negative files plus the positive control, compiled as a
+real `tsc --noEmit` project.
+
+### Repair 1 — VC-S8 deterministic ordering (S1A-H5)
+
+**Test-harness only. No production money-path source changed.**
+
+| Requirement | Result |
+|---|---|
+| rendezvous at ACTUAL reconciler lock ownership, not `AFTER_BEGIN` | `AFTER_LOCK` announced after `SELECT … FOR UPDATE` returns |
+| applied to every case sharing the race | `ORDERING A`, the over-commit case, and `ORDERING B`'s reconciler side |
+| existing hook machinery reused | `Conductor` / `POINT.AFTER_LOCK`, and the one declared `acquireMoneyPathLocks` helper |
+| ≥25 consecutive repetitions, zero harness timeouts | see `S1B-result.md` §S1B.1 |
+| real `40001` still observable where expected | the authorisation still retries through `withSerialisationRetry` after the reconciler commits |
+| no real `40P01` on the correct lock-order path | `lock-order.test.ts` VC-L2, unchanged |
+| reversed-order `40P01` negative control retained | `lock-order.test.ts`, unchanged |
+
+### Repair 2 — the invented refund fee schedule removed
+
+| Requirement | Result |
+|---|---|
+| `S1B-C3` marked **WITHDRAWN**, history retained | `S1B-owner-clarifications.md` |
+| `S1B-C3a` in force — kernel-owned authoritative amount, fixture `$1.03`, no schedule | `authoritativeCost.ts` |
+| fee **not** moved into `ProposedIntent`, not model-controlled, no real processor fetched | `model-windows-into-request.ts`, `intent-boundary.test.ts` |
+| discriminating tests A and B | `retained-fee-provenance.test.ts`, 14 tests |
+| every passage implying a universal `2.9% + $0.30` schedule updated | production, tests and docs; asserted by `source-rules.test.ts` rule 5 |
+| the architecture-declared refund `semantic_option_digest` untouched | `refund-semantic-digest.test.ts`, unchanged |
+
+### Repair 3 — `window_refs` provenance
+
+| Requirement | Result |
+|---|---|
+| `S1B-C5` marked **SUPERSEDED**, history retained | `S1B-owner-clarifications.md` |
+| `S1B-C5a` in force — kernel-owned grant/window-resolution boundary | `grantWindows.ts` |
+| canonicalisation stays separated from policy; no Cedar added | `grantWindows.ts` has no executable statement; the tree still fails on the token `cedar` |
+| the four required proofs | `window-ref-provenance.test.ts`, 14 tests |
+| catalogue can no longer be read as a grant set | `ActionCatalogueEntry.declaredWindows` **removed** |
+
+### Deliberately unchanged
+
+`S1B-C4` (counterparty `null` for `refund.create`, governed by customer novelty / `P4a`
+rather than counterparty novelty) was **not** revisited. `S1B-C1`, `S1B-C2`, `S1B-C6` and
+`S1B-C7` stand as written. §3's gate table is unchanged: **VC-C1 remains PARTIAL**.

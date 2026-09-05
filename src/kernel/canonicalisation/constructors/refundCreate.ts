@@ -1,8 +1,9 @@
-import { add, mulByRational, toDb, type Money } from '../../exposure/money.js';
+import { add, toDb, type Money } from '../../exposure/money.js';
 import { computed } from '../brands.js';
 import { hex } from '../canonicalBytes.js';
 import { computeIdempotencyKey, refundSemanticParamDigest } from '../idempotency.js';
 import { computeOptionId, refundSemanticOptionDigest } from '../optionDigest.js';
+import type { AuthoritativeRetainedFee } from '../authoritativeCost.js';
 import type { ConstructedEffect, ConstructorInput, RegisteredConstructor } from '../registry.js';
 import type { CostComponent, Exposure, RefundParameters } from '../types.js';
 
@@ -36,40 +37,32 @@ import type { CostComponent, Exposure, RefundParameters } from '../types.js';
 export const REFUND_CREATE_CONSTRUCTOR_ID = 'ctor.refund.create';
 
 /**
- * The retained processing fee.
+ * The retained processing fee, CARRIED — not derived.
  *
  * `51 §5.1`, verbatim: "Settled cost is fully determined pre-dispatch: refund amount plus
- * the processor's published retained fee." `36 §12`'s oracle row requires the fixture table
- * to be "authored from the processor's published fee schedule".
+ * the processor's published retained fee."
  *
- * The architecture prints the RESULT ($1.03 on $25.00) and not the schedule. The schedule
- * is therefore an authoritative RECORD-grade input on the context, and the derivation is
- * recorded in docs/implementation/S1B-owner-clarifications.md S1B-C3:
+ * ---------------------------------------------------------------------------------
+ * S1B.1 — WHY THERE IS NO ARITHMETIC HERE, clarification S1B-C3a
  *
- *   retained_fee = round_half_away_from_zero(vendor_amount × 2.9%) + $0.30
- *   $25.00 × 0.029 = $0.725 -> $0.73;  $0.73 + $0.30 = $1.03
+ * The original S1B derived the fee as `round_half_away(vendor_amount × 2.9%) + $0.30` from
+ * a `ProcessorFeeSchedule` on the context. That reproduced the architecture's printed
+ * `$1.03` exactly and was withdrawn anyway: the architecture establishes that a refund may
+ * carry a retained processing fee and that the discriminating fixture is
+ * `$25.00 / $1.03 / $26.03`. It establishes no rate, no fixed charge, no rounding rule and
+ * no processor fee schedule, and an implementation may not invent an economic rule because
+ * the rule reproduces a fixture.
  *
- * `mulByRational` is S1A's money primitive and already rounds half away from zero, which
- * is the convention S1A tested for the 30.4 monthly basis multiplier.
+ * So the fee is an authoritative AMOUNT supplied on the context, and this function does one
+ * thing: turn it into the `CostComponent` the exposure block declares, naming the record it
+ * came from. The constructor ADDS authoritative components. It derives none.
+ * ---------------------------------------------------------------------------------
  */
-function retainedProcessingFee(
-  vendorAmount: Money,
-  schedule: {
-    readonly scheduleRef: string;
-    readonly percentageNumerator: bigint;
-    readonly percentageDenominator: bigint;
-    readonly fixed: Money;
-  },
-): CostComponent {
-  const percentagePart = mulByRational(
-    vendorAmount,
-    schedule.percentageNumerator,
-    schedule.percentageDenominator,
-  );
+function retainedProcessingFeeComponent(fee: AuthoritativeRetainedFee): CostComponent {
   return {
     kind: 'RETAINED_PROCESSING_FEE',
-    amount: add(percentagePart, schedule.fixed),
-    sourceRef: schedule.scheduleRef,
+    amount: fee.amount,
+    sourceRef: fee.sourceRef,
   };
 }
 
@@ -92,9 +85,22 @@ export function constructRefundCreate(input: ConstructorInput): ConstructedEffec
 
   // --- exposure: two fields, neither overloaded ---------------------------------------
   const vendorAmount: Money = parameters.amount;
-  const costComponents: readonly CostComponent[] = [
-    retainedProcessingFee(vendorAmount, context.feeSchedule),
-  ];
+  const retainedFee = context.retainedProcessingFee;
+  if (retainedFee === null) {
+    // The catalogue declares this class NOT cost-component-free, so an absent authoritative
+    // fee is a state-resolution defect upstream, not a licence to emit zero cost components.
+    // `26 §2.1.1`: "a developer resolving the contradiction by driving cost_components to
+    // zero silently restores the v1.0 defect R1 exists to close."
+    throw new Error(
+      'refund.create: the authoritative retained processing fee is absent, and the catalogue does not declare this class cost-component-free',
+    );
+  }
+  if (retainedFee.currency !== context.ledgerCurrency) {
+    throw new Error(
+      `refund.create: the authoritative retained fee is in ${retainedFee.currency}, not the ledger currency ${context.ledgerCurrency}`,
+    );
+  }
+  const costComponents: readonly CostComponent[] = [retainedProcessingFeeComponent(retainedFee)];
   const totalExposure: Money = add(
     vendorAmount,
     ...costComponents.map((component) => component.amount),
@@ -154,8 +160,11 @@ export function constructRefundCreate(input: ConstructorInput): ConstructedEffec
     customerNovelty: context.customerNovelty,
     channel: null,
     communicationExposure: null,
-    // S1B-C5: the catalogue's declared windows. Grant intersection is step I, deferred.
-    windowRefs: catalogue.declaredWindows,
+    // S1B-C5a: carried from the authoritative grant/window-resolution boundary. NOT read
+    // from the catalogue — the catalogue declares no windows, precisely so this line cannot
+    // be written the other way. `26 §2.1`: "every named window the matching grants
+    // reference"; actual matching-grant derivation is the Cedar/policy slice.
+    windowRefs: context.grantWindows.windowRefs,
     // `26 §2.1`: "frozen evidence set, when the action derives from research". This one
     // does not; it derives from an order record.
     evidenceRefs: [],

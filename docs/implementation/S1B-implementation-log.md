@@ -3,6 +3,13 @@
 A record of what was done, in order, with the decisions that were not mechanical and the
 one thing that went wrong.
 
+**Amended by S1B.1, the conditional gate repair pass.** Two of the seven decisions below did
+not survive owner review: `S1B-C3` was **withdrawn** because it invented an economic rule
+the architecture does not establish, and `S1B-C5` was **superseded** because catalogue
+membership is not matching-grant resolution. Both are marked in place rather than rewritten,
+and §12 records the repair pass in full. **S1B found the VC-S8 harness race rather than
+hiding it**; S1B.1 repaired it as `S1A-H5`.
+
 ---
 
 ## 1. Baseline verification, before any edit
@@ -42,9 +49,9 @@ verbatim. Summarised here with the reasoning:
 |---|---|---|
 | **S1B-C1** | `rationale` may enter only the opaque `intent_hash` lineage commitment | `I21` and `26 §2.1`'s `intent_hash` field are in literal tension. Resolved by the owner clarification, and made structural rather than conventional |
 | **S1B-C2** | An unverifiable `ConstructorVersionRecord` denies `NOT_CANONICALISABLE` | The architecture names `CONSTRUCTOR_SEMANTIC_CHANGE` for the **resume** path and "a build failure" for the **missing** case; it names no runtime denial for *present but invalid* |
-| **S1B-C3** | The retained fee is `round_half_away(amount × 2.9%) + $0.30` | The architecture prints `$1.03` and names "the processor's published fee schedule" without printing the schedule. This derivation reproduces the printed figure exactly |
+| ~~**S1B-C3**~~ | ~~The retained fee is `round_half_away(amount × 2.9%) + $0.30`~~ | **WITHDRAWN IN S1B.1.** The derivation reproduced the printed `$1.03` exactly, and that was the trap: the architecture establishes a retained fee as an authoritative cost component and prints one figure. It establishes no rate, no fixed charge, no rounding rule and no schedule. Replaced by **S1B-C3a** — a kernel-owned authoritative **amount** |
 | **S1B-C4** | `refund.create` has `counterparty = null`; the destination is a computed parameter | `26 §2.1` types the field as present while `26 §11.2` row 3 prints `n/a`, and `26 §1` Corollary 1 says why conflating payer with counterparty is the error |
-| **S1B-C5** | `window_refs` comes from the catalogue at S1B | `26 §2.1` sources it from "the matching grants", and grant matching is step I — policy — which S1B does not implement. The catalogue set is a superset grant matching can only narrow |
+| ~~**S1B-C5**~~ | ~~`window_refs` comes from the catalogue at S1B~~ | **SUPERSEDED IN S1B.1.** "Superset-safe" argued about the direction of the error, not about whether the catalogue was the right object — and it is not. Replaced by **S1B-C5a** — a kernel-owned grant/window-resolution boundary |
 | **S1B-C6** | A closed five-member `reason_code` set is declared | The architecture requires the enum to be closed and never enumerates it |
 | **S1B-C7** | An `option_id` mismatch denies `SELECTOR_INVALID`, not `SELECTOR_STALE` | `SELECTOR_STALE` is a property of live re-enumeration under the C′ lock, which S1B does not perform. Emitting it would claim a check nobody ran |
 
@@ -90,7 +97,12 @@ fail by design.
 
 ---
 
-## 5. The retained fee, and why $1.03 is not a magic number
+## 5. The retained fee — WITHDRAWN REASONING, retained as the record
+
+> **S1B.1: everything in this section is superseded.** It is kept because the record should
+> show what was claimed. The reasoning below is exactly the error: it treated *"this rule
+> reproduces the printed figure"* as authority for the rule. It is not. See §12 and
+> `S1B-owner-clarifications.md` **S1B-C3a** for what is in force.
 
 `26 §2.1.1` and `51 §3.1` both print `$1.03` on a `$25.00` refund and neither prints the
 schedule that produces it. `36 §12`'s oracle row requires the fixture to be authored "from
@@ -113,6 +125,10 @@ convention S1A tested for the `30.4` monthly basis multiplier.
 
 The independent oracle carries `2500`, `29`, `1000`, `30`, `103` and `2603` as hand-authored
 minor-unit integers, does its own three-line arithmetic, and imports **nothing at all**.
+
+*(End of the withdrawn reasoning. Under `S1B-C3a` the oracle carries `2500`, `103`, `2603`,
+`110` and `2610`, performs one addition, and carries no rate, no fixed charge and no
+rounding primitive.)*
 
 ---
 
@@ -271,3 +287,97 @@ S1B."* Full analysis in `S1B-test-matrix.md §5`; it is the sole reason the S1B 
 | Architecture package | **unmodified** |
 | Authority quantities | **unchanged** — no migration added, no edit under `src/kernel/exposure/` |
 | S1 pass-revocation conditions | **none triggered** |
+
+---
+
+## 12. S1B.1 — the conditional gate repair pass
+
+S1B was returned **CONDITIONAL — LOCAL REPAIR REQUIRED** on three findings. No
+enumeration/selector work was begun, no Cedar was implemented, and S1B scope was not
+expanded.
+
+### Repair 1 — VC-S8 deterministic ordering (S1A-H5)
+
+**A test-harness repair. No production money-path source was changed, and no money-path
+semantics were changed to make a test deterministic.**
+
+The reconciler participant announced only `AFTER_BEGIN` and `AFTER_WRITE`, and the conductor
+released the competing authorisation on the strength of `AFTER_BEGIN`. That barrier proves a
+snapshot was taken; it proves nothing about who owns the `window_balance` row. Under load
+the authorisation sometimes reached the row first, parked at `AFTER_LOCK` holding it, and
+the reconciler could then never reach `AFTER_WRITE` — a harness deadlock, observed as three
+Conductor timeouts in fourteen runs.
+
+The reconciler now takes the declared locks itself, through the one declared
+`acquireMoneyPathLocks` helper in the one declared order, and announces `AFTER_LOCK` only
+after `SELECT … FOR UPDATE` returns. `recordRealisedSpend` re-acquires the same rows inside
+the same transaction, which PostgreSQL satisfies from the locks already held. The
+authorisation is released only after that barrier is observed.
+
+Applied to **every** case sharing the race — `ORDERING A`, the over-commit case, and
+`ORDERING B`'s reconciler side — not only the one that happened to fail. The reversed-order
+negative control that deliberately produces a real `40P01` is retained unchanged in
+`lock-order.test.ts`. Full detail: `S1A-implementation-log.md` §20.
+
+### Repair 2 — the invented refund fee schedule removed
+
+`ProcessorFeeSchedule` is gone from the tree. The context now carries
+`AuthoritativeRetainedFee` — an **amount**, the `source_ref` of the record it was read from,
+and a currency (`src/kernel/canonicalisation/authoritativeCost.ts`). The refund constructor
+adds it as a `RETAINED_PROCESSING_FEE` cost component and performs no multiplication and no
+rounding; `mulByRational` is no longer imported there. An absent fee for a class the
+catalogue does not declare cost-component-free **throws** rather than emitting zero cost
+components, which is the defect `26 §2.1.1` names.
+
+The fee was **not** moved into `ProposedIntent`, was **not** made model-controlled, fetches
+**no** real processor, and selects **no** real fee model. Selecting one belongs to
+adapter/state ingestion.
+
+The discriminating pair is `tests/canonicalisation/retained-fee-provenance.test.ts`: the
+`$25.00 / $1.03 / $26.03` fixture, and the same semantic option at `$1.10`, where the
+dispatched effect, the vendor payload, the `option_id` and the idempotency key are all
+unchanged while `total_exposure`, the reservation-handoff amount and the authority
+commitment over exposure all move. That is the distinction between the **identity** of the
+vendor effect and the **current authoritative cost** of performing it.
+
+**One new hash.** `dispatch_payload_hash` covers the payload only and so cannot move when
+the economics move without the vendor request moving. S1B.1 added
+`authorizationRequestCanonicalHash` — the request's canonical byte form, over both exposure
+figures, every cost component and the window refs. It is a **function, not a request
+field**: `26 §2.1` declares no `request_hash`, and adding one would be the same class of
+error this pass is repairing.
+
+### Repair 3 — `window_refs` provenance
+
+`ActionCatalogueEntry.declaredWindows` was **removed**, so no reader can mistake catalogue
+membership for grant resolution. `window_refs` now arrive through
+`AuthoritativeGrantWindowContext` (`src/kernel/canonicalisation/grantWindows.ts`), a type
+declaration with no executable statement in the file, and the canonicaliser **carries**
+them.
+
+No Cedar was implemented. Nothing claims the carried values are actual matching-grant
+resolution; the fixture's `resolvedBy` says `fixture:` in the value itself. The four
+required properties are proved in `tests/canonicalisation/window-ref-provenance.test.ts`.
+
+### What was deliberately not touched
+
+`S1B-C4` was **not** revisited. For `refund.create` the architecture distinguishes the
+original payer from a counterparty meaning a payee, supplier or settlement destination; a
+refund to the original instrument is `INBOUND_ORIGINAL_INSTRUMENT` and is governed by
+customer novelty and `P4a` rather than counterparty novelty. A null counterparty remains
+consistent with the canonical type, and the review of `S1B-C3`/`S1B-C5` is not a reason to
+redesign it.
+
+Also unchanged: the architecture-declared refund `semantic_option_digest`; every authority
+ceiling and MAL quantity; the accepted S1A exposure ledger under `src/kernel/exposure/`;
+and the immutable architecture package under `docs/architecture/v1.3.1/`.
+
+### The two source rules that keep it true
+
+Both in `tests/canonicalisation/source-rules.test.ts`, because a rule written only as a
+comment is a rule a future edit breaks silently:
+
+- **rule 5** — no fee-schedule type, no rate constant, no rounding primitive anywhere on the
+  S1B surface, and no `mulByRational` in the refund constructor;
+- **rule 6** — the catalogue declares no windows, no module reads a catalogue window field
+  into `window_refs`, and the grant/window boundary resolves nothing.

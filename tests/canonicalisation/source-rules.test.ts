@@ -116,13 +116,105 @@ describe('rule 3 — the independent oracle imports nothing from src/', () => {
   it('the oracle reproduces its own hand-authored figures by its own arithmetic', async () => {
     // The S1A oracle-self-check discipline: a typo in either the constant or the arithmetic
     // is caught before the fixture is used to judge production code.
-    const { VC_C1, oracleRetainedFeeMinor, oracleTotalExposureMinor } = await import(
-      '../support/canonicalisationOracle.js'
-    );
+    const {
+      VC_C1,
+      VC_C1_MUTATED_FEE,
+      oracleMutatedTotalExposureMinor,
+      oracleRetainedFeeMinor,
+      oracleTotalExposureMinor,
+    } = await import('../support/canonicalisationOracle.js');
     expect(oracleRetainedFeeMinor()).toBe(VC_C1.expectedRetainedFeeMinor);
     expect(oracleRetainedFeeMinor()).toBe(103n);
     expect(oracleTotalExposureMinor()).toBe(VC_C1.expectedTotalExposureMinor);
     expect(oracleTotalExposureMinor()).toBe(2603n);
+    expect(oracleMutatedTotalExposureMinor()).toBe(VC_C1_MUTATED_FEE.expectedTotalExposureMinor);
+    expect(oracleMutatedTotalExposureMinor()).toBe(2610n);
+  });
+});
+
+describe('rule 5 — S1B knows no processor fee schedule (S1B.1, clarification S1B-C3a)', () => {
+  /**
+   * The withdrawn S1B-C3 asserted `round_half_away(vendor_amount × 2.9%) + $0.30` on the
+   * strength of the architecture's printed `$1.03`. Reproducing a figure does not entitle
+   * an implementation to the rule that reproduces it, and a fee schedule left lying in the
+   * tree is a standing invitation to derive from it again.
+   *
+   * So the rule is asserted rather than intended: no percentage arithmetic, no fee-schedule
+   * type, and no rate constant anywhere on the S1B surface. The fee is an AMOUNT on the
+   * authoritative context.
+   */
+  const surface = [
+    ...walk(join('src', 'kernel', 'canonicalisation')),
+    join('tests', 'support', 'canonicalisationOracle.ts'),
+    join('tests', 'support', 'canonicalisationFixture.ts'),
+  ];
+
+  it('no fee schedule type or rate constant survives anywhere', () => {
+    for (const file of surface) {
+      const code = codeOf(file);
+      for (const needle of [
+        'ProcessorFeeSchedule',
+        'feeSchedule',
+        'percentageNumerator',
+        'percentageDenominator',
+        'feePercentNumerator',
+        'scheduleRef',
+        'divideRoundHalfAway',
+      ]) {
+        expect(code, `${file} still carries ${needle}`).not.toContain(needle);
+      }
+    }
+  });
+
+  it('the refund constructor performs no multiplication and no rounding', () => {
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'constructors', 'refundCreate.ts'));
+    // `add` is the only money operation a constructor that ADDS authoritative components
+    // needs. `mulByRational` is S1A's rate primitive and has no business on this path.
+    expect(code).not.toContain('mulByRational');
+    expect(code).toMatch(/import \{ add, toDb, type Money \}/);
+  });
+
+  it('the oracle carries no rate, no fixed charge and no rounding primitive', () => {
+    const code = codeOf(join('tests', 'support', 'canonicalisationOracle.ts'));
+    expect(code).not.toMatch(/29n|1000n|30n/);
+    expect(code).not.toMatch(/2\.9|0\.029/);
+    // What it DOES carry: the two hand-authored figures the architecture prints.
+    expect(code).toContain('103n');
+    expect(code).toContain('2603n');
+  });
+});
+
+describe('rule 6 — window_refs are not catalogue-derived (S1B.1, clarification S1B-C5a)', () => {
+  /**
+   * `26 §2.1`: "every named window the matching grants reference". The superseded S1B-C5
+   * read them off the closed action catalogue. Catalogue membership is not grant
+   * resolution, so the catalogue no longer declares windows at all and this rule keeps it
+   * that way. The behavioural proof is
+   * `tests/canonicalisation/window-ref-provenance.test.ts`.
+   */
+  it('the action catalogue declares no windows', () => {
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'actionCatalogue.ts'));
+    expect(code).not.toContain('declaredWindows');
+    expect(code).not.toMatch(/W_[A-Z_]+/);
+  });
+
+  it('no module in src/ reads a catalogue window field into window_refs', () => {
+    for (const file of walk(join('src', 'kernel', 'canonicalisation'))) {
+      expect(codeOf(file), `${file} derives windows from the catalogue`).not.toMatch(
+        /catalogue\w*\.\w*[Ww]indow/,
+      );
+    }
+  });
+
+  it('the grant/window boundary is a declaration and resolves nothing', () => {
+    // No Cedar, no policy engine, no grant matching — the boundary is a type and its
+    // rationale, and S1B claims nothing more. The check is on EXECUTABLE code: the prose
+    // above the type says "It is not Cedar", which is the disclaimer, not an engine.
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'grantWindows.ts'));
+    expect(code).not.toMatch(/^\s*(export\s+)?(function|const|class)\s/m);
+    for (const needle of ['cedar', 'Cedar', 'permit(']) {
+      expect(code, `grantWindows.ts references ${needle}`).not.toContain(needle);
+    }
   });
 });
 

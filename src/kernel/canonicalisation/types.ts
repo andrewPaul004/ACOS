@@ -3,12 +3,13 @@ import type { KernelComputed, PermittedIntentField } from './brands.js';
 import type {
   ActionCatalogueEntry,
   ActionClass,
-  ProcessorFeeSchedule,
   ReasonCode,
   ReasonCodeScope,
   Recoverability,
   ValueDirection,
 } from './actionCatalogue.js';
+import type { AuthoritativeRetainedFee } from './authoritativeCost.js';
+import type { AuthoritativeGrantWindowContext } from './grantWindows.js';
 import type { ConstructorVersionIdentity } from './constructorVersion.js';
 import type { ProposedSelector } from './intent.js';
 
@@ -86,8 +87,21 @@ export interface AuthoritativeCanonicalisationContext {
   readonly catalogueEntry: KernelComputed<ActionCatalogueEntry>;
   /** `26 §2.1`: "the single ledger currency". */
   readonly ledgerCurrency: KernelComputed<string>;
-  /** RECORD-grade, per S1B-owner-clarifications.md S1B-C3. */
-  readonly feeSchedule: KernelComputed<ProcessorFeeSchedule>;
+  /**
+   * The authoritative retained processing fee for this effect, as an AMOUNT.
+   *
+   * S1B-owner-clarifications.md S1B-C3a. `null` for a class that carries none. S1B knows no
+   * fee schedule and derives no fee — see `authoritativeCost.ts` for why the original
+   * S1B-C3 derivation was withdrawn.
+   */
+  readonly retainedProcessingFee: KernelComputed<AuthoritativeRetainedFee> | null;
+  /**
+   * The windows the matching grants reference, resolved by a kernel-owned boundary.
+   *
+   * S1B-owner-clarifications.md S1B-C5a. NOT catalogue membership, and not claimed to be
+   * actual Cedar grant resolution — see `grantWindows.ts`.
+   */
+  readonly grantWindows: KernelComputed<AuthoritativeGrantWindowContext>;
   readonly customerNovelty: KernelComputed<CustomerNovelty> | null;
   /** `26 §2.1`: "context_digest — hash of the assembled context the proposer saw". */
   readonly contextDigest: KernelComputed<string>;

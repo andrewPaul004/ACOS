@@ -1,6 +1,14 @@
 # S1B Owner Implementation Clarifications
 
-**Issued 2026-09-05, at the opening of S1B.**
+**Issued 2026-09-05, at the opening of S1B. Amended 2026-09-05 by the S1B.1 conditional
+gate repair pass.**
+
+**S1B.1 withdrew one clarification and superseded another.** Neither is erased. `S1B-C3` is
+marked **WITHDRAWN** because the implementation invented an economic rule the architecture
+does not establish, and `S1B-C5` is marked **SUPERSEDED** because catalogue membership is
+not matching-grant resolution. Their replacements are `S1B-C3a` and `S1B-C5a`, below. The
+original text of both is retained in full, so the record shows what was claimed and not
+only what survived.
 
 This document records **owner implementation clarifications**. It is not an architecture
 amendment and it is not a correction of the architecture record.
@@ -15,9 +23,11 @@ changes any authority quantity, any MAL figure, or any behaviour S1A implemented
 |---|---|---|
 | **S1B-C1** | `rationale`, `intent_hash` and `I21` — the lineage edge | **No** |
 | **S1B-C2** | The deny code for an unverifiable `ConstructorVersionRecord` | **No** |
-| **S1B-C3** | The retained-processing-fee derivation that reproduces the printed `$1.03` | **No** |
+| ~~**S1B-C3**~~ | ~~The retained-processing-fee derivation that reproduces the printed `$1.03`~~ — **WITHDRAWN IN S1B.1** | **No** |
+| **S1B-C3a** | Retained processing fee provenance — a kernel-owned authoritative **amount** | **No** |
 | **S1B-C4** | `counterparty` for `refund.create` is `null`, and the destination is a parameter | **No** |
-| **S1B-C5** | `window_refs` at S1B come from the catalogue, because grants are a later slice | **No** |
+| ~~**S1B-C5**~~ | ~~`window_refs` at S1B come from the catalogue, because grants are a later slice~~ — **SUPERSEDED IN S1B.1** | **No** |
+| **S1B-C5a** | `window_refs` provenance before Cedar — a kernel-owned resolution boundary | **No** |
 | **S1B-C6** | The closed `reason_code` set for the S1B fixture catalogue | **No** |
 | **S1B-C7** | The deny code for an `option_id` mismatch **before** enumeration exists | **No** |
 
@@ -155,6 +165,20 @@ reserved for the resume path and is not emitted anywhere in S1B.
 
 ## S1B-C3 — the retained-processing-fee derivation
 
+> ### `WITHDRAWN IN S1B.1 — implementation invented an economic rule not established by architecture`
+>
+> The clarification below is retained verbatim as the historical record of what S1B
+> claimed. It is **not in force**. It is replaced by **S1B-C3a**.
+>
+> **Why it was withdrawn.** The architecture establishes three things: that refunds may
+> carry retained processing fees; that a retained processing fee is an authoritative cost
+> component; and that the discriminating fixture is vendor amount `$25.00`, retained fee
+> `$1.03`, total exposure `$26.03`. It establishes **no** universal 2.9% rate, **no**
+> universal `$0.30` fixed charge, **no** rounding formula and **no** processor fee schedule.
+> The derivation below reproduced the printed `$1.03` exactly, and that is precisely the
+> trap: an implementation agent may not invent an economic rule because the rule reproduces
+> a fixture. Agreement with one data point is not authority for a schedule.
+
 ### What the architecture prints
 
 `26 §2.1.1`, verbatim:
@@ -210,6 +234,65 @@ multiplier.
 carries `2500`, `29`, `1000`, `30` and `103` as hand-authored minor-unit integers and does
 its own three-line arithmetic.
 
+*(End of the withdrawn S1B-C3. The oracle no longer carries `29`, `1000` or `30`, and no
+longer carries a rounding primitive — see S1B-C3a.)*
+
+---
+
+## S1B-C3a — retained processing fee provenance
+
+**In force from S1B.1. Replaces the withdrawn S1B-C3.**
+
+For S1B, the retained fee is a **kernel-owned authoritative input to canonicalisation**. The
+fixture value is `$1.03`. **S1B defines no fee schedule and no derivation formula.**
+
+### What that means in the implementation
+
+| | |
+|---|---|
+| Where it arrives | `AuthoritativeCanonicalisationContext.retainedProcessingFee`, typed `AuthoritativeRetainedFee` or `null` (`src/kernel/canonicalisation/authoritativeCost.ts`) |
+| What it carries | an **amount**, the **`source_ref`** of the authoritative record it was read from, and a currency |
+| What the constructor does | **adds** it as a `RETAINED_PROCESSING_FEE` cost component. No multiplication, no rounding, no rate |
+| If it is absent | for a class the catalogue does not declare cost-component-free the constructor **throws**. It does not emit zero cost components — `26 §2.1.1` names that as the defect `R1` exists to close |
+| Model reachability | none. It is `KernelComputed`, it is not a `ProposedIntent` field, and `tests/type-negative/model-windows-into-request.ts` is a compile-negative proving a plain value cannot be assigned into it |
+
+`26 §2.2`'s declared `semantic_option_digest` for `refund.create` is
+`line_id · parent_transaction_id · amount · instrument · reason_code_scope`. **The retained
+fee is not a member, and S1B.1 did not modify that declaration.** The consequence is the
+distinction `tests/canonicalisation/retained-fee-provenance.test.ts` exists to document:
+
+| Change only the authoritative retained fee, `$1.03` to `$1.10` | |
+|---|---|
+| dispatch `monetary_effect` | **unchanged**, `$25.00` |
+| vendor payload, field for field | **unchanged** |
+| `option_id`, `semantic_option_digest` | **unchanged** |
+| idempotency key | **unchanged** |
+| `total_exposure` | **`$26.03` to `$26.10`** |
+| reservation-handoff amount (`I18b`) | **`$26.03` to `$26.10`** |
+| authority commitment over exposure | **changes** |
+| `rationale` | irrelevant throughout |
+
+That is the separation between the **identity of the vendor effect** and the **current
+authoritative economic cost of performing it**.
+
+### The authority commitment
+
+`26 §2.1` declares `dispatch_payload_hash` and it covers the payload only, so it cannot move
+when the economics move without the vendor request moving — which is exactly this case. S1B.1
+therefore states the request's canonical byte form as a function,
+`authorizationRequestCanonicalHash`, covering both exposure figures, every cost component and
+the window refs. It is a **function and not a request field**: `26 §2.1` declares no
+`request_hash`, and inventing one would be the same class of error this pass is repairing.
+
+### What S1B still does not know
+
+Selecting a real processor's fee model — Stripe's, Shopify's, anyone's — is
+adapter/state-ingestion work. That slice populates the same field from a real record and
+changes no money-path code. **No passage in the S1B tree — production, test or
+documentation — now claims that ACOS knows a universal `2.9% + $0.30` schedule.**
+`tests/canonicalisation/source-rules.test.ts` rule 5 asserts it: no fee-schedule type, no
+rate constant, no rounding primitive, and no multiplication in the refund constructor.
+
 ---
 
 ## S1B-C4 — `counterparty` for `refund.create`
@@ -256,6 +339,19 @@ defect.
 
 ## S1B-C5 — `window_refs` at S1B
 
+> ### `SUPERSEDED IN S1B.1`
+>
+> The clarification below is retained verbatim as the historical record. It is **not in
+> force**. It is replaced by **S1B-C5a**.
+>
+> **Why it was superseded.** It is too strong to become production semantics. The
+> architecture defines `window_refs` as the windows the **matching grants** reference, and
+> the action catalogue alone does not determine the complete active grant set.
+> "Superset-safe" was an argument about the direction of the error, not a claim that the
+> source was the right object — and it was not the right object. Cedar/policy/grant
+> integration is deliberately not part of S1B, so the honest position is that S1B **does not
+> resolve** the set at all: it carries one it was given.
+
 ### The passage, quoted
 
 `26 §2.1`, verbatim:
@@ -277,6 +373,51 @@ declares every window the class can touch, and grant matching can only narrow it
 policy slice replaces this source with the grant intersection, and the contract records it
 as a **DEFERRED** row rather than a completed one. No S1B assertion depends on
 `window_refs` being the grant-derived set.
+
+*(End of the superseded S1B-C5. The catalogue no longer declares windows at all — see
+S1B-C5a.)*
+
+---
+
+## S1B-C5a — window-ref provenance before Cedar
+
+**In force from S1B.1. Supersedes S1B-C5.**
+
+`window_refs` are supplied by a **kernel-owned authoritative grant/window-resolution
+boundary**. S1B fixtures provide that boundary directly. **Catalogue membership alone is not
+grant resolution.** Actual matching-grant derivation remains **open** to the Cedar/policy
+slice.
+
+### What that means in the implementation
+
+| | |
+|---|---|
+| The boundary | `AuthoritativeGrantWindowContext` (`src/kernel/canonicalisation/grantWindows.ts`) — a type declaration and its rationale, with no executable statement in the file |
+| Where it arrives | `AuthoritativeCanonicalisationContext.grantWindows`, `KernelComputed` |
+| What the canonicaliser does | **carries** the values into `request.window_refs`, and into the reservation offer |
+| What it does **not** do | consult the catalogue. `ActionCatalogueEntry` **no longer declares windows at all** — the field was removed rather than left in place for the wrong reader |
+| S1B fixture provenance | kernel/test-controlled, never model-supplied, never inferred from `rationale`; `resolvedBy` records in the value itself that it is a fixture and not a resolution |
+
+### The four properties, and where they are proved
+
+`tests/canonicalisation/window-ref-provenance.test.ts`:
+
+1. **raw/model intent cannot supply `window_refs`** — `MALFORMED / EXTRA_FIELD` at the top
+   level, `SELECTOR_MALFORMED / EXTRA_FIELD` nested inside the selector, and the parsed
+   intent carries no window key at all. Reinforced by the compile-negative
+   `tests/type-negative/model-windows-into-request.ts`;
+2. **changing the authoritative grant/window context changes `request.window_refs`** —
+   narrowing narrows, an empty grant set yields an empty list, and a window the catalogue
+   never mentioned is carried verbatim;
+3. **changing `rationale` cannot change them** — identical window refs and an identical
+   authority commitment across an innocuous and an injection-shaped rationale;
+4. **the action catalogue alone is insufficient** — no catalogue entry carries a window
+   field, the catalogue source names no window identifier, the constructor reads
+   `context.grantWindows.windowRefs` and nothing catalogue-shaped, and two canonicalisations
+   of the *same class, resource and option* produce different window sets.
+
+**No Cedar was implemented to solve this**, and nothing in S1B claims the carried values are
+actual matching-grant resolution.
 
 ---
 

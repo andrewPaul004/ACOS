@@ -39,6 +39,11 @@ import type { CostComponent, Exposure, RefundParameters } from '../../src/kernel
  * identical and correct, which is precisely why the defect is dangerous rather than
  * obvious.
  *
+ * S1B.1 sharpens it. The authoritative retained fee is now sitting right there on
+ * `context.retainedProcessingFee`, as an amount, requiring no derivation at all. This
+ * constructor ignores it. That is a starker form of the same defect and the fixture still
+ * has to catch it.
+ *
  * This mirrors S1A's `tests/negative-controls/unsafe-schema.ts`, which carries a
  * deliberately weakened guard for the same reason.
  */
@@ -94,7 +99,7 @@ export function constructRefundCreateUnsafely(input: ConstructorInput): Construc
     customerNovelty: context.customerNovelty,
     channel: null,
     communicationExposure: null,
-    windowRefs: catalogue.declaredWindows,
+    windowRefs: context.grantWindows.windowRefs,
     evidenceRefs: [],
     dispatchPayload: {
       adapter: computed(catalogue.adapter),

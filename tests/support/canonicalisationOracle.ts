@@ -17,28 +17,19 @@
  *
  * Not the constructor, not the exposure calculator, not `money.ts`. Every figure below is
  * a hand-authored integer count of minor units and every operation below is written out
- * here. `tests/canonicalisation/oracle-independence.test.ts` reads this file's source and
- * fails if an import of `src/` ever appears.
- *
- * `36 §0` permits the oracle to do elementary arithmetic itself, and it does: one
- * multiplication, one half-away-from-zero rounding, one addition.
+ * here. `tests/canonicalisation/source-rules.test.ts` reads this file's source and fails if
+ * an import of `src/` ever appears.
  * ---------------------------------------------------------------------------------
  */
 
 // =====================================================================================
-// The oracle's own arithmetic.  Three operations, written out.
+// The oracle's own arithmetic.  One addition and one renderer, written out.
+//
+// S1B.1 removed `divideRoundHalfAway`. It existed only to reproduce the withdrawn 2.9%
+// schedule, and a rounding primitive sitting in the oracle is a standing invitation to
+// reintroduce the derivation. `tests/canonicalisation/source-rules.test.ts` asserts this
+// file carries no percentage arithmetic at all.
 // =====================================================================================
-
-/** `round_half_away_from_zero(a / b)` over integers. */
-export function divideRoundHalfAway(numerator: bigint, denominator: bigint): bigint {
-  if (denominator <= 0n) throw new Error('oracle: denominator must be positive');
-  const negative = numerator < 0n;
-  const magnitude = negative ? -numerator : numerator;
-  const quotient = magnitude / denominator;
-  const remainder = magnitude % denominator;
-  const rounded = remainder * 2n >= denominator ? quotient + 1n : quotient;
-  return negative ? -rounded : rounded;
-}
 
 /** Render a minor-unit count at scale 2, the way a NUMERIC(18,2) prints. */
 export function formatMinor(minor: bigint): string {
@@ -58,27 +49,42 @@ export function formatMinor(minor: bigint): string {
  *    refund with a $1.03 retained fee computes total_exposure = $26.03 and denies
  *    PER_ACTION against a $25.00 cap."
  *
- * `51 §3.1`'s note prints the same three figures. The fee SCHEDULE is not printed in the
- * architecture; it is the owner clarification S1B-C3 — the Stripe-family standard card
- * rate, 2.9% + $0.30 — and it is the schedule that reproduces the printed $1.03.
+ * `51 §3.1`'s note prints the same three figures.
+ *
+ * ---------------------------------------------------------------------------------
+ * S1B.1 — THERE IS NO FEE SCHEDULE HERE, clarification S1B-C3a
+ *
+ * The original oracle carried `29`, `1000` and `30` and recomputed `$1.03` as
+ * `round_half_away(2500 × 29/1000) + 30`. Reproducing a printed figure is not the same as
+ * being entitled to the rule that reproduces it. The architecture prints `$1.03` and names
+ * its source as an authoritative record; it establishes no rate, no fixed charge and no
+ * rounding convention. The derivation was withdrawn with owner clarification S1B-C3.
+ *
+ * What remains is what the architecture actually prints: hand-authored figures, and one
+ * addition. That addition is `36 §0`-permitted elementary arithmetic and is the only
+ * operation this file performs on them.
+ * ---------------------------------------------------------------------------------
  */
 export const VC_C1 = Object.freeze({
   // --- inputs, hand-authored -----------------------------------------------------------
   /** The refund amount visible to the vendor: $25.00. */
   refundAmountMinor: 2500n,
-  /** The processor's published rate: 2.9%, as 29/1000. */
-  feePercentNumerator: 29n,
-  feePercentDenominator: 1000n,
-  /** The processor's published fixed component: $0.30. */
-  feeFixedMinor: 30n,
+  /**
+   * The AUTHORITATIVE retained processing fee for this fixture: $1.03.
+   *
+   * An amount, supplied to the canonicaliser by kernel-owned authoritative state. Not
+   * derived here, and not derivable here — there is no schedule in this file to derive it
+   * from, which is the point.
+   */
+  authoritativeRetainedFeeMinor: 103n,
   currency: 'USD',
 
   // --- expected outputs, hand-authored ---------------------------------------------------
-  /** $1.03.  $25.00 × 2.9% = $0.725 -> $0.73 half away from zero;  $0.73 + $0.30 = $1.03. */
+  /** $1.03 — the authoritative fee, as the emitted cost component. */
   expectedRetainedFeeMinor: 103n,
   /** $25.00 — the money in the dispatched request (I18a). */
   expectedVendorAmountMinor: 2500n,
-  /** $26.03 — the economic loss, and the reserved quantity (I18b). */
+  /** $26.03 — the economic loss, and the reserved quantity (I18b).  $25.00 + $1.03. */
   expectedTotalExposureMinor: 2603n,
 
   // --- the per-action cap this fixture discriminates against ------------------------------
@@ -87,27 +93,47 @@ export const VC_C1 = Object.freeze({
 } as const);
 
 /**
- * The oracle's own recomputation of the fee, from the schedule, by its own arithmetic.
+ * The MUTATED authoritative fee, for the S1B.1 discriminating test.
  *
- * `tests/canonicalisation/oracle-independence.test.ts` asserts this agrees with the
- * hand-authored `expectedRetainedFeeMinor`, so a typo in either is caught before the
- * fixture is used to judge production code. This is the same self-check discipline
- * `tests/integration/exposure/oracle-self-check.test.ts` applies in S1A.
+ * The same semantic refund option, at a different authoritative economic cost of performing
+ * it: $1.03 -> $1.10. The vendor still sees $25.00 and the option identity does not move,
+ * because `26 §2.2`'s declared `semantic_option_digest` for `refund.create` is
+ * "line_id · parent_transaction_id · amount · instrument · reason_code_scope" and the
+ * retained fee is not among its members. Total exposure moves $26.03 -> $26.10.
+ *
+ * This pair is what separates the IDENTITY of the vendor effect from the CURRENT
+ * AUTHORITATIVE COST of performing it.
  */
+export const VC_C1_MUTATED_FEE = Object.freeze({
+  /** $1.10. */
+  authoritativeRetainedFeeMinor: 110n,
+  /** $26.10.  $25.00 + $1.10. */
+  expectedTotalExposureMinor: 2610n,
+} as const);
+
+/** The fixture's fee, restated as the oracle's own value rather than read from production. */
 export function oracleRetainedFeeMinor(): bigint {
-  const percentagePart = divideRoundHalfAway(
-    VC_C1.refundAmountMinor * VC_C1.feePercentNumerator,
-    VC_C1.feePercentDenominator,
-  );
-  return percentagePart + VC_C1.feeFixedMinor;
+  return VC_C1.authoritativeRetainedFeeMinor;
 }
 
+/**
+ * The oracle's own total, by its own arithmetic.
+ *
+ * `tests/canonicalisation/source-rules.test.ts` asserts this agrees with the hand-authored
+ * `expectedTotalExposureMinor`, so a typo in either is caught before the fixture is used to
+ * judge production code — the same self-check discipline
+ * `tests/integration/exposure/oracle-self-check.test.ts` applies in S1A.
+ */
 export function oracleTotalExposureMinor(): bigint {
-  return VC_C1.refundAmountMinor + oracleRetainedFeeMinor();
+  return VC_C1.refundAmountMinor + VC_C1.authoritativeRetainedFeeMinor;
+}
+
+export function oracleMutatedTotalExposureMinor(): bigint {
+  return VC_C1.refundAmountMinor + VC_C1_MUTATED_FEE.authoritativeRetainedFeeMinor;
 }
 
 // =====================================================================================
-// The expected vendor payload and the expected semantic-digest inputs.
+// The expected vendor payload, the semantic-digest inputs, and the grant windows.
 // =====================================================================================
 
 /**
@@ -131,6 +157,20 @@ export const VC_C1_ORDER = Object.freeze({
   lineRefundableRemainingMinor: 4000n,
   customerNovelty: 'RETURNING',
 } as const);
+
+/**
+ * The window refs the fixture's authoritative grant/window boundary resolves — S1B-C5a.
+ *
+ * Hand-authored here, in the oracle, precisely because they are NOT derivable from anything
+ * the production tree holds. `51 §2` scopes these two windows to `refund.create`, but that
+ * is catalogue scoping and `26 §2.1` asks for "every named window the matching grants
+ * reference". S1B resolves no grant, so the fixture states the answer and the contract
+ * records that it is stated rather than derived.
+ */
+export const VC_C1_EXPECTED_WINDOW_REFS: readonly string[] = Object.freeze([
+  'W_DAY_REFUND',
+  'W_MONTH_REFUND',
+]);
 
 /**
  * The dispatch payload a correct constructor must produce, hand-authored field by field.

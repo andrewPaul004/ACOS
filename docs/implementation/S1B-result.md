@@ -8,27 +8,32 @@
 ## Verdict
 
 ```text
-S1B CONDITIONAL — LOCAL REPAIR REQUIRED
+S1B.1 PASS — S1B ACCEPTED
 ```
 
-**Every S1B-specific criterion is met.** The single condition is a **pre-existing,
-test-only race in the S1A test harness**, found during S1B's full-suite runs and
-deliberately **not repaired here**, because the S1B mandate says: *"Do not repair unrelated
-S1A behavior inside S1B."*
+**Superseded verdict, retained as the record:**
+
+```text
+S1B CONDITIONAL — LOCAL REPAIR REQUIRED     (the original S1B result)
+```
+
+S1B was returned conditional on three local repairs. All three are done, the complete suite
+is green, and the S1B.1 evidence is in **§S1B.1** below. The original S1B verdict and the
+reasoning that produced it are left in place throughout this document: **S1B found the VC-S8
+harness race rather than hiding it, invented an economic rule it was not entitled to, and
+called catalogue membership grant resolution.** Two of those were defects and the record
+should say so.
 
 | PASS criterion, from the S1B mandate | Status |
 |---|---|
-| Existing S1A gate still green | **CONDITIONAL** — 157/157 pass on an idle machine; one case is load-sensitively flaky. See §11 and `S1B-test-matrix.md §5` |
-| All S1B tests green | **YES** — 200/200 |
-| Independent fixture discriminates `$26.03` from `$25.00` | **YES** |
-| `I21` demonstrated structurally | **YES** — a real `tsc --noEmit` compile-negative project with a positive control |
+| Existing S1A gate still green | **YES** — 157/157. The load-sensitive S1A **test harness** race is repaired as `S1A-H5`; no S1A production source changed |
+| All S1B tests green | **YES** — 236/236 (229 canonicalisation + 7 negative control) |
+| Independent fixture discriminates `$26.03` from `$25.00` | **YES** — and the oracle now reaches it by one addition over two hand-authored figures, not by a schedule |
+| `I21` demonstrated structurally | **YES** — a real `tsc --noEmit` compile-negative project, six negative files and a positive control |
 | Rationale demonstrated non-authoritative | **YES** |
 | Constructor signing / version identity works | **YES** — real Ed25519 |
 | No hidden policy engine added | **YES** — asserted by test |
 | No architecture invariant weakened | **YES** |
-
-The required repair is **test-only**, touches no production code, and changes no authority
-quantity. It is a bounded S1A.2.
 
 ---
 
@@ -156,9 +161,14 @@ offered to the reservation layer:  $26.03
 
 Every expected value comes from `tests/support/canonicalisationOracle.ts`, which imports
 **nothing at all** — not the constructor, not the exposure calculator, not `money.ts`. It
-carries hand-authored minor-unit integers and does its own three-line arithmetic. The fee
-derivation is owner clarification S1B-C3 and reproduces the architecture's printed `$1.03`
-exactly.
+carries hand-authored minor-unit integers and does its own arithmetic.
+
+**S1B.1 correction.** This previously read *"the fee derivation is owner clarification
+S1B-C3 and reproduces the architecture's printed `$1.03` exactly"*. `S1B-C3` is
+**withdrawn**: reproducing the printed figure was not authority for the rule that reproduced
+it. Under `S1B-C3a` the `$1.03` is a kernel-owned authoritative **amount**, the oracle
+carries it as a hand-authored `103n` and performs one addition, and there is no schedule
+anywhere in the tree.
 
 **No reservation is taken.** The `$26.03` is offered through
 `ports/reservationHandoff.ts`, a port that opens no transaction and takes no lock. Faking a
@@ -255,6 +265,11 @@ reconciler's `AFTER_BEGIN` and its lock acquisition, so the conductor awaits loc
 rather than assuming it — and the same latent race exists in ORDERING A and ORDERING B.
 Full analysis: `S1B-test-matrix.md §5`.
 
+> **S1B.1: REPAIRED.** Exactly that barrier was added, to all three cases sharing the race,
+> as finding `S1A-H5`. 50 consecutive repetitions — 25 idle, 25 under deliberate CPU load —
+> with **zero** harness timeouts and **zero** `40P01`. No production money-path source
+> changed. See §S1B.1 and `S1A-implementation-log.md` §20.
+
 ### 12. Did any architecture conflict emerge?
 
 **No contradiction of the kind S1A.1 found in `30 §5.2`.** Seven places where the
@@ -305,6 +320,10 @@ Other gates, stated so absence is not mistaken for oversight:
 ### 14. Is it safe to proceed to the enumeration / content-addressed-selector increment?
 
 **Yes, technically — and only after the §11 repair, procedurally.**
+
+> **S1B.1: the §11 repair has landed**, together with the two provenance repairs the owner
+> review raised. That discharges the procedural condition. It does **not** by itself
+> authorise the next slice — see the closing note of §S1B.1.
 
 The boundary the next increment needs is in place and is the right shape:
 
@@ -359,16 +378,188 @@ mirror · the AI CEO or any LLM · any other production action constructor.
 
 ---
 
-## The condition on this result
+## The condition on this result — DISCHARGED IN S1B.1
 
-One repair, test-only, bounded:
+The original condition, retained as written:
 
 > Add a barrier between the reconciler's `AFTER_BEGIN` and its `window_balance` lock
 > acquisition in `tests/integration/exposure/vc-s8-realised-standing-atomicity.test.ts`, so
 > the conductor awaits lock ownership rather than assuming it. Apply it to all three cases
 > that share the race — the over-commit case, ORDERING A and ORDERING B.
 
-No production code changes. No authority quantity changes. No architecture change.
+**Done**, together with two further repairs the owner review raised. See §S1B.1.
 
-**Do not begin the enumeration / selector increment until that repair lands and the full
-suite is green.**
+---
+
+# S1B.1 — the conditional gate repair pass
+
+**Verdict: `S1B.1 PASS — S1B ACCEPTED`.**
+
+Three repairs. No enumeration/selector work begun, no Cedar implemented, no S1B scope
+expanded.
+
+## Repair 1 — VC-S8 deterministic ordering (`S1A-H5`)
+
+**A test-harness repair only.** `src/kernel/exposure/reconciler.ts`, `lockOrder.ts` and
+`retry.ts` are byte-identical to their accepted S1A form.
+
+The reconciler participant now takes the declared locks itself — through the one declared
+`acquireMoneyPathLocks` helper, in the one declared order — and announces `AFTER_LOCK` only
+after `SELECT … FOR UPDATE` has returned. The competing authorisation is released only once
+that barrier is observed:
+
+```text
+reconciler BEGIN
+    |
+reconciler acquires the required window_balance lock
+    |
+test observes the explicit AFTER_LOCK barrier          <- ownership ESTABLISHED
+    |
+ONLY NOW release the competing authorisation
+```
+
+Applied to **every** case sharing the race — `ORDERING A`, the over-commit case, and
+`ORDERING B`'s reconciler side — not only the one that happened to fail. Full detail:
+`S1A-implementation-log.md` §20.
+
+### The stress verification
+
+| Requirement | Required | Measured |
+|---|---|---|
+| consecutive repetitions of the affected file | ≥ 25 | **50** — 25 serial on an idle machine, then **25 more under deliberate CPU load** (six busy workers), because load is the condition the original failure needed |
+| harness timeouts | 0 | **0** |
+| repetitions passing | all | **50 / 50**, 6 tests each, 300 test executions |
+| required real `40001` still observable | yes | **asserted, not assumed** — `ORDERING A` now asserts the authorisation absorbed **≥ 1** serialisation retry, because the reconciler commits underneath it; `ORDERING B` asserts **exactly 0**, because the authorisation takes the row first. The two orderings are now distinguished rather than presumed alike |
+| real `40P01` on the correct lock-order path | none | **0** — zero occurrences of the SQLSTATE across all 50 runs |
+| reversed-order `40P01` negative control retained | yes | unchanged in `lock-order.test.ts`, still deliberately producing a real deadlock |
+
+That last pair is the point: the deadlock detector is demonstrably able to fire, and it does
+not fire on the declared order.
+
+## Repair 2 — the invented refund fee schedule removed
+
+`S1B-C3` is **WITHDRAWN**; `S1B-C3a` is in force.
+
+| | |
+|---|---|
+| removed | `ProcessorFeeSchedule`, the 2.9% rate, the `$0.30` fixed charge, the rounding formula, the `mulByRational` call in the refund constructor, and the oracle's `divideRoundHalfAway` |
+| added | `AuthoritativeRetainedFee` — an **amount**, a `source_ref` naming the record it was read from, and a currency |
+| where it lives | `AuthoritativeCanonicalisationContext.retainedProcessingFee`, `KernelComputed`. **Not** on `ProposedIntent`, not model-controlled, no real processor fetched, no real fee model selected |
+| when absent | the constructor **throws** for a class the catalogue does not declare cost-component-free. It does not emit zero cost components — `26 §2.1.1` names that as the defect `R1` exists to close |
+
+### The discriminating pair
+
+`tests/canonicalisation/retained-fee-provenance.test.ts`, 14 tests, all passing.
+
+| Change only the authoritative retained fee, `$1.03` to `$1.10` | Required | Result |
+|---|---|---|
+| dispatch monetary effect | stays `$25.00` | **PASS** |
+| vendor payload, semantically | unchanged | **PASS** — and its hash is unchanged |
+| `option_id` | unchanged | **PASS** — the refund `semantic_option_digest` does not include the retained fee, and S1B.1 did not modify that declaration |
+| total exposure | `$26.03` to `$26.10` | **PASS** |
+| reservation-handoff amount | changes accordingly | **PASS** |
+| the authority/request hash committing to exposure | changes | **PASS** |
+| rationale | irrelevant | **PASS** |
+
+The commitment is `authorizationRequestCanonicalHash`, added in S1B.1 because
+`dispatch_payload_hash` covers the payload only and so cannot move when the economics move
+without the vendor request moving. It is a **function, not a request field**: `26 §2.1`
+declares no `request_hash`, and inventing one would repeat the error this pass is repairing.
+
+## Repair 3 — `window_refs` provenance
+
+`S1B-C5` is **SUPERSEDED**; `S1B-C5a` is in force.
+
+`ActionCatalogueEntry.declaredWindows` was **removed** — the field is gone, not merely
+unread, so catalogue membership cannot be mistaken for grant resolution. `window_refs` now
+arrive through `AuthoritativeGrantWindowContext`, a type declaration with no executable
+statement in its file, and the canonicaliser **carries** them.
+
+`tests/canonicalisation/window-ref-provenance.test.ts`, 14 tests, all passing.
+
+| Required proof | Result |
+|---|---|
+| raw/model intent cannot supply `window_refs` | **PASS** — `MALFORMED / EXTRA_FIELD` at the top level, `SELECTOR_MALFORMED / EXTRA_FIELD` nested in the selector, no window key on the parsed intent, plus the compile-negative `model-windows-into-request.ts` |
+| changing the authoritative grant/window context changes `window_refs` | **PASS** — narrowing narrows, an empty grant set empties it, a window outside catalogue scope is carried verbatim |
+| changing `rationale` cannot change them | **PASS** — an injection-shaped rationale naming other windows leaves both the refs and the authority commitment identical |
+| the catalogue alone cannot manufacture a different set | **PASS** — no catalogue entry has a window field, the catalogue source names no window id, and the same class/resource/option yields different sets |
+
+**No Cedar was implemented**, and nothing claims the carried values are actual matching-grant
+resolution — the fixture's `resolvedBy` says `fixture:` in the value itself.
+
+## S1B-C4 deliberately unchanged
+
+For `refund.create` the architecture distinguishes the original payer/customer from a
+`counterparty` meaning a payee, supplier or settlement destination. A refund to the original
+instrument is `INBOUND_ORIGINAL_INSTRUMENT` and is governed by customer novelty and `P4a`
+rather than counterparty novelty, so a null counterparty remains consistent with the
+canonical type. The review of `S1B-C3` and `S1B-C5` is not a reason to redesign it, and it
+was not redesigned.
+
+## The gate
+
+```text
+npm run db:down     container and volume removed
+npm run db:up       control + audit containers healthy
+npm run typecheck   clean
+npm run lint        clean, --max-warnings 0
+npm test            33 files, 393 tests, ALL PASSING
+```
+
+| Requirement | Result |
+|---|---|
+| complete suite green | **YES** — 33 files, 393 tests |
+| VC-S8 repeated ≥ 25 times, zero harness timeouts | **YES** — 50 runs, 0 timeouts |
+| S1B canonicaliser suite repeated for determinism | **YES** — 10 consecutive runs, **244 / 244 every time**, identical results |
+| accepted S1A behaviour still green | **YES** — 157/157; no S1A production source edited |
+| no authority ceiling or MAL quantity changed | **YES** |
+| the `$25.00 / $1.03 / $26.03` fixture still passes | **YES**, and still independently discriminates against the retained-fee escape |
+
+### One honest observation, recorded rather than smoothed over
+
+`spikes/durable-execution/spike.test.ts` → *"kill point 7 — a CONCURRENT retry of the same
+work item applies it once"* **failed once**, in the first full-suite run of the gate, on
+`dispatchCount <= 1` (observed 2). It passed on the immediately following full-suite run and
+in **5 / 5** isolated repetitions.
+
+What this is, and is not:
+
+- **it is not S1A or S1B code.** `spikes/` is the ADR-IMP-002 durable-execution
+  investigation. No S1B.1 change touches it, directly or transitively;
+- **the money invariant held in the failing run.** `realised_monetary` equalled the delta
+  and `journal_next_seq` was `2` — the ledger moved **exactly once**. What duplicated was the
+  spike's own mock external dispatch, which is the candidate-B property the spike exists to
+  measure;
+- **it is load-sensitive**, in the same way the VC-S8 harness was before `S1A-H5`.
+
+It is recorded here because the S1B mandate's standard is that a defect found is a defect
+reported. It is **not** claimed as repaired, and it is a candidate for a bounded spike pass
+if the owner wants the spike's own concurrency claim tightened.
+
+## What S1B.1 added to the tree
+
+| File | What |
+|---|---|
+| `src/kernel/canonicalisation/authoritativeCost.ts` | `AuthoritativeRetainedFee` — the fee as an authoritative amount |
+| `src/kernel/canonicalisation/grantWindows.ts` | `AuthoritativeGrantWindowContext` — the grant/window-resolution boundary |
+| `authorizationRequestCanonicalHash` in `canonicaliser.ts` | the authority commitment over exposure |
+| `tests/canonicalisation/retained-fee-provenance.test.ts` | 14 tests — fixture A and mutation B |
+| `tests/canonicalisation/window-ref-provenance.test.ts` | 14 tests — the four provenance properties |
+| `tests/type-negative/model-windows-into-request.ts` | a sixth compile-negative: model-supplied windows, grant context, retained fee |
+| `source-rules.test.ts` rules 5 and 6 | no fee schedule survives; no catalogue-derived windows survive |
+
+## What S1B.1 removed
+
+`ProcessorFeeSchedule` · the 2.9% + `$0.30` derivation · `ActionCatalogueEntry.declaredWindows`
+· the oracle's `divideRoundHalfAway` and its rate constants · the `$40.00 → $1.46` fixture
+row that the withdrawn schedule produced.
+
+## Still open, unchanged by S1B.1
+
+**Full VC-C1 remains PARTIAL** — the construction half passes and `DENY: PER_ACTION` is a
+policy result S1B does not produce. VC-C2, VC-C3, VC-A3, the resume half of VC-C4, `I18b`'s
+runtime equality, `I18d` and `I42`'s database uniqueness all remain **OPEN**, exactly as
+`S1B-test-matrix.md §3` records.
+
+**Do not begin the enumeration / selector increment on the strength of this document alone.**
+S1B.1 discharges the S1B conditions; it does not authorise the next slice.

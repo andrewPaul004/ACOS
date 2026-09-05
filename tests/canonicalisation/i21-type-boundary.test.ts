@@ -101,12 +101,13 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and five negative files', () => {
+  it('the fixture directory contains a positive control and six negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       'fifth-field-request.ts',
       'intent-as-context.ts',
       'model-amount-into-exposure.ts',
+      'model-windows-into-request.ts',
       'positive-control.ts',
       'rationale-into-request.ts',
       'rationale-parsed.ts',
@@ -150,6 +151,14 @@ describe('every I21 violation fails to compile, on the expected line', () => {
     [
       'model-amount-into-exposure.ts',
       'assigning a model-supplied amount into exposure',
+      'TS2322',
+    ],
+    [
+      // S1B.1, clarifications S1B-C3a and S1B-C5a. Both are authoritative kernel inputs,
+      // and the type says so: neither a window list nor a retained fee has an assignable
+      // position on the request or the context unless it was minted by `computed()`.
+      'model-windows-into-request.ts',
+      'assigning model-supplied window refs or a model-supplied retained fee',
       'TS2322',
     ],
   ];

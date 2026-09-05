@@ -147,6 +147,20 @@ async function finalTerms(): Promise<{
 }
 
 /**
+ * The outcome of the authorising side, with the serialisation retries it absorbed.
+ *
+ * `retries` is reported, not merely counted. `36 §0`'s discipline cuts both ways: a
+ * concurrency test that no longer produces the contention it claims to test has stopped
+ * being a test, and after S1A-H5 made the interleaving deterministic the retry became a
+ * property to ASSERT rather than an incidental. See the `40001` assertions below.
+ */
+interface AuthorisationOutcome {
+  readonly decision: 'PERMIT' | 'WINDOW_EXHAUSTED';
+  /** Real `40001` serialisation failures absorbed by `withSerialisationRetry`. */
+  readonly retries: number;
+}
+
+/**
  * The authorising side: take the declared locks, then commit `amount`.
  *
  * A guard refusal propagates out of the transaction so PostgreSQL rolls it back — the
@@ -155,12 +169,13 @@ async function finalTerms(): Promise<{
  * DENIAL, and `26 §7` step R denials commit nothing.
  */
 function authorisation(conductor: Conductor, amount: string) {
-  return async (): Promise<'PERMIT' | 'WINDOW_EXHAUSTED'> => {
+  return async (): Promise<AuthorisationOutcome> => {
     const me = conductor.participant('auth');
     const client = await harness.connect();
     try {
+      let retries = 0;
       try {
-        await withSerialisationRetry(
+        const outcome = await withSerialisationRetry(
           client,
           async (tx) => {
             await me.at(POINT.AFTER_BEGIN);
@@ -180,20 +195,45 @@ function authorisation(conductor: Conductor, amount: string) {
           },
           { maxAttempts: 25 },
         );
+        retries = outcome.retries;
       } catch (error) {
         if (!hasSqlstate(error, SQLSTATE.I3_WINDOW_EXHAUSTED)) throw error;
         await me.at(POINT.AFTER_COMMIT);
-        return 'WINDOW_EXHAUSTED';
+        return { decision: 'WINDOW_EXHAUSTED', retries };
       }
       await me.at(POINT.AFTER_COMMIT);
-      return 'PERMIT';
+      return { decision: 'PERMIT', retries };
     } finally {
       client.release();
     }
   };
 }
 
-/** The reconciler side: take the same declared locks, then record realised spend. */
+/**
+ * The reconciler side: take the same declared locks, then record realised spend.
+ *
+ * ---------------------------------------------------------------------------------
+ * S1A-H5 — WHY THIS SIDE HAS AN `AFTER_LOCK` RENDEZVOUS
+ *
+ * The S1A harness gave the reconciler only `AFTER_BEGIN` and `AFTER_WRITE`. `AFTER_BEGIN`
+ * proves the transaction is open and its snapshot taken; it proves NOTHING about who owns
+ * the `window_balance` row. A conductor that released the competing authorisation on the
+ * strength of `AFTER_BEGIN` was asserting an ordering it had not established, and under
+ * load the authorisation sometimes reached the row first. The reconciler then blocked
+ * behind an authorisation parked at a barrier the conductor would not release until the
+ * reconciler had written — a harness deadlock, observed as 3 timeouts in 14 runs.
+ *
+ * The repair is a rendezvous at ACTUAL LOCK OWNERSHIP. The lock is taken here, through the
+ * one declared helper and in the one declared order, and the barrier is announced only
+ * once `SELECT … FOR UPDATE` has returned. `recordRealisedSpend` then re-acquires the same
+ * rows in the same order inside the same transaction, which PostgreSQL satisfies from the
+ * locks already held: a no-op re-acquisition, not a second lock site.
+ *
+ * NO PRODUCTION MONEY-PATH SEMANTICS CHANGED. `src/kernel/exposure/reconciler.ts` is
+ * byte-identical to its accepted S1A form; this is a test-harness repair, and the ordering
+ * it establishes is the one the S1A test already claimed in its comments.
+ * ---------------------------------------------------------------------------------
+ */
 function reconciler(conductor: Conductor, delta: string) {
   return async (): Promise<void> => {
     const me = conductor.participant('recon');
@@ -203,6 +243,16 @@ function reconciler(conductor: Conductor, delta: string) {
         client,
         async (tx) => {
           await me.at(POINT.AFTER_BEGIN);
+          // The declared money-path lock order, taken through the single helper — the same
+          // call `recordRealisedSpend` makes below, with the same spec.
+          await acquireMoneyPathLocks(tx, {
+            companyId: COMPANY_ID,
+            windowInstances: [{ windowId: WINDOW, windowInstanceKey: key }],
+            includeStandingRows: true,
+            includeJournalCounter: false,
+          });
+          // Announced only now: the row is HELD, not merely reached for.
+          await me.at(POINT.AFTER_LOCK);
           await recordRealisedSpend(tx, {
             companyId: COMPANY_ID,
             standingAuthorizationId: 'sa_live',
@@ -277,18 +327,25 @@ describe('ORDERING A — the reconciler begins while the authorisation acquires 
 
       // 1. The reconciler opens its transaction.
       await conductor.step('recon', POINT.AFTER_BEGIN);
-      // 2. The authorisation opens its transaction and reaches for the lock. Because the
-      //    reconciler is inside recordRealisedSpend it already holds the window_balance
-      //    row, so the authorisation blocks here — which is exactly the property under
-      //    test.
-      await conductor.step('auth', POINT.AFTER_BEGIN);
 
-      // 3. The reconciler has written. Observe from a third backend BEFORE it commits.
+      // 2. THE RENDEZVOUS (S1A-H5). Wait for the reconciler to actually OWN the
+      //    window_balance row lock. `AFTER_BEGIN` proved only that a snapshot was taken;
+      //    releasing the authorisation on the strength of it was a race the harness lost
+      //    under load. Nothing below runs until `SELECT … FOR UPDATE` has returned.
+      await conductor.until('recon', POINT.AFTER_LOCK);
+
+      // 3. ONLY NOW is the competing authorisation released. It reaches for the same row
+      //    and must block behind the reconciler — which is exactly the property under
+      //    test, and is now established rather than hoped for.
+      await conductor.step('auth', POINT.AFTER_BEGIN);
+      conductor.release('recon', POINT.AFTER_LOCK);
+
+      // 4. The reconciler has written. Observe from a third backend BEFORE it commits.
       await conductor.until('recon', POINT.AFTER_WRITE);
       observations.push(await observedSum(observer));
       conductor.release('recon', POINT.AFTER_WRITE);
 
-      // 4. Let both run to completion, sampling as they go.
+      // 5. Let both run to completion, sampling as they go.
       await conductor.step('recon', POINT.AFTER_COMMIT);
       observations.push(await observedSum(observer));
 
@@ -303,7 +360,20 @@ describe('ORDERING A — the reconciler begins while the authorisation acquires 
       const [authResult] = await authRun;
       expect(reconResult?.status, `reconciler failed: ${String(reconResult?.status === 'rejected' ? reconResult.reason : '')}`).toBe('fulfilled');
       expect(authResult?.status, `authorisation failed: ${String(authResult?.status === 'rejected' ? authResult.reason : '')}`).toBe('fulfilled');
-      if (authResult?.status === 'fulfilled') expect(authResult.value).toBe('PERMIT');
+      if (authResult?.status === 'fulfilled') {
+        expect(authResult.value.decision).toBe('PERMIT');
+        // The required real `40001`, still observable on the CORRECT lock-order path.
+        // S1A implementation log §8: at SERIALIZABLE a `SELECT … FOR UPDATE` reaching a row
+        // a concurrent transaction has already committed raises `40001` rather than
+        // re-reading it. The reconciler commits underneath the waiting authorisation here,
+        // so exactly that must happen — and it is real contention absorbed by the
+        // ACOS-owned retry, not a deadlock and not a harness artefact.
+        expect(
+          authResult.value.retries,
+          'the authorisation absorbed no 40001; the interleaving no longer produces the ' +
+            'contention this case exists to test',
+        ).toBeGreaterThanOrEqual(1);
+      }
 
       // ASSERTION 1 — no unauthorised transient headroom. Every observation, at every
       // point in the interleaving, is within the ceiling. A sample below the conservative
@@ -343,14 +413,17 @@ describe('ORDERING B — the authorisation begins while the reconciler records s
       const authRun = Promise.allSettled([authorisation(conductor, HEADROOM)()]);
       const reconRun = Promise.allSettled([reconciler(conductor, SPEND)()]);
 
-      // 1. The authorisation opens and takes the window_balance lock.
+      // 1. The authorisation opens and takes the window_balance lock. This side already
+      //    had the S1A-H5 rendezvous: `AFTER_LOCK` here is announced after
+      //    `SELECT … FOR UPDATE` returns, so the ownership is established, not assumed.
       await conductor.step('auth', POINT.AFTER_BEGIN);
       await conductor.until('auth', POINT.AFTER_LOCK);
       observations.push(await observedSum(observer));
       conductor.release('auth', POINT.AFTER_LOCK);
 
       // 2. The reconciler opens and reaches for the SAME row. It must block behind the
-      //    authorisation's lock — it cannot move the standing term underneath it.
+      //    authorisation's lock — it cannot move the standing term underneath it, and it
+      //    cannot reach its own `AFTER_LOCK` until the authorisation has committed.
       await conductor.step('recon', POINT.AFTER_BEGIN);
 
       // 3. The authorisation writes and commits while the reconciler is still waiting.
@@ -360,7 +433,9 @@ describe('ORDERING B — the authorisation begins while the reconciler records s
       await conductor.step('auth', POINT.AFTER_COMMIT);
       observations.push(await observedSum(observer));
 
-      // 4. Now the reconciler proceeds.
+      // 4. Now the reconciler proceeds — and its own lock-ownership barrier is reached
+      //    only here, which is itself the evidence it was blocked until this point.
+      await conductor.step('recon', POINT.AFTER_LOCK);
       await conductor.step('recon', POINT.AFTER_WRITE);
       await conductor.step('recon', POINT.AFTER_COMMIT);
       observations.push(await observedSum(observer));
@@ -369,7 +444,13 @@ describe('ORDERING B — the authorisation begins while the reconciler records s
       const [reconResult] = await reconRun;
       expect(authResult?.status, `authorisation failed: ${String(authResult?.status === 'rejected' ? authResult.reason : '')}`).toBe('fulfilled');
       expect(reconResult?.status, `reconciler failed: ${String(reconResult?.status === 'rejected' ? reconResult.reason : '')}`).toBe('fulfilled');
-      if (authResult?.status === 'fulfilled') expect(authResult.value).toBe('PERMIT');
+      if (authResult?.status === 'fulfilled') {
+        expect(authResult.value.decision).toBe('PERMIT');
+        // ORDERING B: the authorisation takes the row FIRST and commits before the
+        // reconciler is unblocked, so it absorbs NO serialisation failure. Asserted, so
+        // that the two orderings are distinguished rather than assumed alike.
+        expect(authResult.value.retries).toBe(0);
+      }
 
       for (const sample of observations) {
         expect(
@@ -403,7 +484,11 @@ describe('no interleaving exposes headroom acquirable without the window_balance
       const authRun = Promise.allSettled([authorisation(conductor, overCommit)()]);
 
       await conductor.step('recon', POINT.AFTER_BEGIN);
+      // S1A-H5, the same rendezvous: the reconciler must be proven to OWN the row before
+      // the competing over-commit is released. This case shared the race.
+      await conductor.until('recon', POINT.AFTER_LOCK);
       await conductor.step('auth', POINT.AFTER_BEGIN);
+      conductor.release('recon', POINT.AFTER_LOCK);
       await conductor.step('recon', POINT.AFTER_WRITE);
       await conductor.step('recon', POINT.AFTER_COMMIT);
       await conductor.step('auth', POINT.AFTER_LOCK);
@@ -415,7 +500,7 @@ describe('no interleaving exposes headroom acquirable without the window_balance
       expect(authResult?.status).toBe('fulfilled');
       if (authResult?.status === 'fulfilled') {
         expect(
-          authResult.value,
+          authResult.value.decision,
           'one cent above the headroom was PERMITTED across the interleaving',
         ).toBe('WINDOW_EXHAUSTED');
       }
@@ -500,7 +585,7 @@ describe('financial truth above the ceiling', () => {
       await conductor.step('auth', POINT.AFTER_LOCK);
       conductor.releaseIfParked('auth', POINT.AFTER_WRITE);
       await conductor.step('auth', POINT.AFTER_COMMIT);
-      expect(await attempt).toBe('WINDOW_EXHAUSTED');
+      expect((await attempt).decision).toBe('WINDOW_EXHAUSTED');
 
       // But financial truth remains writable, indefinitely.
       await inTransaction(client, 'SERIALIZABLE', async (tx) => {

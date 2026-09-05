@@ -600,3 +600,95 @@ git diff --text -- src/kernel/exposure/lockOrder.ts
 ```
 
 `--text` forces git to diff a file it has classified as binary.
+
+---
+
+## 20. S1A-H5 — the VC-S8 ordering harness waits for actual lock ownership
+
+**Found by S1B, repaired by S1B.1. A test-harness repair only: no production money-path
+source was changed, and no money-path semantics were changed to make a test deterministic.**
+
+### The symptom
+
+`tests/integration/exposure/vc-s8-realised-standing-atomicity.test.ts` failed **3 times in
+14 runs under load**. Every failure was a **Conductor timeout**, not a property violation:
+
+- no interleaving ever exposed unauthorised headroom;
+- no realised update was lost and no standing update was dropped;
+- the four-term sum was correct in every run that completed;
+- `src/kernel/exposure/reconciler.ts` and `lockOrder.ts` behaved exactly as `24 §3` K5
+  requires.
+
+The production logic did not violate the property. **The harness could not establish the
+interleaving it claimed to be testing.**
+
+### The defect
+
+The reconciler participant announced only two barrier points, `AFTER_BEGIN` and
+`AFTER_WRITE`. The conductor released the competing authorisation immediately after
+`AFTER_BEGIN`:
+
+```text
+release recon at AFTER_BEGIN        <- transaction open, snapshot taken
+release auth   at AFTER_BEGIN       <- ASSUMED the reconciler already held the row
+```
+
+**`AFTER_BEGIN` proves a snapshot was taken. It proves nothing about who owns the
+`window_balance` row.** `recordRealisedSpend` takes its locks *inside* the call, so between
+the reconciler's release and its `SELECT … FOR UPDATE` there is a scheduling window. Under
+load the authorisation sometimes reached the row first. The reconciler then blocked behind
+an authorisation parked at `AFTER_LOCK` — a barrier the conductor would not release until
+the reconciler had reached `AFTER_WRITE`, which it now never could.
+
+That is a **harness deadlock**, and the test's own comment (*"Because the reconciler is
+inside `recordRealisedSpend` it already holds the `window_balance` row"*) was the assumption
+that failed. The comment asserted the ordering; nothing established it.
+
+### The repair — a rendezvous at actual lock ownership
+
+The reconciler participant now takes the declared locks itself, **through the one declared
+helper, in the one declared order**, and announces `AFTER_LOCK` only once
+`SELECT … FOR UPDATE` has returned. `recordRealisedSpend` then re-acquires the same rows in
+the same order inside the same transaction, which PostgreSQL satisfies from the locks already
+held — a no-op re-acquisition, not a second acquisition site. The conductor's sequence
+becomes:
+
+```text
+reconciler BEGIN
+    |
+reconciler acquires the required window_balance lock
+    |
+test observes the explicit AFTER_LOCK barrier          <- ownership ESTABLISHED
+    |
+ONLY NOW release the competing authorisation
+```
+
+**Applied to every case sharing the race, not only the one that failed:**
+
+| Case | Change |
+|---|---|
+| `ORDERING A` | wait for `recon:AFTER_LOCK` before releasing `auth:AFTER_BEGIN` |
+| `no interleaving exposes headroom …` (the over-commit case) | same rendezvous — this case shared the race and had not yet been observed to fail |
+| `ORDERING B` | already correct on the authorisation side (`auth:AFTER_LOCK` was always a post-acquisition barrier); the reconciler's new `AFTER_LOCK` is stepped after the authorisation commits, and reaching it only there is itself evidence the reconciler was blocked |
+| `the NEXT commitment …` | single participant, no race, unchanged |
+
+### What was deliberately NOT done
+
+- **No production source changed.** `src/kernel/exposure/reconciler.ts`,
+  `lockOrder.ts` and `retry.ts` are byte-identical to their accepted S1A form.
+- **No money-path semantics relaxed** to make the test deterministic. The ordering the
+  harness now establishes is the ordering the S1A test already claimed.
+- **No second lock-acquisition site.** `tests/integration/exposure/lock-order.test.ts` reads
+  `src/` and fails if a second `FOR UPDATE` site appears there; the rendezvous is in the
+  test and calls the same `acquireMoneyPathLocks` helper.
+- **The reversed-order negative control is retained**, unchanged, in
+  `tests/integration/exposure/lock-order.test.ts` — it still deliberately produces a real
+  `40P01`, which is what keeps the no-deadlock claim falsifiable.
+
+### The verification
+
+The repaired file was run **25 consecutive times**, serially, against real PostgreSQL. The
+required result and the actual result are recorded in
+`docs/implementation/S1B-result.md` §S1B.1: zero harness timeouts, the required real `40001`
+behaviour still observable on the retry path, and no real `40P01` on the correct lock-order
+path.

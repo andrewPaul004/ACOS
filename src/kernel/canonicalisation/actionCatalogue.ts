@@ -20,8 +20,6 @@
  *   "an action class with no registered constructor must produce DENY: NOT_CANONICALISABLE."
  */
 
-import type { Money } from '../exposure/money.js';
-
 /** `26 §5`. Assigned per action class in the catalogue, never per request, never by a model. */
 export type Recoverability = 'REVERSIBLE' | 'COMPENSABLE' | 'IRRECOVERABLE';
 
@@ -114,14 +112,18 @@ export interface ActionCatalogueEntry {
   /** `26 §2.1.3` — a rate class reserves `0.00` and carries its economics in `I3` term 2. */
   readonly rateBased: boolean;
   /**
-   * The named windows `51 §2` scopes to this class.
+   * THERE IS DELIBERATELY NO WINDOW FIELD ON THIS TYPE — S1B.1, clarification S1B-C5a.
    *
-   * `26 §2.1` sources `window_refs` from "every named window the matching grants
-   * reference". Grant matching is step I and is not implemented in S1B, so S1B populates
-   * this from the catalogue, which is a superset grant matching can only narrow. See
-   * S1B-owner-clarifications.md S1B-C5.
+   * The original S1B carried `declaredWindows` here and the refund constructor read it into
+   * `window_refs`. `26 §2.1` defines `window_refs` as "every named window the matching
+   * grants reference", and catalogue membership is not grant resolution: the catalogue says
+   * what a class CAN touch, a grant says what this principal MAY touch, and only the second
+   * answers the question the field asks. Rather than leave a field whose only plausible
+   * reader is the wrong one, the field is gone. `window_refs` arrive through
+   * `grantWindows.ts`'s authoritative boundary, and
+   * `tests/canonicalisation/window-ref-provenance.test.ts` asserts the catalogue cannot
+   * manufacture a different set.
    */
-  readonly declaredWindows: readonly string[];
   /** `51 §5.1`'s settlement tolerance. Recorded; `I18d` is not implemented in S1B. */
   readonly settlementTolerance: 'EXACT' | 'BAND' | 'NONE';
   /** The mock adapter and method this class dispatches through. No adapter exists in S1B. */
@@ -143,14 +145,12 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: true,
     rateBased: false,
-    declaredWindows: Object.freeze([]),
     settlementTolerance: 'NONE',
     adapter: 'mock_ads',
     method: 'campaignPause',
   }),
   // `26 §5`: "refund.create | COMPENSABLE | Money left; the goods relationship persists."
   // `26 §11.2` row 3: INBOUND_ORIGINAL_INSTRUMENT.
-  // `51 §2`: W_DAY_REFUND and W_MONTH_REFUND are scoped to refund.create.
   // `51 §5.1`: EXACT — "Settled cost is fully determined pre-dispatch: refund amount plus
   // the processor's published retained fee."
   'refund.create': Object.freeze({
@@ -160,7 +160,6 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: true,
     costComponentFree: false,
     rateBased: false,
-    declaredWindows: Object.freeze(['W_DAY_REFUND', 'W_MONTH_REFUND']),
     settlementTolerance: 'EXACT',
     adapter: 'mock_processor',
     method: 'refundCreate',
@@ -176,7 +175,6 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: false,
     rateBased: false,
-    declaredWindows: Object.freeze(['W_DAY_RESHIP', 'W_MONTH_RESHIP']),
     settlementTolerance: 'BAND',
     adapter: 'mock_commerce',
     method: 'fulfilmentReship',
@@ -191,29 +189,8 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: true,
     rateBased: true,
-    declaredWindows: Object.freeze(['W_DAY_ADSPEND', 'W_MONTH_ADSPEND']),
     settlementTolerance: 'BAND',
     adapter: 'mock_ads',
     method: 'campaignBudgetSet',
   }),
 });
-
-/**
- * The processor's published fee schedule, as an authoritative RECORD-grade input.
- *
- * `36 §12`'s oracle row requires the fixture table to be "authored from the processor's
- * published fee schedule", and `51 §5.1` says settled cost is "refund amount plus the
- * processor's published retained fee". The architecture prints the resulting $1.03 and
- * does not print the schedule; the derivation is S1B-owner-clarifications.md S1B-C3.
- *
- * It is a value on the authoritative context, not a constant inside the constructor, so a
- * later slice fetching it from a real processor record changes the fixture and not the
- * money path.
- */
-export interface ProcessorFeeSchedule {
-  readonly scheduleRef: string;
-  readonly percentageNumerator: bigint;
-  readonly percentageDenominator: bigint;
-  readonly fixed: Money;
-  readonly currency: string;
-}

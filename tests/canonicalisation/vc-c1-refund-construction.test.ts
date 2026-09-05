@@ -14,6 +14,7 @@ import {
   VC_C1_EXPECTED_ADAPTER,
   VC_C1_EXPECTED_METHOD,
   VC_C1_EXPECTED_VENDOR_PARAMETERS,
+  VC_C1_EXPECTED_WINDOW_REFS,
   VC_C1_ORDER,
   formatMinor,
 } from '../support/canonicalisationOracle.js';
@@ -61,13 +62,16 @@ const { request, dispatchPayload } = canonicaliser.canonicalise(
 );
 
 describe('the fixture: $25.00 refund, $1.03 retained processing fee', () => {
-  it('the retained fee is a cost component of $1.03, sourced from the fee schedule', () => {
+  it('the retained fee is a cost component of $1.03, sourced from an authoritative record', () => {
     const components = request.exposure.costComponents;
     expect(components).toHaveLength(1);
     expect(components[0]!.kind).toBe('RETAINED_PROCESSING_FEE');
     expect(toDb(components[0]!.amount)).toBe(formatMinor(VC_C1.expectedRetainedFeeMinor));
     expect(toDb(components[0]!.amount)).toBe('1.03');
-    expect(components[0]!.sourceRef).toContain('processor_fee_schedule');
+    // S1B-C3a: the source is the RECORD the figure was read from, never a fee schedule.
+    // S1B derives no fee and knows no rate — see retained-fee-provenance.test.ts.
+    expect(components[0]!.sourceRef).toContain('record:');
+    expect(components[0]!.sourceRef).not.toContain('fee_schedule');
   });
 
   it('vendor_amount is $25.00', () => {
@@ -110,7 +114,7 @@ describe('I18b construction half — what is offered to the reservation layer', 
     expect(toDb(offer.offeredAmount)).toBe(formatMinor(VC_C1.expectedTotalExposureMinor));
     expect(toDb(offer.offeredAmount)).toBe('26.03');
     expect(offer.currency).toBe('USD');
-    expect(offer.windowRefs).toEqual(['W_DAY_REFUND', 'W_MONTH_REFUND']);
+    expect(offer.windowRefs).toEqual(VC_C1_EXPECTED_WINDOW_REFS);
   });
 
   it('the offered amount is not the vendor amount', () => {
@@ -188,11 +192,16 @@ describe('the dispatch payload is final and adapter-consumable verbatim', () => 
 });
 
 describe('every authority field is kernel-derived, none from the intent', () => {
-  it('recoverability, value_direction and windows come from the catalogue', () => {
+  it('recoverability and value_direction come from the catalogue', () => {
     // `26 §5`: refund.create is COMPENSABLE.  `26 §11.2` row 3: INBOUND_ORIGINAL_INSTRUMENT.
     expect(request.recoverability).toBe('COMPENSABLE');
     expect(request.valueDirection).toBe('INBOUND_ORIGINAL_INSTRUMENT');
-    expect(request.windowRefs).toEqual(['W_DAY_REFUND', 'W_MONTH_REFUND']);
+  });
+
+  it('window_refs come from the authoritative grant/window boundary, NOT the catalogue', () => {
+    // S1B-C5a. The catalogue declares no windows at all — see
+    // window-ref-provenance.test.ts, which proves the four properties this repair requires.
+    expect(request.windowRefs).toEqual(VC_C1_EXPECTED_WINDOW_REFS);
   });
 
   it('counterparty is null and the destination is a computed parameter', () => {
@@ -230,9 +239,13 @@ describe('every authority field is kernel-derived, none from the intent', () => 
 });
 
 describe('a different authoritative amount produces different economics', () => {
-  it('$40.00 refund -> $1.46 fee -> $41.46 total', () => {
-    // Hand-computed, independently: $40.00 × 2.9% = $1.16; $1.16 + $0.30 = $1.46;
-    // $40.00 + $1.46 = $41.46.
+  it('$40.00 refund -> the SAME authoritative $1.03 fee -> $41.03 total', () => {
+    // Hand-computed, independently: $40.00 + $1.03 = $41.03.
+    //
+    // S1B.1: the fee does NOT scale, because S1B knows no rate. Under the withdrawn
+    // S1B-C3 this fixture read `$1.46`, produced by a 2.9% + $0.30 schedule the
+    // architecture never established. The vendor amount is authoritative and so is the
+    // fee; neither is derived from the other.
     const bigger = makeRefundOption({ amount: money('40.00') });
     const result = canonicaliser.canonicalise(
       parseProposedIntent(makeRawIntent(bigger)),
@@ -240,7 +253,7 @@ describe('a different authoritative amount produces different economics', () => 
       bigger,
     );
     expect(toDb(result.request.exposure.vendorAmount!)).toBe('40.00');
-    expect(toDb(result.request.exposure.costComponents[0]!.amount)).toBe('1.46');
-    expect(toDb(result.request.exposure.totalExposure)).toBe('41.46');
+    expect(toDb(result.request.exposure.costComponents[0]!.amount)).toBe('1.03');
+    expect(toDb(result.request.exposure.totalExposure)).toBe('41.03');
   });
 });

@@ -4,10 +4,11 @@ import { money, type Money } from '../../src/kernel/exposure/money.js';
 import { computed } from '../../src/kernel/canonicalisation/brands.js';
 import {
   ACTION_CATALOGUE,
-  type ProcessorFeeSchedule,
   type ReasonCode,
   type ReasonCodeScope,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
+import type { AuthoritativeRetainedFee } from '../../src/kernel/canonicalisation/authoritativeCost.js';
+import type { AuthoritativeGrantWindowContext } from '../../src/kernel/canonicalisation/grantWindows.js';
 import {
   ConstructorVersionResolver,
   constructorVersionSigningBytes,
@@ -31,7 +32,13 @@ import type {
   SelectedAuthoritativeRefundOption,
 } from '../../src/kernel/canonicalisation/types.js';
 
-import { VC_C1, VC_C1_ORDER, VC_C1_SEMANTIC_OPTION_FIELDS } from './canonicalisationOracle.js';
+import {
+  VC_C1,
+  VC_C1_EXPECTED_WINDOW_REFS,
+  VC_C1_ORDER,
+  VC_C1_SEMANTIC_OPTION_FIELDS,
+  formatMinor,
+} from './canonicalisationOracle.js';
 
 /**
  * Kernel-side fixtures for the S1B canonicalisation suite.
@@ -89,15 +96,31 @@ export const REFUND_VERSION_1_0: UnsignedConstructorVersion = Object.freeze({
 });
 
 /**
- * The processor's published fee schedule as an authoritative RECORD-grade input.
- * Owner clarification S1B-C3. 2.9% + $0.30.
+ * The authoritative retained processing fee, as an AMOUNT — owner clarification S1B-C3a.
+ *
+ * $1.03, hand-authored in the oracle and carried here as the kernel-owned authoritative
+ * input. There is no schedule, no rate and no formula anywhere in the S1B tree: the fixture
+ * states the figure the architecture prints, and the constructor adds it.
+ *
+ * A later adapter/state-ingestion slice populates this same field from a real processor
+ * record. That slice, not S1B, selects a fee model.
  */
-export const FIXTURE_FEE_SCHEDULE: ProcessorFeeSchedule = Object.freeze({
-  scheduleRef: 'record:processor_fee_schedule:mock_processor:2026-01',
-  percentageNumerator: VC_C1.feePercentNumerator,
-  percentageDenominator: VC_C1.feePercentDenominator,
-  fixed: money('0.30'),
+export const FIXTURE_RETAINED_FEE: AuthoritativeRetainedFee = Object.freeze({
+  amount: money(formatMinor(VC_C1.authoritativeRetainedFeeMinor)),
+  sourceRef: 'record:processor_settlement_terms:mock_processor:ORD-123',
   currency: 'USD',
+});
+
+/**
+ * The authoritative grant/window-resolution boundary — owner clarification S1B-C5a.
+ *
+ * Fixture-supplied, kernel-side, never model-supplied and never inferred from `rationale`.
+ * `resolvedBy` says in as many words that this is a fixture and not a grant resolution, so
+ * an audit reader cannot mistake it for one.
+ */
+export const FIXTURE_GRANT_WINDOWS: AuthoritativeGrantWindowContext = Object.freeze({
+  windowRefs: VC_C1_EXPECTED_WINDOW_REFS,
+  resolvedBy: 'fixture:s1b-authoritative-grant-window-context',
 });
 
 export const FIXTURE_ENUMERATION_ID = 'enum:2026-09-05T10:00:00Z:ORD-123:refund.create';
@@ -107,7 +130,9 @@ export interface ContextOverrides {
   readonly authorisationRef?: string;
   readonly enumerationId?: string;
   readonly actionClass?: keyof typeof ACTION_CATALOGUE;
-  readonly feeSchedule?: ProcessorFeeSchedule;
+  /** The authoritative retained fee. Pass `null` to model a class that carries none. */
+  readonly retainedProcessingFee?: AuthoritativeRetainedFee | null;
+  readonly grantWindows?: AuthoritativeGrantWindowContext;
 }
 
 /** The authoritative context. Every field kernel-owned; none of it reaches the model. */
@@ -132,7 +157,11 @@ export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCano
     }),
     catalogueEntry: computed(ACTION_CATALOGUE[actionClass]),
     ledgerCurrency: computed('USD'),
-    feeSchedule: computed(overrides.feeSchedule ?? FIXTURE_FEE_SCHEDULE),
+    retainedProcessingFee:
+      overrides.retainedProcessingFee === null
+        ? null
+        : computed(overrides.retainedProcessingFee ?? FIXTURE_RETAINED_FEE),
+    grantWindows: computed(overrides.grantWindows ?? FIXTURE_GRANT_WINDOWS),
     customerNovelty: computed(VC_C1_ORDER.customerNovelty),
     contextDigest: computed('ctxdigest:8f21c0d4'),
     authorisationRef: computed(overrides.authorisationRef ?? 'auth:AR-0001'),

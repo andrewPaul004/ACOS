@@ -138,7 +138,7 @@ that are not interconvertible:
 | Type | Owner | Carries |
 |---|---|---|
 | `PermittedIntentFields` | derived from the intent by `intent.ts` alone | the four permitted fields, and nothing else — **the type has no `rationale` key at all** |
-| `AuthoritativeCanonicalisationContext` | kernel | resolved resource, principal, ledger currency, fee schedule, catalogue entry, clock |
+| `AuthoritativeCanonicalisationContext` | kernel | resolved resource, principal, ledger currency, catalogue entry, clock, the **authoritative retained processing fee amount** (**S1B-C3a**), and the **authoritative grant/window-resolution boundary** (**S1B-C5a**) |
 | `SelectedAuthoritativeOption` | kernel | the semantic fields of the selected refund option |
 
 They are **not merged into one convenience object**, and the constructor signature accepts
@@ -417,19 +417,33 @@ pre-dispatch: refund amount plus the processor's published retained fee."*
 | `parameters.lineId`, `parentTransactionId`, `instrument` | the authoritative option |
 | `parameters.destinationInstrumentRef` | derived from the authoritative parent transaction |
 | `exposure.vendorAmount` | `= parameters.amount` |
-| `exposure.costComponents[]` | retained processing fee, computed from the authoritative RECORD-grade fee schedule |
+| `exposure.costComponents[]` | the retained processing fee **amount** on the authoritative context, added — not derived (clarification **S1B-C3a**) |
 | `exposure.totalExposure` | `vendorAmount + Σ costComponents` |
 | `exposure.currency` | the single ledger currency, from context |
 | `recoverability` | `COMPENSABLE`, from the action catalogue |
 | `valueDirection` | `INBOUND_ORIGINAL_INSTRUMENT`, from the action catalogue |
 | `counterparty` | `null` — `26 §11.2` prints `n/a` for this class (clarification **S1B-C4**) |
 | `customerNovelty` | the authoritative customer record |
-| `windowRefs` | the catalogue's declared windows for the class (clarification **S1B-C5**) |
+| `windowRefs` | carried from `context.grantWindows`, the authoritative grant/window-resolution boundary (clarification **S1B-C5a**). **Not** the catalogue — `ActionCatalogueEntry` declares no windows |
 | `dispatchPayload.vendorParameters` | computed; final; adapter-consumable verbatim |
 | `dispatchPayload.monetaryEffect` | `= exposure.vendorAmount`, **I18a** |
 
-The retained-fee derivation is stated in `S1B-owner-clarifications.md` **S1B-C3** and is
-the one that reproduces the architecture's printed `$1.03`.
+**There is no retained-fee derivation.** S1B.1 withdrew `S1B-C3`, which asserted a
+`round_half_away(amount × 2.9%) + $0.30` schedule on the strength of the architecture's
+printed `$1.03`. The architecture establishes that refunds may carry a retained fee, that
+the fee is an authoritative cost component, and that the fixture is
+`$25.00 / $1.03 / $26.03` — and no rate, no fixed charge, no rounding rule and no schedule.
+`S1B-C3a` is in force: the fee is a kernel-owned authoritative **amount**, carried with the
+`source_ref` of the record it was read from, and the constructor performs no multiplication
+and no rounding.
+
+Two S1B.1 rules keep that true rather than intended:
+
+- `tests/canonicalisation/source-rules.test.ts` **rule 5** — no fee-schedule type, no rate
+  constant, no rounding primitive anywhere on the S1B surface, and no `mulByRational` in the
+  refund constructor;
+- `tests/canonicalisation/source-rules.test.ts` **rule 6** — the catalogue declares no
+  windows, and no module reads a catalogue window field into `window_refs`.
 
 ### 7.3 Test
 
@@ -542,7 +556,12 @@ export interface ExposureReservationOffer {
 
 `offerForReservation(request)` returns that shape and asserts `offeredAmount ===
 request.exposure.totalExposure` at the boundary. For the VC-C1 fixture the offered amount
-is **`$26.03`**.
+is **`$26.03`**, and `windowRefs` are the ones the authoritative grant/window boundary
+supplied — never the catalogue's (**S1B-C5a**).
+
+Changing only the authoritative retained fee moves the offered amount with it
+(`$26.03` to `$26.10`) while leaving the dispatched vendor request and the `option_id`
+untouched. `tests/canonicalisation/retained-fee-provenance.test.ts` asserts the whole pair.
 
 **The accepted S1A exposure ledger is not modified by S1B.** No file under
 `src/kernel/exposure/` is edited; no migration is added; no authority quantity changes.
@@ -590,3 +609,35 @@ implement, and does **not** claim: the full Effect Gateway; Cedar or any policy 
 real adapter; the audit plane; the AI CEO or any LLM. **No hidden or temporary policy
 engine was added anywhere in the tree** — a test asserts that no file under `src/`
 contains a per-action-cap comparison or the string `PER_ACTION`.
+
+---
+
+## 15. S1B.1 — what the conditional gate repair changed in this contract
+
+S1B was accepted **CONDITIONAL** on three local repairs. Two of them changed the contract
+above; the third changed no production source at all.
+
+| Repair | Contract effect |
+|---|---|
+| **1 — VC-S8 harness ordering (S1A-H5)** | none. A test-harness rendezvous at actual `window_balance` lock ownership. No production money-path source changed, no money-path semantics changed, and the reversed-order `40P01` negative control retained |
+| **2 — retained fee (S1B-C3 withdrawn, S1B-C3a in force)** | the context carries an authoritative fee **amount**, not a schedule. `ProcessorFeeSchedule` is removed from the tree. The constructor adds; it does not derive |
+| **3 — `window_refs` (S1B-C5 superseded, S1B-C5a in force)** | the context carries an authoritative grant/window-resolution boundary. `ActionCatalogueEntry.declaredWindows` is **removed**, so the catalogue cannot be read as a grant set |
+
+### New surface
+
+| File | What it is |
+|---|---|
+| `src/kernel/canonicalisation/authoritativeCost.ts` | `AuthoritativeRetainedFee` — an amount, a `source_ref`, a currency |
+| `src/kernel/canonicalisation/grantWindows.ts` | `AuthoritativeGrantWindowContext` — window refs and the boundary that resolved them. A type declaration with no executable statement |
+| `authorizationRequestCanonicalHash` / `authorizationRequestHash` in `canonicaliser.ts` | the request's canonical byte form, committing to **both** exposure figures, every cost component and the window refs. A **function**, not a request field — `26 §2.1` declares no `request_hash` |
+
+### What S1B.1 did NOT change
+
+- **S1B-C4 stands.** For `refund.create` the counterparty is `null`: `26 §11.2` row 3 prints
+  `n/a`, the value direction is `INBOUND_ORIGINAL_INSTRUMENT`, and `26 §1` Corollary 1 is
+  explicit that a customer receiving their own refund to their own instrument is not a
+  counterparty. The review of `S1B-C3`/`S1B-C5` is not a reason to redesign it.
+- The architecture-declared `refund.create` `semantic_option_digest` is **untouched**.
+- No authority ceiling, no MAL quantity, no `per_action_max`, no window ceiling changed.
+- No Cedar, no policy engine, no grant matching was added.
+- The immutable architecture package under `docs/architecture/v1.3.1/` was not modified.

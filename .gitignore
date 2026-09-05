@@ -8,3 +8,4 @@ coverage/
 /tmp/
 /.vitest/
 spikes/durable-execution/.artifacts/
+NEXT_STEPS.md

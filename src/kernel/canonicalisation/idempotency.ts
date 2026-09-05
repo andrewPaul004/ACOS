@@ -53,6 +53,12 @@ import type { RefundParameters } from './types.js';
  * Every field is kernel-computed and every field is semantic: a change to any of them is a
  * different refund. Field order is declared here, so the digest cannot move because an
  * object was built differently.
+ *
+ * S1B.2 finding 3 removed `destinationInstrumentRef` from `RefundParameters` and therefore
+ * from this digest. It was not an independent effect dimension and must not be one: the
+ * destination is the RECORD-grade parent transaction's own instrument, already named by
+ * `parentTransactionId` with `instrument`, both of which are digest members here and
+ * members of `26 §2.2`'s declared `semantic_option_digest`.
  */
 export function refundSemanticParamDigest(parameters: RefundParameters): Buffer {
   return canonicalHash('acos.semantic_param_digest.refund.create.v1', [
@@ -61,7 +67,6 @@ export function refundSemanticParamDigest(parameters: RefundParameters): Buffer 
     { kind: 'money', value: parameters.amount },
     { kind: 'text', value: parameters.instrument },
     { kind: 'text', value: parameters.reasonCodeScope },
-    { kind: 'text', value: parameters.destinationInstrumentRef },
     { kind: 'text', value: parameters.currency },
   ]);
 }

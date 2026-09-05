@@ -40,6 +40,92 @@ import { toDb, type Money } from '../exposure/money.js';
 /** The null sentinel. `30 §5.3`: "Single 0x00 sentinel byte for null". */
 const NULL_SENTINEL = Buffer.from([0x00]);
 
+/**
+ * =====================================================================================
+ * CANONICAL TEXT — the injectivity rule.  S1B.2, independent-review finding 4.
+ * =====================================================================================
+ *
+ * `30 §5.3` requires the canonical form to be a specification rather than an artefact of
+ * the runtime. That is only worth something if the encoding is INJECTIVE over the strings
+ * it accepts: two distinct accepted values must never produce identical bytes. Independent
+ * review found two ways it was not, and one way object keys could collide.
+ *
+ * 4A — THE NULL SENTINEL VERSUS NUL TEXT.
+ *
+ * `null` encodes as the single byte 0x00. A text value containing U+0000 UTF-8 encodes as
+ * the single byte 0x00 too, so at a nullable text position `null` and a one-character NUL
+ * string are the same bytes. PostgreSQL `text` cannot store U+0000 at all, so nothing is
+ * lost by excluding it, and excluding it restores injectivity: `null` is one 0x00 byte, an
+ * empty string is a zero-length value, and no accepted text can imitate either.
+ *
+ * 4B — UNPAIRED UTF-16 SURROGATES.
+ *
+ * A JavaScript string is a UTF-16 code-unit sequence and may hold a lone surrogate, which
+ * is not a Unicode scalar value. Node's UTF-8 encoder replaces each lone surrogate with
+ * U+FFFD, so a string holding only U+D800 and a string holding only U+D801 — distinct
+ * values — encode to the SAME three bytes. RFC 8785 §3.2.2.2 requires malformed Unicode
+ * data to fail rather than be substituted, so a string that is not a well-formed scalar
+ * sequence is rejected BEFORE NFC normalisation and before any UTF-8 encoding.
+ *
+ * Both rules FAIL CLOSED, and both are applied at every position canonical bytes are taken
+ * over: text fields, the structure kind, JSON string values and JSON object keys. The
+ * model-facing boundary rejects the same inputs earlier and more specifically — see
+ * `intent.ts` — so reaching a throw here is an internal defect, not a model-reachable path.
+ * =====================================================================================
+ */
+
+/** U+0000, which canonical text forbids. */
+const NUL = '\u0000';
+
+/**
+ * Whether a string is a well-formed Unicode scalar sequence — every high surrogate followed
+ * by a low surrogate, and no low surrogate standing alone.
+ *
+ * Written out rather than delegated to `String.prototype.isWellFormed`, which is not in the
+ * declared `ES2022` lib. The rule belongs to this specification, not to the runtime.
+ */
+export function isWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether a string is admissible as ACOS canonical text.
+ *
+ * Exported so the model-facing parser can fail closed at the wire boundary with a denial,
+ * rather than letting an inadmissible string travel as far as a hash.
+ */
+export function isCanonicalText(value: string): boolean {
+  return isWellFormedUnicode(value) && !value.includes(NUL);
+}
+
+/**
+ * Validate and normalise one canonical string. Throws on an inadmissible value.
+ *
+ * The error names the POSITION and never echoes the value: a lone surrogate rendered into
+ * a message is a lone surrogate travelling further than it should.
+ */
+export function canonicalText(value: string, position: string): string {
+  if (!isWellFormedUnicode(value)) {
+    throw new Error(
+      `ACOS-JCS-1: ${position} is not a well-formed Unicode scalar sequence (unpaired surrogate)`,
+    );
+  }
+  if (value.includes(NUL)) {
+    throw new Error(`ACOS-JCS-1: ${position} contains U+0000, which canonical text forbids`);
+  }
+  return value.normalize('NFC');
+}
+
 export type JsonValue =
   | string
   | number
@@ -90,6 +176,22 @@ export function rfc3339Micros(value: Date): string {
  * (`src/kernel/exposure/money.ts`), so a float appearing in a canonicalised payload is a
  * defect, not a value to preserve. Failing closed here is cheaper than discovering it at
  * settlement.
+ *
+ * ---------------------------------------------------------------------------------
+ * S1B.2, FINDING 4C — NFC-NORMALISED KEY COLLISIONS
+ *
+ * ACOS adds an NFC rule that RFC 8785 does not have, and adding it creates a case RFC 8785
+ * never had to answer: two DISTINCT source keys — a composed and a decomposed spelling of
+ * the same accented name, say — normalise to the SAME canonical name. Sorting the
+ * pre-normalised keys and normalising only while writing would emit a JSON object carrying
+ * that canonical name twice, which is not a JSON object at all.
+ *
+ * So the order is fixed, and it is: validate every key, normalise every key, REJECT if two
+ * normalise alike, sort the NORMALISED keys, serialise the NORMALISED keys. The rejection
+ * is the point — an object whose canonical form would be ill-formed has no canonical form,
+ * and quietly picking one of the two spellings would make the byte layer non-injective in
+ * the other direction.
+ * ---------------------------------------------------------------------------------
  */
 export function jcs(value: JsonValue): string {
   if (value === null) return 'null';
@@ -102,16 +204,32 @@ export function jcs(value: JsonValue): string {
     }
     return value.toString(10);
   }
-  if (typeof value === 'string') return jcsString(value);
+  if (typeof value === 'string') return jcsString(canonicalText(value, 'a JSON string value'));
   if (Array.isArray(value)) {
     return `[${value.map((item) => jcs(item as JsonValue)).join(',')}]`;
   }
   const object = value as { readonly [key: string]: JsonValue };
-  const keys = Object.keys(object).sort();
-  const members = keys.map((key) => {
-    const member = object[key];
-    if (member === undefined) throw new Error(`JCS: undefined is not a JSON value at key ${key}`);
-    return `${jcsString(key)}:${jcs(member)}`;
+
+  // 1–3: validate, normalise, and reject a collision. The map is keyed by the NORMALISED
+  // name and holds the original, so the lookup below still reads the right member.
+  const byCanonicalName = new Map<string, string>();
+  for (const key of Object.keys(object)) {
+    const canonical = canonicalText(key, 'a JSON object key');
+    if (byCanonicalName.has(canonical)) {
+      throw new Error(
+        'ACOS-JCS-1: two JSON object keys normalise to the same canonical name; the object has no canonical form',
+      );
+    }
+    byCanonicalName.set(canonical, key);
+  }
+
+  // 4–5: sort the NORMALISED names, and serialise those. `Array.prototype.sort`'s default
+  // comparator orders by UTF-16 code unit, which is RFC 8785 §3.2.3's ordering.
+  const members = [...byCanonicalName.keys()].sort().map((canonical) => {
+    const original = byCanonicalName.get(canonical)!;
+    const member = object[original];
+    if (member === undefined) throw new Error('JCS: undefined is not a JSON value');
+    return `${jcsString(canonical)}:${jcs(member)}`;
   });
   return `{${members.join(',')}}`;
 }
@@ -120,9 +238,12 @@ export function jcs(value: JsonValue): string {
  * RFC 8785 §3.2.2.2 string serialisation, written out rather than delegated to
  * `JSON.stringify`, so that the "no JSON.stringify on a hashing path" rule this package
  * asserts is true without an exception a reader has to hold in their head.
+ *
+ * The argument must ALREADY have passed `canonicalText` — validated and NFC-normalised.
+ * Normalising here instead would put the NFC step after the collision check in `jcs`, which
+ * is the ordering finding 4C prohibits.
  */
-function jcsString(value: string): string {
-  const normalised = value.normalize('NFC');
+function jcsString(normalised: string): string {
   let out = '"';
   for (const character of normalised) {
     const code = character.codePointAt(0)!;
@@ -160,9 +281,10 @@ function fieldValueBytes(field: CanonicalField): Buffer {
   if (field.value === null) return NULL_SENTINEL;
   switch (field.kind) {
     case 'text':
-      // UTF-8, NFC. An empty string is a zero-length value, distinct from the null
-      // sentinel's one byte — `30 §5.3`.
-      return Buffer.from(field.value.normalize('NFC'), 'utf8');
+      // UTF-8, NFC, validated. An empty string is a zero-length value, distinct from the
+      // null sentinel's one byte — `30 §5.3` — and U+0000 is inadmissible, so no accepted
+      // text can imitate the sentinel (S1B.2 finding 4A).
+      return Buffer.from(canonicalText(field.value, 'a canonical text field'), 'utf8');
     case 'money':
       // The declared scale is 2 and `toDb` renders at exactly that scale, so `25.0` is not
       // expressible and `25.00` is the only byte form.
@@ -195,7 +317,7 @@ export function canonicalBytes(kind: string, fields: CanonicalStructure): Buffer
     length.writeUInt32BE(value.byteLength, 0);
     parts.push(length, value);
   };
-  emit(Buffer.from(kind.normalize('NFC'), 'utf8'));
+  emit(Buffer.from(canonicalText(kind, 'the structure kind'), 'utf8'));
   for (const field of fields) {
     emit(fieldValueBytes(field));
   }

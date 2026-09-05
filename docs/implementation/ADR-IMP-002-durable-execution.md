@@ -395,3 +395,90 @@ equivalence, the claim is now: **both candidates were correct for the S1A
 application-transaction/checkpoint property under test.** The ACOS step journal alone does
 not provide external-effect exactly-once semantics, and this ADR does not claim that it
 does.
+
+---
+
+## 7.5 S1B.2 finding 7 — a stale kill-point-7 assertion, corrected
+
+**Recorded 2026-09-05 during the S1B.2 independent-review repair pass. The DECISION IS
+UNCHANGED and the measured results in §2 are unchanged.** What changed is one test
+expectation in `spikes/durable-execution/spike.test.ts` that had not been brought into line
+with §7.
+
+### What was wrong
+
+§7 (S1A-H4) established that a raw step journal plus an **unclaimed external step** is
+insufficient for external-effect exactly-once, and narrowed this ADR's language accordingly.
+The spike was not updated to match. It continued to:
+
+* assert `dispatchCount <= 1` at kill point 7, the concurrent-retry case; and
+* classify `dispatchCount > 1` inside `invariantVerdict()` as *"an S1A substrate invariant
+  was weakened"*.
+
+Both contradict §7. Under concurrent retry, with no exclusive work-item claim, a duplicate
+external dispatch is a **known possible result of the shape `runStep` has** — §7.1 sets out
+exactly why — and is not a failure of the application-transaction/checkpoint property this
+ADR selected on.
+
+`S1B-result.md` had recorded, honestly, a single observed `dispatchCount == 2` at kill point 7
+and had explicitly declined to claim it repaired. The correct reading is now available: that
+was a **stale test expectation**, not evidence that the ledger checkpoint property failed. In
+the run concerned the ledger delta was applied exactly once and the journal sequence was
+allocated exactly once — the property held. The prior observation is retained in the record
+rather than erased.
+
+### The correction
+
+The spike now separates two properties that had been merged into one verdict.
+
+**Application-transaction / checkpoint invariant — ASSERTED, must never weaken:**
+
+* the realised delta is applied exactly once;
+* the standing coupling holds — `standing == max(0, cap − realised)`;
+* the journal sequence is allocated exactly once, gap-free;
+* the four-term sum stays within the window ceiling.
+
+**External dispatch — OBSERVED AND RECORDED, not a verdict:**
+
+Before the outbox and its exclusive claim exist, a duplicate dispatch under concurrent retry
+is a known possible result. The matrix reports it through `externalDispatchNote()`, which
+names a concurrent duplicate as **KNOWN, S1A-H4** rather than as a violation.
+
+Kill point 7 is **not** made to nondeterministically require one dispatch. It asserts
+`1 ≤ dispatchCount ≤ 2` — the lower bound so that a run in which neither process reached the
+step cannot be recorded as evidence, the upper bound because two workers can dispatch at most
+once each — and records which occurred.
+
+### What is retained
+
+* **The deterministic S1A-H4 negative control is untouched.** §7.2's
+  `external-step-race.test.ts` still forces the interleaving with a barrier and observes
+  **two** external dispatches on every run. That, not kill point 7, is where the evidence for
+  the hole lives, because that is where it can be deterministic.
+* **Exact-once dispatch assertions are retained in every sequential case** — the baseline,
+  each of kill points 1–5, and every recovery — where no concurrent external-step race
+  exists. §2's candidate-B matrix rows are unchanged.
+* **The contrast in §7.3 is untouched.** The same race against `applyLedgerStep` still applies
+  the ledger exactly once, refused by the substrate with `40001`.
+
+### What was NOT done
+
+**The outbox was not built.** §5's item 4 and §6 still assign the exclusive work-item claim to
+S1, and this repair pass is explicitly not that work. The hole §7 identifies is unchanged in
+scope, unchanged in ownership, and unchanged in urgency.
+
+### Consequence for the decision
+
+**None. The winner does not change.**
+
+```text
+SELECT ACOS POSTGRES STEP JOURNAL FOR S1
+```
+
+A stale assertion in the measuring instrument is not a defect in the property measured. The
+application-transaction/checkpoint property held in every run, including the one that
+produced the duplicate dispatch.
+
+### Verification after the correction
+
+The spike was run **10 consecutive times**. Zero failures.

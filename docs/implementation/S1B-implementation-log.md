@@ -347,6 +347,16 @@ figures, every cost component and the window refs. It is a **function, not a req
 field**: `26 §2.1` declares no `request_hash`, and adding one would be the same class of
 error this pass is repairing.
 
+> **WITHDRAWN BY S1B.2, finding 5.** Both functions are **deleted**. The reasoning above is
+> retained as the record and was wrong in one respect that mattered: a helper covering only
+> *some* authority-relevant fields cannot support the inference "the hash moved, therefore
+> the authority moved" in either direction, and calling it "the authority commitment"
+> invited exactly that reading. `26 §2.1` declares no `request_hash` and S1B does not
+> pre-design one; the normative row commitment belongs to the journal/audit slice. The
+> assertions that used it now read the authoritative **fields** directly. See
+> `S1B-result.md §S1B.2` question 10.
+
+
 ### Repair 3 — `window_refs` provenance
 
 `ActionCatalogueEntry.declaredWindows` was **removed**, so no reader can mistake catalogue
@@ -381,3 +391,171 @@ comment is a rule a future edit breaks silently:
   S1B surface, and no `mulByRational` in the refund constructor;
 - **rule 6** — the catalogue declares no windows, no module reads a catalogue window field
   into `window_refs`, and the grant/window boundary resolves nothing.
+
+---
+
+## 13. S1B.2 — the independent implementation review repair pass
+
+An independent code review of the S1B/S1B.1 repository returned:
+
+```text
+S1B NOT YET ACCEPTED — LOCAL IMPLEMENTATION REPAIRS REQUIRED
+```
+
+Eight findings, all local. Not an architecture return, not a red-team pass, not the
+enumeration/selector increment, not Cedar. The architecture package is unmodified.
+
+### 13.1 What the review found, in one line each
+
+| # | Finding | Class of defect |
+|---|---|---|
+| 1 | Four authoritative input relationships unchecked | the canonicaliser could construct from contradictory inputs |
+| 2 | The recorded selected option dropped the refund policy's operands | a later policy slice would have to re-derive them |
+| 3 | `destinationInstrumentRef` was an effect dimension outside option identity | dispatch destination could change without `option_id` changing |
+| 4 | `ACOS-JCS-1` canonical text was not injective in three ways | distinct accepted values could hash identically |
+| 5 | A non-normative generic `AuthorizationRequest` hash had been invented | an accidental protocol, and it did not cover what it claimed |
+| 6 | The canonicaliser core owned the refund digest | the declared extension point was not the real one |
+| 7 | Kill point 7 in the durable spike contradicted S1A-H4 | a stale test expectation |
+| 8 | Duplicate `ConstructorVersionRecord` input resolved by registration order | a silent, order-dependent selection of a signed artifact |
+
+### 13.2 The decisions that were not mechanical
+
+**Throw or deny?** Findings 1A, 1B and 1C are contradictions between two **kernel-owned**
+inputs. No `ProposedIntent` can produce any of them, and `26 §7` is explicit that denial
+detail returned to a model is coarse. Returning a model-visible category for a condition no
+model can cause would be a misreport, so they throw — the same reasoning
+`assertI18aAndI18c` already used.
+
+Finding 1D is different, and this took the longest to settle. `reason_code` **is** one of the
+four fields `I21` lets the model supply, so a model genuinely can propose a valid code
+against a validly content-addressed option from another scope. That is model-reachable, so it
+must deny. The code is `SELECTOR_INVALID`, detail `REASON_CODE_SCOPE_MISMATCH`: both halves
+are individually well-formed and it is their combination that is inadmissible, which is
+exactly what "the selector does not index a permissible option for this intent" means. **No
+new denial code was invented** — `26 §7` declares the set.
+
+**Removal, not validation (finding 1B).** The first draft validated
+`context.catalogueEntry` against `ACTION_CATALOGUE[intent.actionClass]`. That was rejected as
+a repair: a validated field is still a field, and the review's own standard — *"the test
+should become structurally impossible if the field is removed from context"* — asks for the
+stronger thing. The field is gone. The consequence is that the negative test cannot be
+written as a runtime fixture at all, so it is written three ways: a compile-negative under
+the real `tsc` project, a structural assertion on the type and the source, and a behavioural
+assertion that the four substitutable fields track the catalogue.
+
+**Removal, not digest widening (finding 3).** Adding `destination_instrument_ref` to
+`semantic_option_digest` would have closed the hole and changed an **architecture-declared**
+digest, which is not an implementation's call — the same error class as inventing a fee
+schedule (S1B-C3a). The architecture already supplies the alternative: `26 §11.2` row 3's
+destination is derived from the RECORD-grade parent transaction, and that transaction is
+content-addressed by `parent_transaction_id` with `instrument`, both digest members. The
+second identifier was redundant with them **and** unbound by them, which is the worst
+combination. It is deleted.
+
+**Deleting a helper that worked (finding 5).** `authorizationRequestHash` was genuinely
+useful in the two S1B.1 provenance tests, and deleting it made those tests longer. It was
+still right to delete: `26 §2.1` declares no `request_hash`, the helper did not cover every
+authority-relevant field, and it described itself as "the authority commitment" — an
+invitation to read "the hash moved" as "the authority moved" in both directions, which it
+could not support. The replacement is not another hash; it is asserting the authoritative
+fields directly, which is both stronger and closer to what the findings were about.
+
+**Where the per-class digest lives (finding 6).** Moving `refundSemanticOptionDigest` into
+`constructors/refundCreate.ts` is a one-line change with a real consequence: the digest
+definition and the constructor that computes the effect are now in one file, which is what
+`26 §2.1.2` requires when it makes a digest change semantic **by definition**. The digest
+itself is byte-for-byte unchanged — it moved file, not fields, and
+`refund-semantic-digest.test.ts` still passes without an edit to a single assertion.
+
+**Separating two properties, not weakening one (finding 7).** The spike's `invariantVerdict`
+counted `dispatchCount > 1` as a weakened S1A substrate invariant. S1A-H4 had already
+established the opposite and narrowed ADR-IMP-002 to say so. The repair is to **separate**
+the application-transaction/checkpoint property (asserted, must never weaken) from the
+external-dispatch observation (recorded, not a verdict). Kill point 7 now asserts the ledger
+moved exactly once, the coupling held, the journal sequence was allocated once, and the
+ceiling was respected — and records the dispatch count rather than requiring it to be 1.
+Exact-once dispatch assertions are **retained** in every sequential case, where no concurrent
+external-step race exists, and the deterministic S1A-H4 negative control that forces and
+observes two dispatches is untouched. The outbox was not built.
+
+### 13.3 The canonical-text repair, in detail (finding 4)
+
+The three hazards, and why each is real rather than theoretical:
+
+1. **`U+0000` versus the null sentinel.** `30 §5.3` encodes `null` as one `0x00` byte; a text
+   value containing `U+0000` UTF-8-encodes to the same byte. `canonical-text-injectivity.test.ts`
+   demonstrates this against Node before asserting the rule.
+2. **Unpaired UTF-16 surrogates.** Node substitutes `U+FFFD` for every lone surrogate. The
+   test shows `String.fromCharCode(0xd800)` and `String.fromCharCode(0xd801)` — distinct
+   strings — encoding to the identical three bytes `efbfbd`. RFC 8785 §3.2.2.2 requires
+   malformed Unicode data to fail; ACOS now rejects before NFC and before encoding.
+3. **NFC key collisions.** ACOS adds an NFC rule RFC 8785 does not have, so two distinct keys
+   can normalise to one canonical name. The order is now fixed: validate, normalise, reject a
+   collision, sort the **normalised** names, serialise the **normalised** names.
+
+`isWellFormedUnicode` is written out rather than delegated to `String.prototype.isWellFormed`,
+which is not in the declared `ES2022` lib — the rule belongs to the specification, not to the
+runtime.
+
+Model-supplied strings fail closed **at the wire**, with `NOT_CANONICAL_TEXT`, before the
+rationale seal. That ordering matters: the rationale commitment is taken over UTF-8 NFC
+bytes, so two rationales carrying different lone surrogates would have committed
+**identically** — a silent collision in the one field whose entire purpose is auditability.
+
+Every rule has a positive control. A valid supplementary character (`U+1F600`) is accepted
+and hashes to four real bytes; a single canonically-equivalent key serialises normally; `null`
+and the empty string stay distinct. Without those, the rules would be satisfiable by refusing
+everything.
+
+### 13.4 One test had to change for a reason worth recording
+
+`idempotency-key.test.ts` mutated `reasonCodeScope` to `BILLING_ERROR` while the intent still
+proposed `CUSTOMER_REPORTED_DAMAGE`. Under finding 1D that pair now denies, so the case
+stopped reaching the key at all.
+
+The fix moves the proposed reason code into the mutated scope. That is **not** masking one
+relationship with another: `reason_code` is not an input to the idempotency key —
+`25 §7`'s key is over the semantic **parameters**, and `reason_code_scope` is a member while
+`reason_code` is not. A control was added asserting exactly that: varying only the reason
+code, within scope, leaves the key identical. So the row still attributes the key change to
+the scope alone.
+
+### 13.5 Files added
+
+| File | What |
+|---|---|
+| `tests/canonicalisation/canonicalisation-cohesion.test.ts` | the table-driven cohesion suite, one relationship per case, with a positive control and a constructor call counter |
+| `tests/canonicalisation/catalogue-entry-provenance.test.ts` | finding 1B, structurally and behaviourally |
+| `tests/canonicalisation/selected-option-projection.test.ts` | finding 2, including the discriminating pair and its contrast |
+| `tests/canonicalisation/destination-provenance.test.ts` | finding 3, source and behaviour |
+| `tests/canonicalisation/canonical-text-injectivity.test.ts` | finding 4, with the hazard demonstrated against Node first |
+| `tests/type-negative/catalogue-entry-into-context.ts` | finding 1B as a compile error |
+| `tests/type-negative/destination-into-option.ts` | finding 3 as a compile error |
+
+### 13.6 Files changed
+
+`canonicalBytes.ts` (canonical-text admissibility, NFC key ordering) · `intent.ts` and
+`rationale.ts` (the wire boundary and the seal) · `errors.ts` (two deny details) ·
+`types.ts` (catalogue entry and destination removed; typed recorded option) · `registry.ts`
+(two new registered-constructor members) · `optionDigest.ts` (reduced to `computeOptionId`) ·
+`idempotency.ts` (destination dropped from the param digest) · `canonicaliser.ts` (cohesion,
+catalogue lookup, registration-routed identity, request hash deleted) ·
+`constructors/refundCreate.ts` (owns the digest and the cohesion checks; typed projection) ·
+`constructorVersion.ts` (duplicate id fails closed) · the oracle and the shared fixture · the
+five existing tests that referenced removed API · `spikes/durable-execution/spike.test.ts`
+(finding 7).
+
+### 13.7 What was deliberately not touched
+
+No architecture file. No architecture-declared digest. No S1A production source. No Cedar, no
+C′ live enumeration, no entity advisory lock, no real adapter, no outbox, no FX, no version
+history or storage. `SELECTOR_STALE` and `SELECTOR_ENUMERATION_STALE` are still unemitted —
+S1B-C7 is unchanged.
+
+### 13.8 The observation from §11 and S1B.1, now closed
+
+`S1B-result.md` recorded, honestly and unresolved, that kill point 7 had once observed
+`dispatchCount == 2` and that it was "not claimed as repaired". Finding 7 identifies what it
+actually was: a **stale test expectation**, contradicting the accepted S1A-H4 result, not a
+failure of the ledger checkpoint property. The prior observation is retained in this record
+rather than erased, and the assertion is repaired.

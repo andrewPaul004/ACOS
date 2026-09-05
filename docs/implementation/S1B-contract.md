@@ -415,7 +415,7 @@ pre-dispatch: refund amount plus the processor's published retained fee."*
 |---|---|
 | `parameters.amount` | `SelectedAuthoritativeOption.amount` |
 | `parameters.lineId`, `parentTransactionId`, `instrument` | the authoritative option |
-| `parameters.destinationInstrumentRef` | derived from the authoritative parent transaction |
+| ~~`parameters.destinationInstrumentRef`~~ | derived from the authoritative parent transaction. **WITHDRAWN BY S1B.2, finding 3 — see §16.3.** It was an effect dimension outside `26 §2.2`'s declared option identity; the destination is now carried by the content-addressed `parent_transaction_id` and `instrument` |
 | `exposure.vendorAmount` | `= parameters.amount` |
 | `exposure.costComponents[]` | the retained processing fee **amount** on the authoritative context, added — not derived (clarification **S1B-C3a**) |
 | `exposure.totalExposure` | `vendorAmount + Σ costComponents` |
@@ -629,7 +629,7 @@ above; the third changed no production source at all.
 |---|---|
 | `src/kernel/canonicalisation/authoritativeCost.ts` | `AuthoritativeRetainedFee` — an amount, a `source_ref`, a currency |
 | `src/kernel/canonicalisation/grantWindows.ts` | `AuthoritativeGrantWindowContext` — window refs and the boundary that resolved them. A type declaration with no executable statement |
-| `authorizationRequestCanonicalHash` / `authorizationRequestHash` in `canonicaliser.ts` | the request's canonical byte form, committing to **both** exposure figures, every cost component and the window refs. A **function**, not a request field — `26 §2.1` declares no `request_hash` |
+| ~~`authorizationRequestCanonicalHash` / `authorizationRequestHash` in `canonicaliser.ts`~~ | the request's canonical byte form, committing to **both** exposure figures, every cost component and the window refs. A **function**, not a request field — `26 §2.1` declares no `request_hash`. **WITHDRAWN BY S1B.2, finding 5 — both functions are deleted; see §16.5 / §S1B.2 question 10.** |
 
 ### What S1B.1 did NOT change
 
@@ -641,3 +641,166 @@ above; the third changed no production source at all.
 - No authority ceiling, no MAL quantity, no `per_action_max`, no window ceiling changed.
 - No Cedar, no policy engine, no grant matching was added.
 - The immutable architecture package under `docs/architecture/v1.3.1/` was not modified.
+
+---
+
+## 16. S1B.2 — what the independent implementation review changed in this contract
+
+The independent review of the S1B/S1B.1 repository returned
+`S1B NOT YET ACCEPTED — LOCAL IMPLEMENTATION REPAIRS REQUIRED`, with eight findings. All
+eight are applied. This section records what moved in the contract itself; the reasoning is
+in `S1B-implementation-log.md §13` and the evidence in `S1B-result.md §S1B.2`.
+
+**No architecture file was modified. No architecture-declared digest was modified.**
+
+### 16.1 Canonicalisation input cohesion (finding 1)
+
+The canonicaliser validated three relationships between its three inputs. Four more are
+authoritative and were unchecked, so it could emit an internally contradictory request if
+its caller wired state incorrectly.
+
+| Relationship | Rule | Failure | Where |
+|---|---|---|---|
+| `intent.resource_ref` ↔ `context.resource.resourceRef` | must be equal (`26 §2.1`: the resource is "resolved from resource_ref") | **throws** — both are outside the model's reach once the kernel has resolved | `canonicaliser.ts` |
+| the action catalogue entry | read from `ACTION_CATALOGUE[intent.actionClass]`, never supplied | the field is **removed** from the context type | `types.ts`, `canonicaliser.ts` |
+| `option.currency` ↔ `context.ledgerCurrency` | must be equal (`51 §5.1`: "Single currency only") | **throws** | `constructors/refundCreate.ts` |
+| `REASON_CODE_SCOPES[reason_code]` ↔ `option.reasonCodeScope` | must be equal (S1B-C6a) | **denies** `SELECTOR_INVALID` / `REASON_CODE_SCOPE_MISMATCH` — the model can produce this pair | `constructors/refundCreate.ts` |
+
+**Throw versus deny.** A contradiction between two kernel-owned inputs throws: no
+`ProposedIntent` can produce it, and `26 §7` returns coarse categories to the model, so
+returning one would report a model-visible category for a condition no model can cause. A
+contradiction between a permitted intent field and the authoritative option denies, under a
+code `26 §7` already declares. No new denial code was invented.
+
+**No C′ advisory lock was taken.** Finding 1A is a cohesion check on inputs already
+resolved, not the live re-enumeration the next increment adds.
+
+**Test:** `tests/canonicalisation/canonicalisation-cohesion.test.ts` — table-driven, exactly
+one relationship corrupted per case, a positive control, and a call counter proving the
+constructor never ran.
+
+### 16.2 The recorded selected option is a typed per-class projection (finding 2)
+
+`26 §8`'s worked refund policy reads its operands off `context.selected_option`:
+
+> `context.selected_option.line_refundable_remaining >= context.selected_option.amount`
+> `context.selected_option.instrument == "original"`
+
+`RecordedSelectedOption` carried three fields and dropped every one of those operands.
+`RecordedRefundSelectedOption` now carries:
+
+```text
+action_class · option_id · semantic_option_digest · description
+line_id · parent_transaction_id · amount · instrument · reason_code_scope
+line_refundable_remaining
+```
+
+`line_refundable_remaining` is **NOT** added to `semantic_option_digest`, and its omission is
+intentional: it is current policy state, the next C′ slice re-enumerates it under the entity
+lock, and the policy evaluates the current value. Adding it to identity would make every
+change to a line's balance a different `option_id` for the same effect.
+
+**Test:** `tests/canonicalisation/selected-option-projection.test.ts` — five properties,
+including the discriminating pair (changing only the refundable remaining moves the recorded
+state and does not move `option_id`) and its contrast (a declared digest member does move
+it).
+
+### 16.3 `destinationInstrumentRef` removed (finding 3)
+
+`26 §2.2` declares this class's semantic identity as exactly
+`line_id · parent_transaction_id · amount · instrument · reason_code_scope`, and requires the
+digest to cover every field whose change makes a different effect. An independently supplied
+`destinationInstrumentRef` broke that: changing it changed the dispatched destination while
+`option_id` stayed identical.
+
+The repair is **removal, not digest widening** — widening would change an
+architecture-declared digest. `26 §11.2` row 3's destination is "derived by the canonicaliser
+from the RECORD-grade transaction, never from the intent", and that transaction is already
+content-addressed by `parent_transaction_id` with `instrument`, both of which **are** digest
+members.
+
+Removed from: the selected option, `RefundParameters`, `refundSemanticParamDigest`, the mock
+vendor payload, the oracle's expected payload, and the fixture mutation rows that treated it
+as an independent effect dimension.
+
+§7.2's parameter table row `parameters.destinationInstrumentRef` is **withdrawn**. Which
+concrete vendor fields a real processor requires for the enumerated parent transaction is the
+adapter / state-resolution slice's question; S1B invents no second destination identifier to
+answer it early.
+
+**Test:** `tests/canonicalisation/destination-provenance.test.ts` (source and behaviour) plus
+`tests/type-negative/destination-into-option.ts` (compile-negative).
+
+### 16.4 `ACOS-JCS-1` canonical text is injective (finding 4)
+
+Section 5 gains an admissibility rule — see **S1B-C8**. Canonical text (text fields, the
+structure kind, JSON string values, JSON object keys) admits only well-formed Unicode scalar
+sequences containing no `U+0000`, and a JSON object whose keys collide under NFC is
+**rejected**. Model-supplied strings fail closed at the wire with
+`MALFORMED`/`SELECTOR_MALFORMED` detail `NOT_CANONICAL_TEXT`; the byte layer throws.
+
+Money encoding, timestamp precision and framing are unchanged.
+
+### 16.5 The generic `AuthorizationRequest` hash is removed (finding 5)
+
+S1B.1's `authorizationRequestCanonicalHash` and `authorizationRequestHash` are **deleted**,
+and nothing invented replaces them. `26 §2.1` declares no `request_hash`, and a helper
+covering only some authority-relevant fields cannot support the inference it invited in
+either direction. Left in the tree it would have become an accidental protocol the
+journal/audit slice inherited.
+
+The tests that used it assert the authoritative **fields** directly — `total_exposure`, the
+cost component's amount and source, the reservation offer, `window_refs` — and that the
+declared `dispatch_payload_hash` does not move when the vendor effect does not.
+
+`dispatchPayloadHash` **stays**: `26 §2.1` declares that field explicitly.
+
+The normative commitment of the `AuthorizationRequest` row under `ACOS-JCS-1` belongs to the
+journal/audit slice, which owns `30 §5.3`'s row-kind declaration and `36 §2`'s VC-A3.
+
+### 16.6 The registration owns per-class option identity (finding 6)
+
+§3.2's statement that the closed catalogue plus a registered constructor is the extension
+point is now true of the code. `RegisteredConstructor` gains two members:
+
+```text
+computeSemanticOptionDigest(option)   26 §2.2's per-class digest
+assertInputCohesion(input)            the per-class checks of §16.1, run BEFORE construction
+```
+
+`refundSemanticOptionDigest` moved from `optionDigest.ts` into
+`constructors/refundCreate.ts`. `optionDigest.ts` keeps only the class-agnostic
+`computeOptionId`. `EffectCanonicaliser` imports no per-class digest and contains no
+refund-specific identifier in executable code; a class with no constructor still denies
+`NOT_CANONICALISABLE`; there is still no generic fallback.
+
+**The refund digest definition is byte-for-byte unchanged.** It moved file, not fields.
+
+**Test:** `source-rules.test.ts` rule 8.
+
+### 16.7 `ConstructorVersionResolver` duplicate input (finding 8)
+
+Two records for one `constructor_id` meant registration order silently decided which signed
+record won — and both may verify, so the signature check cannot separate them. The resolver
+now **fails at construction**. This is not version history or storage: one active resolver
+input may identify one constructor id exactly once.
+
+**Test:** `constructor-version.test.ts` — with a positive control showing each record
+resolves alone, so the ambiguity being refused is a real one.
+
+### 16.8 Preserved without weakening
+
+The exact five-field `ProposedIntent` parser · unknown-field rejection · the opaque rationale
+· the `I21` branded boundary and its real `tsc` compile-negative project (now **eight**
+negative files) · signed Ed25519 `ConstructorVersionRecord` verification · the refund
+semantic digest's five declared fields · `$25.00` vendor / `$26.03` economic exposure ·
+authoritative retained-fee provenance (S1B-C3a) · the authoritative grant/window boundary
+(S1B-C5a) · `I18a`/`I18c` construction checks · the deterministic idempotency key ·
+`dispatch_payload_hash` · full VC-C1 reported **PARTIAL** · no Cedar · no C′ live enumeration
+· no real adapter · no outbox · accepted S1A production code.
+
+### 16.9 Outside this contract
+
+Finding 7 is a stale assertion in `spikes/durable-execution/spike.test.ts`, which is the
+ADR-IMP-002 investigation and not S1B. It is recorded in `ADR-IMP-002 §7.5` and
+`S1A-implementation-log.md`.

@@ -1,12 +1,13 @@
 import { toDb } from '../exposure/money.js';
+import { ACTION_CATALOGUE, type ActionCatalogueEntry } from './actionCatalogue.js';
 import { computed } from './brands.js';
 import { canonicalHash, hex } from './canonicalBytes.js';
 import { ConstructorVersionResolver } from './constructorVersion.js';
 import { deny } from './errors.js';
 import { permittedFieldsOf, type ProposedIntent } from './intent.js';
 import { intentHash } from './lineage.js';
-import { computeOptionId, refundSemanticOptionDigest } from './optionDigest.js';
-import type { ConstructorRegistry } from './registry.js';
+import { computeOptionId } from './optionDigest.js';
+import type { ConstructorInput, ConstructorRegistry } from './registry.js';
 import type {
   AuthoritativeCanonicalisationContext,
   AuthorizationRequest,
@@ -95,7 +96,30 @@ export class EffectCanonicaliser {
       intent.actionClass,
     );
 
+    // --- the class row comes from the CLOSED CATALOGUE, not from the caller -----------
+    // S1B.2 finding 1B. `action_class` has already passed the closed-catalogue check in
+    // `parseProposedIntent` (step C), so this lookup is total. Nothing upstream may
+    // substitute a different row for the same class, because the context carries none.
+    const catalogueEntry = ACTION_CATALOGUE[intent.actionClass];
+
     // --- the authoritative inputs must describe this intent -----------------------------
+    //
+    // S1B.2 finding 1A. `26 §2.1`: "resource — resolved FROM resource_ref". The model-named
+    // ref and the resolved resource must therefore agree, and the option agreeing with the
+    // resolved resource is not enough: with `intent.resource_ref = order:A` while the
+    // resolved resource and the option both say `B`, every check below passes and the
+    // emitted request names one order while acting on another.
+    //
+    // This THROWS rather than denying. No `ProposedIntent` can produce the pair: the kernel
+    // resolves the resource from the ref it was given, so a disagreement means the caller
+    // wired unrelated state together. `26 §7` returns coarse categories to the model, and
+    // returning one here would report a model-visible category for a condition no model can
+    // cause. Same reasoning as `assertI18aAndI18c` below.
+    if (intent.resourceRef !== context.resource.resourceRef) {
+      throw new Error(
+        `canonicalisation cohesion: intent resource_ref ${intent.resourceRef} is not the resolved resource ${context.resource.resourceRef}`,
+      );
+    }
     if (option.actionClass !== intent.actionClass) {
       deny(
         'SELECTOR_INVALID',
@@ -121,10 +145,14 @@ export class EffectCanonicaliser {
     // Step 3 in the weaker S1B form: the model's option_id must equal the one recomputed
     // from the authoritative option. `26 §2.2`: option_id = H(action_class ‖ resource_id ‖
     // semantic_option_digest).
+    //
+    // S1B.2 finding 6: the per-class digest is reached THROUGH THE REGISTRATION. This file
+    // imports no class-specific digest function and carries no class-specific branch, so a
+    // second registered constructor needs no edit here.
     const recomputedOptionId = computeOptionId(
       intent.actionClass,
       option.resourceId,
-      refundSemanticOptionDigest(option),
+      registered.computeSemanticOptionDigest(option),
     );
     if (intent.selector.optionId !== recomputedOptionId) {
       deny(
@@ -135,13 +163,20 @@ export class EffectCanonicaliser {
     }
 
     // --- construct ----------------------------------------------------------------------
-    const constructed = registered.construct({
+    const input: ConstructorInput = {
       permitted: permittedFieldsOf(intent),
       context,
       option,
-    });
+      catalogueEntry,
+    };
 
-    assertI18aAndI18c(context, constructed.exposure, constructed.dispatchPayload);
+    // Per-class authoritative-input cohesion, BEFORE construction — S1B.2 findings 1C and
+    // 1D. Nothing is emitted from inputs that contradict one another.
+    registered.assertInputCohesion(input);
+
+    const constructed = registered.construct(input);
+
+    assertI18aAndI18c(catalogueEntry, constructed.exposure, constructed.dispatchPayload);
 
     const dispatchPayload = constructed.dispatchPayload;
 
@@ -157,8 +192,8 @@ export class EffectCanonicaliser {
       constructorVersion: computed(constructorVersion),
       parameters: computed(constructed.parameters),
       exposure: computed(constructed.exposure),
-      recoverability: computed(context.catalogueEntry.recoverability),
-      valueDirection: computed(context.catalogueEntry.valueDirection),
+      recoverability: computed(catalogueEntry.recoverability),
+      valueDirection: computed(catalogueEntry.valueDirection),
       counterparty: constructed.counterparty === null ? null : computed(constructed.counterparty),
       customerNovelty:
         constructed.customerNovelty === null ? null : computed(constructed.customerNovelty),
@@ -206,69 +241,32 @@ export function dispatchPayloadHash(payload: DispatchPayload): string {
 }
 
 /**
- * The AUTHORITY commitment — the canonical bytes of the request, which include exposure.
+ * ---------------------------------------------------------------------------------
+ * THERE IS NO GENERIC AuthorizationRequest HASH HERE — S1B.2, finding 5
  *
- * `26 §2.1` prints `dispatch_payload_hash` as the field that "binds this request to exactly
- * one dispatch payload", and that hash covers the payload only. It therefore cannot move
- * when the economics move without the vendor request moving — which is exactly the
- * `refund.create` case, where `total_exposure` and `vendor_amount` are different figures by
- * construction. A retained fee that changed the reserved quantity while leaving every
- * declared hash identical would be an authority change nothing committed to.
+ * S1B.1 added `authorizationRequestCanonicalHash` and `authorizationRequestHash` as
+ * production helpers, described as "the AUTHORITY commitment". Both are removed, and
+ * nothing invented replaces them.
  *
- * So this function states the request's canonical byte form, over the fields that bound
- * authority: the option identity, the parameters, BOTH exposure figures, every cost
- * component, the window refs the reservation will be taken against, the class-derived
- * authority fields, and the payload binding.
+ * `26 §2.1` declares `dispatch_payload_hash` on the `AuthorizationRequest` and declares no
+ * `request_hash`. A helper that calls itself an authority commitment while covering only
+ * some of the authority-relevant fields is worse than no helper: it invites a reader to
+ * treat "the hash moved" as proof that the authority moved, and "the hash did not move" as
+ * proof that it did not — neither of which the function supported. Left in the tree it
+ * would have become an accidental protocol, and the journal/audit slice would then have
+ * inherited a row commitment nobody specified.
  *
- * It is a FUNCTION and not a field. `26 §2.1` declares no `request_hash` on the
- * `AuthorizationRequest`, and S1B.1 is a repair pass — inventing a request field would be
- * the same class of error as inventing a fee schedule. What it gives S1B is a single
- * definition of "the bytes this authority commits to", which
- * `tests/canonicalisation/retained-fee-provenance.test.ts` uses to show that an
- * authoritative fee change is committed to somewhere, and which a later journal-row
- * serialiser has one place to adopt.
+ * The tests that used it now assert the authoritative FIELDS directly — total_exposure, the
+ * cost component and its source, the reservation offer, `window_refs` — which is both
+ * stronger and closer to what the findings were about.
+ *
+ * The normative commitment of the AuthorizationRequest row under `ACOS-JCS-1` belongs to
+ * the journal/audit slice, which owns `30 §5.3`'s row-kind declaration and `36 §2`'s VC-A3
+ * cross-implementation. S1B does not pre-design it.
+ *
+ * `dispatchPayloadHash` above STAYS: `26 §2.1` declares that field explicitly.
+ * ---------------------------------------------------------------------------------
  */
-export function authorizationRequestCanonicalHash(request: AuthorizationRequest): Buffer {
-  const exposure = request.exposure;
-  return canonicalHash('acos.authorization_request.v1', [
-    { kind: 'text', value: request.principal.id },
-    { kind: 'text', value: request.actionClass },
-    { kind: 'text', value: request.reasonCode },
-    { kind: 'text', value: request.resourceRef },
-    { kind: 'text', value: request.resource.resourceId },
-    { kind: 'text', value: request.selectedOption.optionId },
-    { kind: 'text', value: request.selectedOption.semanticOptionDigest },
-    { kind: 'text', value: request.enumerationRef.enumerationId },
-    { kind: 'text', value: request.constructorVersion.recordHash },
-    { kind: 'json', value: { ...request.parameters, amount: toDb(request.parameters.amount) } },
-    // --- the exposure commitment ------------------------------------------------------
-    { kind: 'money', value: exposure.vendorAmount },
-    { kind: 'money', value: exposure.totalExposure },
-    { kind: 'text', value: exposure.currency },
-    {
-      kind: 'json',
-      value: exposure.costComponents.map((component) => ({
-        kind: component.kind,
-        amount: toDb(component.amount),
-        source_ref: component.sourceRef,
-      })),
-    },
-    { kind: 'money', value: exposure.forwardIntegral },
-    { kind: 'integer', value: BigInt(exposure.irrecoverableUnits) },
-    // --- class-derived authority, and the reservation target --------------------------
-    { kind: 'text', value: request.recoverability },
-    { kind: 'text', value: request.valueDirection },
-    { kind: 'json', value: [...request.windowRefs] },
-    { kind: 'json', value: [...request.evidenceRefs] },
-    { kind: 'text', value: request.customerNovelty },
-    { kind: 'text', value: request.contextDigest },
-    { kind: 'text', value: request.dispatchPayloadHash },
-  ]);
-}
-
-export function authorizationRequestHash(request: AuthorizationRequest): string {
-  return hex(authorizationRequestCanonicalHash(request));
-}
 
 /**
  * `I18a` and `I18c`, asserted by the kernel at construction time.
@@ -284,11 +282,11 @@ export function authorizationRequestHash(request: AuthorizationRequest): string 
  * `I18d` is a settlement assertion and there is no settlement path in S1B.
  */
 function assertI18aAndI18c(
-  context: AuthoritativeCanonicalisationContext,
+  catalogueEntry: ActionCatalogueEntry,
   exposure: Exposure,
   payload: DispatchPayload,
 ): void {
-  const carriesMoney = context.catalogueEntry.carriesVendorMonetaryField;
+  const carriesMoney = catalogueEntry.carriesVendorMonetaryField;
 
   // I18a, both branches.
   if (carriesMoney) {
@@ -312,7 +310,7 @@ function assertI18aAndI18c(
       );
     }
     if (
-      !context.catalogueEntry.costComponentFree &&
+      !catalogueEntry.costComponentFree &&
       exposure.totalExposure === exposure.vendorAmount
     ) {
       // This is the retained-fee escape VC-C1 exists to detect, caught at the kernel as
@@ -320,7 +318,7 @@ function assertI18aAndI18c(
       // contradiction by driving cost_components to zero silently restores the v1.0 defect
       // R1 exists to close."
       throw new Error(
-        `I18c: total_exposure equals vendor_amount for ${context.catalogueEntry.actionClass}, which the catalogue does not declare cost-component-free`,
+        `I18c: total_exposure equals vendor_amount for ${catalogueEntry.actionClass}, which the catalogue does not declare cost-component-free`,
       );
     }
   }

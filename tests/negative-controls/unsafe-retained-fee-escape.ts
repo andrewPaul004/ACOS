@@ -2,10 +2,11 @@ import { computed } from '../../src/kernel/canonicalisation/brands.js';
 import { toDb } from '../../src/kernel/exposure/money.js';
 import { hex } from '../../src/kernel/canonicalisation/canonicalBytes.js';
 import { computeIdempotencyKey, refundSemanticParamDigest } from '../../src/kernel/canonicalisation/idempotency.js';
+import { computeOptionId } from '../../src/kernel/canonicalisation/optionDigest.js';
 import {
-  computeOptionId,
+  refundCreateConstructor,
   refundSemanticOptionDigest,
-} from '../../src/kernel/canonicalisation/optionDigest.js';
+} from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
 import type {
   ConstructedEffect,
   ConstructorInput,
@@ -52,7 +53,7 @@ export const UNSAFE_CONSTRUCTOR_ID = 'ctor.refund.create.unsafe-retained-fee-esc
 
 export function constructRefundCreateUnsafely(input: ConstructorInput): ConstructedEffect {
   const { context, option } = input;
-  const catalogue = context.catalogueEntry;
+  const catalogue = input.catalogueEntry;
 
   const parameters: RefundParameters = {
     lineId: option.lineId,
@@ -60,7 +61,6 @@ export function constructRefundCreateUnsafely(input: ConstructorInput): Construc
     amount: option.amount,
     instrument: option.instrument,
     reasonCodeScope: option.reasonCodeScope,
-    destinationInstrumentRef: option.destinationInstrumentRef,
     currency: context.ledgerCurrency,
   };
 
@@ -89,9 +89,16 @@ export function constructRefundCreateUnsafely(input: ConstructorInput): Construc
 
   return {
     selectedOption: {
+      actionClass: 'refund.create',
       optionId: computeOptionId('refund.create', option.resourceId, semanticOptionDigest),
       semanticOptionDigest: hex(semanticOptionDigest),
       description: `refund ${toDb(parameters.amount)} ${parameters.currency} on line ${parameters.lineId} against transaction ${parameters.parentTransactionId} to ${parameters.instrument}`,
+      lineId: parameters.lineId,
+      parentTransactionId: parameters.parentTransactionId,
+      amount: parameters.amount,
+      instrument: parameters.instrument,
+      reasonCodeScope: parameters.reasonCodeScope,
+      lineRefundableRemaining: option.lineRefundableRemaining,
     },
     parameters,
     exposure,
@@ -111,7 +118,6 @@ export function constructRefundCreateUnsafely(input: ConstructorInput): Construc
           amount: toDb(parameters.amount),
           currency: parameters.currency,
           instrument: parameters.instrument,
-          destination_instrument_ref: parameters.destinationInstrumentRef,
         }),
       ),
       idempotencyKey: computed(
@@ -129,8 +135,18 @@ export function constructRefundCreateUnsafely(input: ConstructorInput): Construc
   };
 }
 
+/**
+ * The unsafe registration.
+ *
+ * Option identity and input cohesion are DELEGATED to the real registration, so the only
+ * difference from production remains the two defect lines above. A negative control that
+ * also weakened the digest or the cohesion checks would no longer isolate the defect
+ * VC-C1 exists to detect.
+ */
 export const unsafeRetainedFeeEscapeConstructor: RegisteredConstructor = {
   actionClass: 'refund.create',
   constructorId: UNSAFE_CONSTRUCTOR_ID,
+  computeSemanticOptionDigest: refundCreateConstructor.computeSemanticOptionDigest,
+  assertInputCohesion: refundCreateConstructor.assertInputCohesion,
   construct: constructRefundCreateUnsafely,
 };

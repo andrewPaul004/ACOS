@@ -8,14 +8,22 @@
 ## Verdict
 
 ```text
-S1B.1 PASS — S1B ACCEPTED
+S1B.2 PASS — S1B READY FOR OWNER ACCEPTANCE
 ```
 
-**Superseded verdict, retained as the record:**
+**Superseded verdicts, retained as the record:**
 
 ```text
-S1B CONDITIONAL — LOCAL REPAIR REQUIRED     (the original S1B result)
+S1B CONDITIONAL — LOCAL REPAIR REQUIRED                        (the original S1B result)
+S1B.1 PASS — S1B ACCEPTED                                      (this repository's own claim)
+S1B NOT YET ACCEPTED — LOCAL IMPLEMENTATION REPAIRS REQUIRED   (the independent review)
 ```
+
+**Read §S1B.2 at the end of this document before relying on anything above it.** The
+independent review of the S1B/S1B.1 repository found eight local defects, two of them
+introduced by S1B.1 itself, and the *"S1B.1 PASS — S1B ACCEPTED"* line above was therefore
+premature when it was written. The reasoning that produced each superseded verdict is left in
+place throughout: the record should show what was got wrong as well as what was got right.
 
 S1B was returned conditional on three local repairs. All three are done, the complete suite
 is green, and the S1B.1 evidence is in **§S1B.1** below. The original S1B verdict and the
@@ -458,13 +466,23 @@ not fire on the declared order.
 | `option_id` | unchanged | **PASS** — the refund `semantic_option_digest` does not include the retained fee, and S1B.1 did not modify that declaration |
 | total exposure | `$26.03` to `$26.10` | **PASS** |
 | reservation-handoff amount | changes accordingly | **PASS** |
-| the authority/request hash committing to exposure | changes | **PASS** |
+| ~~the authority/request hash committing to exposure~~ | changes | **PASS**, but **WITHDRAWN by S1B.2 finding 5** — replaced by direct assertions on `total_exposure`, the cost component and the reservation offer |
 | rationale | irrelevant | **PASS** |
 
 The commitment is `authorizationRequestCanonicalHash`, added in S1B.1 because
 `dispatch_payload_hash` covers the payload only and so cannot move when the economics move
 without the vendor request moving. It is a **function, not a request field**: `26 §2.1`
 declares no `request_hash`, and inventing one would repeat the error this pass is repairing.
+
+> **WITHDRAWN BY S1B.2, finding 5.** Both functions are **deleted**. The reasoning above is
+> retained as the record and was wrong in one respect that mattered: a helper covering only
+> *some* authority-relevant fields cannot support the inference "the hash moved, therefore
+> the authority moved" in either direction, and calling it "the authority commitment"
+> invited exactly that reading. `26 §2.1` declares no `request_hash` and S1B does not
+> pre-design one; the normative row commitment belongs to the journal/audit slice. The
+> assertions that used it now read the authoritative **fields** directly. See
+> `S1B-result.md §S1B.2` question 10.
+
 
 ## Repair 3 — `window_refs` provenance
 
@@ -536,13 +554,23 @@ It is recorded here because the S1B mandate's standard is that a defect found is
 reported. It is **not** claimed as repaired, and it is a candidate for a bounded spike pass
 if the owner wants the spike's own concurrency claim tightened.
 
+> **CLOSED BY S1B.2, finding 7 — see §S1B.2 question 13 and `ADR-IMP-002 §7.5`.** The
+> independent review identified what this observation actually was: a **stale test
+> expectation**, contradicting the accepted S1A-H4 result, rather than an unexplained spike
+> defect. The assertion `dispatchCount <= 1` at kill point 7, and the classification of
+> `dispatchCount > 1` as a weakened S1A substrate invariant, both predate S1A-H4 and were
+> never brought into line with it. Ten clean spike runs after the correction observed
+> `dispatch=2` **twice**, each time with the ledger at `realised=40.00 standing=60.00
+> nextSeq=2` — applied exactly once. The paragraph above is retained unedited; the
+> assertion is repaired.
+
 ## What S1B.1 added to the tree
 
 | File | What |
 |---|---|
 | `src/kernel/canonicalisation/authoritativeCost.ts` | `AuthoritativeRetainedFee` — the fee as an authoritative amount |
 | `src/kernel/canonicalisation/grantWindows.ts` | `AuthoritativeGrantWindowContext` — the grant/window-resolution boundary |
-| `authorizationRequestCanonicalHash` in `canonicaliser.ts` | the authority commitment over exposure |
+| ~~`authorizationRequestCanonicalHash` in `canonicaliser.ts`~~ | the authority commitment over exposure. **WITHDRAWN BY S1B.2, finding 5 — both functions are deleted; see §16.5 / §S1B.2 question 10.** |
 | `tests/canonicalisation/retained-fee-provenance.test.ts` | 14 tests — fixture A and mutation B |
 | `tests/canonicalisation/window-ref-provenance.test.ts` | 14 tests — the four provenance properties |
 | `tests/type-negative/model-windows-into-request.ts` | a sixth compile-negative: model-supplied windows, grant context, retained fee |
@@ -563,3 +591,556 @@ runtime equality, `I18d` and `I42`'s database uniqueness all remain **OPEN**, ex
 
 **Do not begin the enumeration / selector increment on the strength of this document alone.**
 S1B.1 discharges the S1B conditions; it does not authorise the next slice.
+
+---
+
+# S1B.2 — the independent implementation review repair pass
+
+**Verdict:**
+
+```text
+S1B.2 PASS — S1B READY FOR OWNER ACCEPTANCE
+```
+
+**Superseded verdict, retained as the record:**
+
+```text
+S1B NOT YET ACCEPTED — LOCAL IMPLEMENTATION REPAIRS REQUIRED   (the independent review)
+S1B.1 PASS — S1B ACCEPTED                                      (this repository's own claim)
+```
+
+The independent review was right and the S1B.1 self-assessment was premature. S1B.1 said
+*"S1B ACCEPTED"* while the canonicaliser could still construct from mutually contradictory
+inputs, could still dispatch to a destination outside option identity, had invented a
+non-normative `request_hash`, and carried a byte layer that was not injective. Two of those
+were introduced **by S1B.1 itself**. The record should say so, and does.
+
+Eight findings. All eight applied. **No architecture file modified. No architecture-declared
+digest modified.** No Cedar, no C′ live enumeration, no adapter, no outbox, no FX.
+
+---
+
+## The sixteen questions the mandate requires this document to answer
+
+### 1. Can a mismatched resolved resource be canonicalised under another model `resource_ref`?
+
+**No. It throws before the constructor runs.**
+
+`26 §2.1` defines the resource as "resolved **from** `resource_ref`", so the model-named ref
+and the resolved resource are two views of one fact and must agree. The original
+canonicaliser checked `option.resourceId == context.resource.resourceId` and stopped there —
+which is satisfied by the review's discriminating fixture:
+
+```text
+intent.resource_ref              = order:A
+context.resource.resourceRef     = order:B
+context.resource.resourceId      = B
+option.resourceId                = B          <- agrees with the resolved resource
+```
+
+Every prior check passes and the emitted request names order A while acting on order B.
+
+The check is now:
+
+```ts
+if (intent.resourceRef !== context.resource.resourceRef) { throw ... }
+```
+
+It **throws** rather than denying. Both operands are outside the model's reach once the
+kernel has resolved, so no `ProposedIntent` can produce the pair; `26 §7` returns coarse
+categories to the model, and returning one here would report a model-visible category for a
+condition no model can cause.
+
+**Proof:** `canonicalisation-cohesion.test.ts`, row 1 — with the review's exact fixture, an
+assertion that the failure is *not* a `CanonicalisationDenied`, and a constructor call
+counter proving nothing was constructed.
+
+**The C′ advisory lock was not implemented.** This is a cohesion check on already-resolved
+inputs.
+
+### 2. Can an arbitrary catalogue entry affect a refund?
+
+**No. The field does not exist.**
+
+`context.catalogueEntry` is **removed** from `AuthoritativeCanonicalisationContext`. The
+canonicaliser reads `ACTION_CATALOGUE[intent.actionClass]` itself, after `action_class` has
+passed the closed-catalogue check, and passes the row to the constructor on
+`ConstructorInput`.
+
+The repair is removal, not validation. The review's own standard — *"the test should become
+structurally impossible if the field is removed from context"* — is met literally: there is
+nothing to populate, so the negative test cannot be written as a runtime fixture. It is
+written three ways instead:
+
+| Form | Where |
+|---|---|
+| compile error, under a real `tsc --noEmit` project | `tests/type-negative/catalogue-entry-into-context.ts` → TS2353 |
+| structural, on the type, the fixture and the source | `catalogue-entry-provenance.test.ts` §1 |
+| behavioural, on all four substitutable fields | `catalogue-entry-provenance.test.ts` §2 |
+
+A `refund.create` request cannot acquire `campaign.pause`'s **recoverability** (COMPENSABLE,
+not REVERSIBLE), its **value_direction** (INBOUND_ORIGINAL_INSTRUMENT, not NONE), its
+**adapter** (`mock_processor`, not `mock_ads`) or its **method** (`refundCreate`, not
+`campaignPause`) — and the suite first asserts that those four *differ between the two
+classes*, so the four rows are not vacuous.
+
+### 3. Can option currency be silently reinterpreted into ledger currency?
+
+**No. It throws before an effect is emitted.**
+
+`SelectedAuthoritativeRefundOption.currency` existed and `refundCreate` ignored it, writing
+`context.ledgerCurrency` into the parameters and the payload. A EUR option was therefore
+dispatched as USD at the same numeral.
+
+```ts
+if (option.currency !== context.ledgerCurrency) { throw ... }
+```
+
+For the single-currency MVP the two must be equal — `51 §5.1`: "Single currency only", and
+`26 §11.2` excludes cross-currency monetary classes. **No FX was implemented**: no conversion
+is performed, no rate is read, `fxRateRef` remains `null`.
+
+**Proof:** `canonicalisation-cohesion.test.ts`, row 4 — `option.currency = EUR`,
+`ledgerCurrency = USD`, throws, constructor never ran.
+
+### 4. Can a reason code be used against a different reason-code scope?
+
+**No. It denies `SELECTOR_INVALID` / `REASON_CODE_SCOPE_MISMATCH`.**
+
+`reason_code_scope` is a declared member of `26 §2.2`'s `semantic_option_digest` for this
+class, so it is part of the option's semantic identity. `reason_code` is one of the four
+fields `I21` permits the model to supply. A model can therefore propose a valid code against
+a validly content-addressed option from another scope — and did, until now.
+
+```text
+REASON_CODE_SCOPES[intent.reason_code] == option.reason_code_scope
+```
+
+This **denies** rather than throwing, because it is model-reachable. **No new denial code was
+invented**: `SELECTOR_INVALID` is `26 §7`'s own code for a selector that does not index a
+permissible option, and both halves here are individually well-formed — it is their
+combination that is inadmissible.
+
+**Recorded as a fixture-level consistency rule tied to S1B-C6** (now **S1B-C6a**), not as a
+claim that this enum or this grouping is universal production policy. Selecting the
+production reason-code taxonomy belongs to the policy slice.
+
+**The semantic option digest is unchanged.**
+
+**Proof:** `canonicalisation-cohesion.test.ts`, row 5, plus an exhaustive pair sweep — every
+code accepted against its own scope, every code refused against a different one — checked
+against `VC_C1_REASON_CODE_SCOPES`, hand-transcribed in the oracle, which imports nothing
+from `src/`.
+
+### 5. Does the `AuthorizationRequest` retain current `line_refundable_remaining` for later policy?
+
+**Yes, and `option_id` does not move with it.**
+
+`26 §8`'s worked refund policy reads:
+
+```text
+context.selected_option.line_refundable_remaining >= context.selected_option.amount
+context.selected_option.instrument == "original"
+```
+
+`RecordedSelectedOption` carried `option_id`, the digest and a description, and dropped every
+one of those operands. It is now a typed per-class projection carrying, for `refund.create`:
+
+```text
+action_class · option_id · semantic_option_digest · description
+line_id · parent_transaction_id · amount · instrument · reason_code_scope
+line_refundable_remaining
+```
+
+**`line_refundable_remaining` was NOT added to `semantic_option_digest`.** Its omission is
+intentional and the mandate is explicit about why: it is current policy state, the next C′
+slice re-enumerates it under the entity lock, and the policy evaluates the current value.
+
+The five required properties, all in `selected-option-projection.test.ts`:
+
+| # | Property | Result |
+|---|---|---|
+| 1 | `lineRefundableRemaining` reaches the request's selected option | `$40.00`, and the full operand set asserted by exact key list |
+| 2 | amount and instrument agree with the canonical parameters | identity comparison; the amount is also the dispatched vendor amount |
+| 3 | changing only refundable remaining changes the recorded state | `$40.00 → $18.00` |
+| 4 | changing only refundable remaining does NOT change `option_id` | `option_id` and digest identical; payload, payload hash, idempotency key and exposure byte-identical |
+| 5 | rationale cannot affect any of those fields | two rationales, one recorded option; length is not an operand |
+
+Plus two things that keep the pair honest: the mutation is **decision-relevant** (`40 >= 25`
+permits, `18 >= 25` does not), and a **contrast** shows a declared digest member *does* move
+`option_id` — without which property 4 would be satisfiable by an id that never moves.
+
+**No Cedar comparison was implemented.**
+
+### 6. Can any independently mutable destination field change dispatch without changing option identity?
+
+**No. There is no such field anywhere on the money path.**
+
+`26 §2.2` declares this class's identity as exactly
+`line_id · parent_transaction_id · amount · instrument · reason_code_scope`, and requires the
+digest to "cover every field whose change would make the option a different effect". An
+independently supplied `destinationInstrumentRef` broke that: `A → B` changed where the money
+went while `option_id` stayed identical. An approval bound to that `option_id` would have
+authorised one destination and dispatched another.
+
+**The repair is removal, not digest widening.** Widening would change an
+architecture-declared digest — the same error class as inventing a fee schedule (S1B-C3a).
+The architecture already supplies the alternative: `26 §11.2` row 3's destination is "derived
+by the canonicaliser from the RECORD-grade transaction, never from the intent", and that
+transaction is content-addressed by `parent_transaction_id` with `instrument` — the
+architecture's two-dimensional refund enumeration, **both of which are digest members**. The
+second identifier was redundant with them *and* unbound by them.
+
+Removed from the selected option, `RefundParameters`, `refundSemanticParamDigest`, the mock
+vendor payload, the oracle's expected payload, and the fixture mutation rows that treated it
+as an independent effect dimension.
+
+**The architecture's rule is retained:** destination comes from the RECORD-grade original
+transaction, never from intent — asserted directly (`destination_instrument_ref` on the wire
+denies `MALFORMED`/`EXTRA_FIELD`; prose naming a destination changes nothing dispatched).
+
+**Proof:** `destination-provenance.test.ts` — no destination key on the option, the
+parameters, the recorded option or the payload; no executable line in the canonicaliser names
+one; every remaining vendor parameter is identity-bearing with none left over; and
+`tests/type-negative/destination-into-option.ts` makes it a compile error in two positions.
+
+**No second destination identifier was invented.** Which vendor fields a real processor needs
+for the enumerated parent transaction is the adapter slice's question.
+
+### 7. Can `U+0000` collide with `null` in accepted canonical input?
+
+**No. `U+0000` is inadmissible in canonical text.**
+
+`30 §5.3` encodes `null` as a single `0x00` byte; a text value containing `U+0000`
+UTF-8-encodes to the same byte, so at a nullable text position they were the same bytes.
+PostgreSQL `text` cannot store `U+0000`, so excluding it costs nothing and restores
+injectivity.
+
+The rule applies to text fields, the structure kind, JSON string values and JSON object keys.
+Model-supplied strings fail closed **at the wire** with `MALFORMED` (or `SELECTOR_MALFORMED`)
+detail `NOT_CANONICAL_TEXT`; the byte layer throws, because reaching it means an inadmissible
+string was assembled internally.
+
+**`null` and the empty string remain distinct and both remain valid** — `000000016b0000000100`
+versus `000000016b00000000`, asserted byte-for-byte, so the repair did not narrow the existing
+rule.
+
+Recorded as **S1B-C8**.
+
+### 8. Can lone surrogates reach a hash?
+
+**No. They are rejected before NFC normalisation and before any UTF-8 encoding.**
+
+The test demonstrates the hazard against Node first: `String.fromCharCode(0xd800)` and
+`String.fromCharCode(0xd801)` are distinct strings that both encode to `efbfbd` — Node
+substitutes `U+FFFD`. RFC 8785 §3.2.2.2 requires malformed Unicode data to fail rather than be
+substituted.
+
+`isWellFormedUnicode` is written out rather than delegated to `String.prototype.isWellFormed`,
+which is not in the declared `ES2022` lib — the rule belongs to the specification, not the
+runtime.
+
+Applied to text fields, the structure kind, JSON string values, JSON object keys, **and
+`rationale` before its lineage commitment**. That last one matters most: the commitment is
+taken over UTF-8 NFC bytes, so two rationales carrying different lone surrogates would have
+committed **identically** — a silent collision in the one field whose entire purpose is
+auditability.
+
+**Multiple distinct lone surrogates are each rejected**, and the rule is not "reject
+surrogates": a valid supplementary character `U+1F600` is **accepted** and encodes to four
+real bytes, and two distinct supplementary characters hash differently.
+
+### 9. Can two NFC-equivalent JSON keys coexist?
+
+**No. The object is rejected — it has no canonical form.**
+
+ACOS adds an NFC rule RFC 8785 does not have, which creates a case RFC 8785 never had to
+answer. The order is now fixed and is exactly the mandate's:
+
+1. validate keys;
+2. normalise each key to NFC;
+3. **reject** if two originals normalise to the same key;
+4. sort the **normalised** keys per the declared JCS ordering (UTF-16 code unit);
+5. serialise the **normalised** keys.
+
+Rejection, not deduplication: emitting the canonical name twice is not a JSON object, and
+silently picking one spelling maps two distinct objects onto one canonical form.
+
+**Proof:** `canonical-text-injectivity.test.ts` §4C — a decomposed/composed accented key pair
+is rejected in either insertion order and at any nesting depth; a **single**
+canonically-equivalent key serialises normally, in its normalised form; and the
+sort-after-normalisation ordering is discriminated against sort-before-normalisation using a
+third key that sorts between the two spellings.
+
+**Money encoding, timestamp precision and framing are unchanged**, asserted explicitly.
+
+### 10. Does any non-architecture `request_hash` remain in production?
+
+**No. Both functions are deleted and nothing invented replaces them.**
+
+`authorizationRequestCanonicalHash` and `authorizationRequestHash` are gone. `26 §2.1` declares
+`dispatch_payload_hash` and declares no `request_hash`. The helper described itself as "the
+AUTHORITY commitment" while not covering every authority-relevant field — an invitation to
+read "the hash moved" as "the authority moved", in both directions, which it could not
+support. Left in the tree it would have become an accidental protocol the journal/audit slice
+inherited.
+
+The two S1B.1 tests now assert the authoritative **fields** directly:
+
+| Mutation | Now asserted |
+|---|---|
+| authoritative retained fee `$1.03 → $1.10` | `total_exposure` `$26.03 → $26.10`; the cost component's amount `$1.10`, kind `RETAINED_PROCESSING_FEE` and `record:` source; the reservation offer moves; `dispatch_payload_hash` **unchanged**, because the vendor effect is unchanged |
+| grant/window set narrowed | `request.windowRefs` changes; model and rationale cannot supply them; under a malicious rationale the offer, exposure, parameters, selected option and payload hash are all identical |
+
+**`dispatchPayloadHash` stays** — `26 §2.1` declares that field explicitly, and
+`source-rules.test.ts` rule 7 asserts it survives, so the rule is not a purge.
+
+The normative commitment of the `AuthorizationRequest` row under `ACOS-JCS-1` is left to the
+journal/audit slice, which owns `30 §5.3`'s row-kind declaration and `36 §2`'s VC-A3.
+**S1B does not pre-design it.**
+
+### 11. Does `EffectCanonicaliser` contain refund-specific digest logic?
+
+**No — and it contains no `refund`-specific identifier at all in executable code.**
+
+`RegisteredConstructor` gains two members, so the per-class operations hang off the
+registration:
+
+```text
+computeSemanticOptionDigest(option)   26 §2.2's per-class option identity
+assertInputCohesion(input)            the per-class checks of questions 3 and 4
+```
+
+`refundSemanticOptionDigest` moved from `optionDigest.ts` into
+`constructors/refundCreate.ts`; `optionDigest.ts` keeps only the class-agnostic
+`computeOptionId`.
+
+The five mandatory properties, asserted by `source-rules.test.ts` rule 8:
+
+| Property | Result |
+|---|---|
+| `EffectCanonicaliser` contains no import of `refundSemanticOptionDigest` | **YES** — nor any `./constructors/` import |
+| the refund constructor/registration owns the refund digest definition | **YES** — the function and its `acos.semantic_option_digest.refund.create.v1` domain |
+| a class with no constructor still denies `NOT_CANONICALISABLE` | **YES** — `registry.test.ts`, unchanged, three classes |
+| no generic fallback exists | **YES** — asserted by source rule |
+| a second constructor needs no refund-specific branch in the core | **YES** — the core names no class; `RegisteredConstructor` declares exactly five members, so a new class must supply both new ones |
+
+**The architecture-declared refund digest is byte-for-byte unchanged.** It moved file, not
+fields: `refund-semantic-digest.test.ts` still passes with no assertion edited.
+
+### 12. Does duplicate constructor-version input fail closed?
+
+**Yes, at resolver construction.**
+
+Two records for one `constructor_id` meant registration order silently decided which signed
+record won — and both may verify, so the signature check cannot separate them. `26 §2.1.2`
+makes the record the thing an approval binds to and `50 §2` class 19 makes it an owner-signed
+control artifact; "whichever was loaded last" is not a resolution rule either can rest on.
+
+**This is not version history or storage.** It is only: one active resolver input may identify
+one constructor id exactly once. It is a build/configuration failure, so it throws at
+construction rather than denying per request.
+
+**Proof:** `constructor-version.test.ts` — with two separately valid signed records for the
+same id, in either order, identical records too, and a **positive control** showing each
+record resolves and verifies alone with different `recordHash`es, so the refused ambiguity is
+a real one. Different constructor ids still coexist.
+
+### 13. Is kill point 7 now consistent with S1A-H4?
+
+**Yes.** And the repair is demonstrably load-bearing.
+
+S1A-H4 established that a raw step journal plus an unclaimed external step is insufficient for
+external exactly-once, and narrowed ADR-IMP-002 to say so. The spike was never updated: it
+asserted `dispatchCount <= 1` at kill point 7 and classified `dispatchCount > 1` inside
+`invariantVerdict()` as a weakened S1A substrate invariant. Both contradict the accepted
+result.
+
+The two properties are now separated:
+
+| | Status |
+|---|---|
+| realised delta exactly once | **ASSERTED** |
+| standing coupling `standing == max(0, cap − realised)` | **ASSERTED** |
+| journal sequence exactly once, gap-free | **ASSERTED** |
+| four-term sum within the window ceiling | **ASSERTED** |
+| external dispatch count | **RECORDED**, named as a known result under S1A-H4 |
+
+Kill point 7 is **not** made to nondeterministically require one dispatch. It asserts
+`1 ≤ dispatchCount ≤ 2` — the lower bound so a run in which neither process reached the step
+cannot be recorded as evidence, the upper bound because two workers can dispatch at most once
+each.
+
+**Ten consecutive clean runs measured it directly:**
+
+```text
+run  1  dispatch=2   realised=40.00 standing=60.00 nextSeq=2
+run  2  dispatch=1   realised=40.00 standing=60.00 nextSeq=2
+run  3  dispatch=1   ...
+run  4  dispatch=2   realised=40.00 standing=60.00 nextSeq=2
+runs 5-10 dispatch=1
+```
+
+**Two of ten runs duplicated the external dispatch, and in both the ledger moved exactly
+once.** Under the old assertion those two runs would have FAILED. That is the finding,
+measured: the old expectation was flaky by construction, and the property it was pointed at
+was never in doubt.
+
+**Retained, not erased:** the once-observed `dispatchCount == 2` recorded in the S1B.1 result
+is now correctly classified as a stale test expectation rather than an unexplained
+observation. **Retained, unchanged:** the deterministic S1A-H4 negative control in
+`external-step-race.test.ts`, which forces the interleaving with a barrier and observes two
+dispatches every run; and exact-once dispatch assertions in every sequential case.
+
+**The outbox was not built.** It remains S1 work — `23 §6` B8, `25 §7`, `33 §1.1`.
+
+Recorded in `ADR-IMP-002 §7.5` and `S1A-implementation-log.md` as **S1A-H4a**. **No S1A
+production source was changed.**
+
+### 14. Did `$25` / `$1.03` / `$26.03` remain unchanged?
+
+**Yes, unchanged and still independently discriminating.**
+
+| Figure | Value | Source |
+|---|---|---|
+| vendor amount (I18a) | `$25.00` | authoritative option |
+| retained processing fee | `$1.03` | authoritative record, S1B-C3a — no schedule, no rate, no rounding |
+| total exposure (I18b) | `$26.03` | `$25.00 + $1.03`, by the oracle's own single addition |
+
+The oracle still imports nothing from `src/`. The retained-fee escape negative control still
+detects the defect: the unsafe constructor produces `$25.00`, the fixture expects `$26.03`,
+and `I18c` throws independently. `$26.03 > $25.00` still exceeds the per-action cap while
+`$25.00` does not — the discriminating point of the whole fixture.
+
+`refundSemanticParamDigest` lost `destinationInstrumentRef`, which changes the idempotency key
+**value** for the fixture. No architecture-declared figure changed; the key was never a
+declared constant, and its declared inputs (`25 §7`) are unchanged.
+
+### 15. Is full VC-C1 still PARTIAL?
+
+**Yes. PARTIAL, unchanged.**
+
+The construction half passes. `DENY: PER_ACTION` is a **policy** result and S1B implements no
+policy engine. `vc-c1-refund-construction.test.ts` still reports the cap comparison as
+arithmetic over independently authored figures and explicitly does not claim a denial, and
+still asserts by source scan that no `PER_ACTION`, `per_action_max`, `permit(`, `cedar` or
+`WINDOW_EXHAUSTED` appears anywhere in the canonicalisation tree.
+
+VC-C2, VC-C3, VC-A3, the resume half of VC-C4, `I18b`'s runtime equality, `I18d` and `I42`'s
+database uniqueness all remain **OPEN**, exactly as `S1B-test-matrix.md §3` records.
+
+### 16. Did any architecture pass-revocation condition trigger?
+
+**No. None of the ten.**
+
+| # | Condition | Status |
+|---|---|---|
+| 1 | a remediation answering a BLOCKING finding by weakening the invariant | **NOT TRIGGERED** — every repair supplied a mechanism or removed a field. Nothing was relaxed: no tolerance added to `I18b`, no standing term dropped from `I3`, no forward exposure retained in fewer statuses, no `I54` relaxation. Findings 1B and 3 were resolved by **removing** the offending field rather than by validating it, which is the strict direction |
+| 2 | the audit plane's independent input path requiring a control-database read | **NOT REACHED** — no audit-plane work in S1B.2 |
+| 3 | cessation undeclarable, or latency too long | **NOT REACHED** |
+| 4 | the S1 concurrency harness cannot produce a failing negative control at `REPEATABLE READ` | **NOT TRIGGERED** — `tests/negative-controls/repeatable-read-race.test.ts` still fails as designed |
+| 5 | independent re-chaining cannot agree across two instances | **NOT REACHED** — VC-A3 is OPEN and S1B builds no second implementation. Finding 4 **strengthens** the `ACOS-JCS-1` position by making the encoding injective |
+| 6 | `I18` divergence persists after SR-C1's field split | **NOT TRIGGERED** — `$25.00` and `$26.03` are carried in two fields, neither overloaded |
+| 7 | more than one additional action class proves non-canonicalisable | **NOT TRIGGERED** — no class was reclassified; the registry is unchanged |
+| 8 | the standing term cannot be made atomic with the realised term | **NOT TRIGGERED** — VC-S8 passed 25/25 with zero harness timeouts and no `40P01` on the correct path |
+| 9 | `charge.standing_authorization_id` underivable | **NOT REACHED** |
+| 10 | the override's aggregate bound | **NOT REACHED** — an owner decision, unchanged |
+
+No prohibited production capability was added. No categorically prohibited class was
+registered. No real adapter, no real money, no live advertising.
+
+---
+
+## The gate
+
+Run from **destroyed local infrastructure**.
+
+```text
+npm run db:down     containers and volumes removed
+npm run db:up       recreated, both containers healthy
+npm run typecheck   clean
+npm run lint        clean, --max-warnings 0
+npm test            38 files, 490 tests, ALL PASSING
+```
+
+| Suite | Tests |
+|---|---|
+| `tests/canonicalisation/` | 326 |
+| `tests/negative-controls/` | 15 (7 S1B retained-fee escape + 8 S1A) |
+| `tests/integration/` | 130 |
+| `spikes/durable-execution/` | 19 |
+| **total** | **490** |
+| of which **S1B** | **333** |
+| of which **S1A**, unchanged | **157** |
+
+### Repetition
+
+| Gate | Requirement | Result |
+|---|---|---|
+| complete canonicalisation suite | 10 consecutive runs | **10 / 10**, 341 tests each run, identical results |
+| VC-S8 | ≥ 25 runs, no harness timeout | **25 / 25**, **0 timeouts**, no `40P01` on the correct path |
+| durable-execution spike, after the kill-point-7 correction | ≥ 10 runs | **10 / 10** |
+
+| Required outcome | Result |
+|---|---|
+| zero unexpected failures | **YES** |
+| no VC-S8 harness timeout | **YES** — 25/25 |
+| correct path produces no `40P01` | **YES** |
+| the known raw external-step duplicate stays demonstrated by the deterministic H4 negative control | **YES** — `external-step-race.test.ts` forces and observes two dispatches every run, unchanged |
+| all accepted S1A monetary tests remain green | **YES** — 157/157, no S1A production source edited |
+
+### One process error, recorded rather than smoothed over
+
+The first attempt at the spike repetition gate reported 7 failures in 10, with
+`42P07 relation "company" already exists` and
+`23505 duplicate key … pg_type_typname_nsp_index`. **This was operator error, not a code
+defect:** a second `vitest` run had been started against the same PostgreSQL instance while
+the gate was running, and the spike's `resetForRun` migrates the database down and up. Two
+concurrent migrations of one database collide.
+
+Re-run in isolation, with no other process touching the database: **10 / 10 pass**. It is
+recorded because the standard is that what happened is reported, including when the cause was
+the operator.
+
+---
+
+## What S1B.2 added to the tree
+
+| File | What |
+|---|---|
+| `tests/canonicalisation/canonicalisation-cohesion.test.ts` | the table-driven cohesion suite — one relationship per case, a positive control, a constructor call counter |
+| `tests/canonicalisation/catalogue-entry-provenance.test.ts` | finding 1B, structurally and behaviourally, with a discrimination check |
+| `tests/canonicalisation/selected-option-projection.test.ts` | finding 2 — five properties plus the decision-relevance and contrast controls |
+| `tests/canonicalisation/destination-provenance.test.ts` | finding 3 — source and behaviour |
+| `tests/canonicalisation/canonical-text-injectivity.test.ts` | finding 4 — the hazard demonstrated against Node first, then every rule with a positive control |
+| `tests/type-negative/catalogue-entry-into-context.ts` | finding 1B as a compile error |
+| `tests/type-negative/destination-into-option.ts` | finding 3 as a compile error, in two positions |
+| `source-rules.test.ts` rules 7 and 8 | no non-architecture request hash survives; the core owns no per-class logic |
+| `RegisteredConstructor.computeSemanticOptionDigest` / `.assertInputCohesion` | the real extension point |
+| `canonicalText` / `isCanonicalText` / `isWellFormedUnicode` | the `ACOS-JCS-1` admissibility rule |
+| `RecordedRefundSelectedOption` | the typed per-class projection |
+| `externalDispatchNote()` in the spike | the observation, separated from the verdict |
+| S1B-C6a, S1B-C8 | two owner clarifications |
+
+## What S1B.2 removed
+
+`AuthoritativeCanonicalisationContext.catalogueEntry` ·
+`SelectedAuthoritativeRefundOption.destinationInstrumentRef` ·
+`RefundParameters.destinationInstrumentRef` · `destination_instrument_ref` from the vendor
+payload and from `refundSemanticParamDigest` · `authorizationRequestCanonicalHash` and
+`authorizationRequestHash` · `refundSemanticOptionDigest` from `optionDigest.ts` (moved, not
+deleted) · the `dispatchCount > 1` clause from the spike's invariant verdict · two fixture
+mutation rows that treated the destination as an independent effect dimension.
+
+## Still open, unchanged by S1B.2
+
+**Full VC-C1 remains PARTIAL.** VC-C2, VC-C3, VC-A3, the resume half of VC-C4, `I18b`'s
+runtime equality, `I18d` and `I42`'s database uniqueness remain **OPEN**.
+
+`SELECTOR_STALE` and `SELECTOR_ENUMERATION_STALE` are still unemitted — S1B-C7 unchanged. The
+C′ entity advisory lock, live enumeration, `I53`'s no-substitution rule and the mandatory
+positional-selector negative control all belong to the next increment. No Cedar. No adapter.
+No outbox. No FX.
+
+**Do not begin the enumeration / selector increment on the strength of this document.**
+S1B.2 discharges the independent review's findings; it does not authorise the next slice.

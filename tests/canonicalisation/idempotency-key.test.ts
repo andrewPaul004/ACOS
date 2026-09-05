@@ -34,11 +34,24 @@ const { canonicaliser } = makeCanonicaliser();
 const option = makeRefundOption();
 
 function keyFor(
-  overrides: { readonly rationale?: string; readonly taskId?: string } = {},
+  overrides: {
+    readonly rationale?: string;
+    readonly taskId?: string;
+    /**
+     * S1B.2 finding 1D: `reason_code` must belong to the selected option declared
+     * `reason_code_scope`. A scope mutation therefore carries a reason code from that scope
+     * — otherwise the case would deny before the key is computed and would be testing
+     * cohesion rather than the key. Only the reason code moves with it; nothing else does.
+     */
+    readonly reasonCode?: string;
+  } = {},
   optionOverrides: OptionOverrides = {},
 ): string {
   const opt = makeRefundOption(optionOverrides);
-  const raw = overrides.rationale === undefined ? makeRawIntent(opt) : makeRawIntent(opt, { rationale: overrides.rationale });
+  const intentOverrides: { rationale?: string; reasonCode?: string } = {};
+  if (overrides.rationale !== undefined) intentOverrides.rationale = overrides.rationale;
+  if (overrides.reasonCode !== undefined) intentOverrides.reasonCode = overrides.reasonCode;
+  const raw = makeRawIntent(opt, intentOverrides);
   const context = overrides.taskId === undefined ? makeContext() : makeContext({ taskId: overrides.taskId });
   return canonicaliser.canonicalise(parseProposedIntent(raw), context, opt).dispatchPayload
     .idempotencyKey;
@@ -113,22 +126,37 @@ describe('the key excludes sequencing, time and randomness', () => {
 });
 
 describe('a semantic change DOES change the key', () => {
-  const semanticMutations: readonly [string, OptionOverrides][] = [
+  const semanticMutations: readonly [string, OptionOverrides, string?][] = [
     ['a different amount', { amount: money('20.00') }],
     ['a different line', { lineId: 'line:ORD-123:2' }],
     ['a different parent transaction', { parentTransactionId: 'txn:CH-9002' }],
     ['a different instrument', { instrument: 'store_credit' }],
-    ['a different reason-code scope', { reasonCodeScope: 'BILLING_ERROR' }],
-    ['a different destination instrument', { destinationInstrumentRef: 'instrument:pm_other' }],
+    // The scope moves, and the proposed reason code moves into it — S1B.2 finding 1D.
+    ['a different reason-code scope', { reasonCodeScope: 'BILLING_ERROR' }, 'PRICING_ERROR'],
+    // S1B.2 finding 3 removed the independently mutable `destinationInstrumentRef`, and with
+    // it this row. It was a fixture mutation treating the destination as an effect dimension
+    // of its own — which is exactly what `26 §2.2` forbids while the declared
+    // `semantic_option_digest` does not cover it. A change of destination is now a change of
+    // `parent_transaction_id` or of `instrument`, both of which are already listed above and
+    // both of which ARE members of the declared digest.
   ];
 
   const baseline = keyFor();
 
-  for (const [name, override] of semanticMutations) {
+  for (const [name, override, reasonCode] of semanticMutations) {
     it(name, () => {
-      expect(keyFor({}, override), name).not.toBe(baseline);
+      const overrides = reasonCode === undefined ? {} : { reasonCode };
+      expect(keyFor(overrides, override), name).not.toBe(baseline);
     });
   }
+
+  it('the scope case is not confounded: reason_code is not an input to the key', () => {
+    // The scope row above moves two things — the option scope and the proposed reason code —
+    // so this states that only one of them can move the key. `25 §7`'s key is over the
+    // semantic PARAMETERS, and `reason_code` is not among them; `reason_code_scope` is.
+    expect(keyFor({ reasonCode: 'CUSTOMER_REPORTED_NOT_RECEIVED' })).toBe(baseline);
+    expect(keyFor({ reasonCode: 'CUSTOMER_REPORTED_DAMAGE' })).toBe(baseline);
+  });
 
   it('a different task produces a different key', () => {
     // `25 §7`'s key includes task_id, so two tasks proposing the same refund are two
@@ -137,7 +165,12 @@ describe('a semantic change DOES change the key', () => {
   });
 
   it('the mutations are pairwise distinct, not merely different from the baseline', () => {
-    const keys = new Set([baseline, ...semanticMutations.map(([, o]) => keyFor({}, o))]);
+    const keys = new Set([
+      baseline,
+      ...semanticMutations.map(([, o, reasonCode]) =>
+        keyFor(reasonCode === undefined ? {} : { reasonCode }, o),
+      ),
+    ]);
     expect(keys.size).toBe(semanticMutations.length + 1);
   });
 });

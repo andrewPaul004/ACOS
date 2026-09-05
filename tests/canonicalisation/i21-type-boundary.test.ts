@@ -101,9 +101,12 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and six negative files', () => {
+  it('the fixture directory contains a positive control and eight negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
+      // S1B.2 findings 1B and 3, as compile-time impossibilities.
+      'catalogue-entry-into-context.ts',
+      'destination-into-option.ts',
       'fifth-field-request.ts',
       'intent-as-context.ts',
       'model-amount-into-exposure.ts',
@@ -160,6 +163,22 @@ describe('every I21 violation fails to compile, on the expected line', () => {
       'model-windows-into-request.ts',
       'assigning model-supplied window refs or a model-supplied retained fee',
       'TS2322',
+    ],
+    [
+      // S1B.2 finding 1B. The catalogue row is not context; it has no expressible position
+      // on `AuthoritativeCanonicalisationContext` at all, so a `refund.create` request
+      // cannot acquire another class's recoverability, value_direction, adapter or method.
+      'catalogue-entry-into-context.ts',
+      'supplying an action catalogue entry as canonicalisation context',
+      'TS2353',
+    ],
+    [
+      // S1B.2 finding 3. There is no independent destination identifier on the option or on
+      // the computed parameters, so no field outside the content-addressed parent
+      // transaction and instrument can change where the money goes.
+      'destination-into-option.ts',
+      'supplying an independent destination instrument reference',
+      'TS2353',
     ],
   ];
 

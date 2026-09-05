@@ -1,5 +1,5 @@
 import type { Money } from '../exposure/money.js';
-import type { ActionClass } from './actionCatalogue.js';
+import type { ActionCatalogueEntry, ActionClass } from './actionCatalogue.js';
 import type { PermittedIntentFields } from './intent.js';
 import type {
   AuthoritativeCanonicalisationContext,
@@ -72,14 +72,63 @@ export interface ConstructorInput {
   readonly permitted: PermittedIntentFields;
   readonly context: AuthoritativeCanonicalisationContext;
   readonly option: SelectedAuthoritativeOption;
+  /**
+   * The class's row from the CLOSED action catalogue — S1B.2, finding 1B.
+   *
+   * Read by the canonicaliser as `ACTION_CATALOGUE[intent.actionClass]` after `action_class`
+   * has passed the closed-catalogue check, never supplied by the caller. There is no
+   * catalogue entry on `AuthoritativeCanonicalisationContext` any more, so a caller cannot
+   * hand a `refund.create` request another class's recoverability, value_direction, adapter
+   * or method.
+   */
+  readonly catalogueEntry: ActionCatalogueEntry;
 }
 
 export type EffectConstructor = (input: ConstructorInput) => ConstructedEffect;
 
+/**
+ * ---------------------------------------------------------------------------------
+ * THE REGISTERED CONSTRUCTOR OWNS PER-CLASS OPTION IDENTITY — S1B.2, finding 6
+ *
+ * `26 §2.2`, verbatim: "Declared per class in the action catalogue, and a change to any
+ * digest definition is a semantic constructor bump". The original S1B core called
+ * `refundSemanticOptionDigest` directly, so adding a second class meant editing the
+ * canonicaliser — which contradicts the S1B contract's own statement that the closed
+ * catalogue plus a registered constructor IS the extension point.
+ *
+ * So the per-class operations hang off the registration:
+ *
+ *   computeSemanticOptionDigest   `26 §2.2`'s per-class digest. The core content-addresses
+ *                                 the selector against it and never names a class.
+ *   assertInputCohesion           the per-class authoritative-input checks, run BEFORE
+ *                                 construction so nothing is emitted from contradictory
+ *                                 inputs (S1B.2 findings 1C and 1D).
+ *
+ * `EffectCanonicaliser` imports no per-class digest function and carries no per-class
+ * branch; a class with no registration still denies `NOT_CANONICALISABLE` at step C2, and
+ * there is still no generic fallback.
+ * ---------------------------------------------------------------------------------
+ */
 export interface RegisteredConstructor {
   readonly actionClass: ActionClass;
   /** Resolved against a signed `ConstructorVersionRecord` before the body runs (`I61`). */
   readonly constructorId: string;
+  /**
+   * `26 §2.2`'s `semantic_option_digest` for THIS class, over the authoritative option.
+   *
+   * The definition lives with the constructor that computes the effect, because the two
+   * must move together: `26 §2.1.2` makes a digest change semantic by definition.
+   */
+  readonly computeSemanticOptionDigest: (option: SelectedAuthoritativeOption) => Buffer;
+  /**
+   * Per-class cohesion of the authoritative inputs, asserted before construction.
+   *
+   * Fails closed. A contradiction between two kernel-owned inputs throws — no
+   * `ProposedIntent` can produce one, so it is an internal defect. A contradiction between
+   * a permitted intent field and the authoritative option denies, because the model can
+   * produce that pair.
+   */
+  readonly assertInputCohesion: (input: ConstructorInput) => void;
   readonly construct: EffectConstructor;
 }
 

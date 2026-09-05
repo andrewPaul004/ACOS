@@ -284,6 +284,16 @@ therefore states the request's canonical byte form as a function,
 the window refs. It is a **function and not a request field**: `26 §2.1` declares no
 `request_hash`, and inventing one would be the same class of error this pass is repairing.
 
+> **WITHDRAWN BY S1B.2, finding 5.** Both functions are **deleted**. The reasoning above is
+> retained as the record and was wrong in one respect that mattered: a helper covering only
+> *some* authority-relevant fields cannot support the inference "the hash moved, therefore
+> the authority moved" in either direction, and calling it "the authority commitment"
+> invited exactly that reading. `26 §2.1` declares no `request_hash` and S1B does not
+> pre-design one; the normative row commitment belongs to the journal/audit slice. The
+> assertions that used it now read the authoritative **fields** directly. See
+> `S1B-result.md §S1B.2` question 10.
+
+
 ### What S1B still does not know
 
 Selecting a real processor's fee model — Stripe's, Shopify's, anyone's — is
@@ -321,9 +331,11 @@ For `refund.create`:
 - `counterparty` is **`null`**. The class creates no payee, supplier or settlement
   destination; `26 §11.2` prints `n/a` and `26 §1` says why conflating the payer with a
   counterparty is the error to avoid.
-- The **destination is still kernel-derived and still recorded**, as the computed parameter
-  `destination_instrument_ref`, resolved from the authoritative RECORD-grade parent
-  transaction and never from the intent — which is exactly what `26 §11.2`'s cell
+- The **destination is still kernel-derived and still recorded**. S1B.2 finding 3 removed the
+  separate `destination_instrument_ref`: the destination is the RECORD-grade parent
+  transaction and the instrument it is refunded to, carried as the computed parameters
+  `parent_transaction_id` and `instrument` — both members of `26 §2.2`'s declared semantic
+  option identity — and never taken from the intent, which is exactly what `26 §11.2`'s cell
   describes.
 - `customer_novelty` carries `NEW | RETURNING` from the authoritative customer record, and
   is **not** a counterparty test.
@@ -489,3 +501,161 @@ which is the flowchart's own code for *"selector does not index a live option"*.
 That slice adds the live re-enumeration under the lock, the `max_age` check, `I53`'s
 no-substitution rule, and the mandatory positional-selector negative control. S1B's check
 is necessary and is **not sufficient**, and the result document says so.
+
+---
+
+# S1B.2 — clarifications added by the independent implementation review
+
+The independent review of the S1B/S1B.1 repository returned
+`S1B NOT YET ACCEPTED — LOCAL IMPLEMENTATION REPAIRS REQUIRED` with eight findings. Two of
+them turn on architecture silences and are recorded here as clarifications; the rest are
+mechanical repairs and are recorded in `S1B-implementation-log.md §13` and
+`S1B-result.md §S1B.2`.
+
+## S1B-C6a — a `reason_code` must belong to the selected option's `reason_code_scope`
+
+**Extends S1B-C6. Fixture-level, not a production-policy claim.**
+
+### The two passages, quoted
+
+`26 §2.0`, on the model-facing surface:
+
+> `reason_code       // from a closed enum`
+
+`26 §2.2`, the declared semantic option identity for this class:
+
+> `refund.create | line_id · parent_transaction_id · amount · instrument · reason_code_scope`
+
+### The silence
+
+The architecture closes the `reason_code` enum and makes `reason_code_scope` part of the
+option's semantic identity. It never states the relation between them. S1B-C6 supplied the
+fixture enumeration; it did not supply the mapping's consequence.
+
+### The owner clarification
+
+`reason_code_scope` is part of `refund.create`'s **semantic option identity**. A proposed
+`reason_code` must therefore belong to the scope of the option the selector addressed:
+
+```text
+REASON_CODE_SCOPES[intent.reason_code] == option.reason_code_scope
+```
+
+Otherwise the emitted `AuthorizationRequest` records a reason that contradicts the effect it
+selected, and `26 §8`'s refund policy — which reads `context.reason_code in ApprovedReasons`
+— evaluates a reason code against a scope the model did not choose.
+
+The fixture mapping, from S1B-C6:
+
+```text
+CUSTOMER_REPORTED_DAMAGE       -> GOODS_FAULT
+CUSTOMER_REPORTED_NOT_RECEIVED -> GOODS_FAULT
+ITEM_RETURNED                  -> GOODS_RETURNED
+DUPLICATE_CHARGE               -> BILLING_ERROR
+PRICING_ERROR                  -> BILLING_ERROR
+```
+
+### The denial, and why it is not a new code
+
+`DENY: SELECTOR_INVALID`, detail `REASON_CODE_SCOPE_MISMATCH`.
+
+Both halves are individually well-formed — the reason code is in the closed enum and the
+option is authoritative — and it is their **combination** that is inadmissible. That is what
+`26 §7`'s `SELECTOR_INVALID` says: the selector does not index a permissible option **for
+this intent**. No new denial code was invented; `26 §7` declares the set and S1B.2 does not
+extend it.
+
+It **denies** rather than throwing, because the model can produce the pair: a valid reason
+code, and a validly content-addressed option from another scope.
+
+### The scope of this rule
+
+**A fixture-level consistency rule tied to S1B-C6.** It is *not* a claim that this enum,
+this grouping, or this mapping is universal production policy. Selecting the production
+reason-code taxonomy belongs to the policy slice, exactly as selecting a processor fee model
+belongs to the adapter slice (S1B-C3a). What S1B.2 asserts is narrower and unavoidable: for
+whatever mapping is in force, the proposed code and the selected option's scope must agree.
+
+The **semantic option digest is unchanged.** `reason_code_scope` was already a declared
+member; `reason_code` is not one and does not become one.
+
+### Where it is proved
+
+`tests/canonicalisation/canonicalisation-cohesion.test.ts` — the table row, plus the
+exhaustive pair sweep against `VC_C1_REASON_CODE_SCOPES`, which the oracle transcribes by
+hand and which imports nothing from `src/`.
+
+---
+
+## S1B-C8 — `ACOS-JCS-1` canonical text must be injective over accepted strings
+
+### The passage, quoted
+
+`30 §5.3`, the hazard table's rules column:
+
+> **Nulls vs empty strings** — "Single `0x00` sentinel byte for null; an empty string is a
+> zero-length value."
+> **Unicode form** — "UTF-8, NFC."
+> **JSON-valued columns** — "RFC 8785 (JCS), applied to the field's value."
+
+### The silence
+
+The specification says how each accepted value is encoded. It does not say **which strings
+are accepted**, and three classes of input make the encoding non-injective — two distinct
+values producing identical bytes:
+
+1. **`U+0000` versus the null sentinel.** `null` encodes as one `0x00` byte. A text value
+   containing `U+0000` UTF-8-encodes to the same byte. At a nullable text position they are
+   indistinguishable.
+2. **Unpaired UTF-16 surrogates.** A JavaScript string may hold a lone surrogate, which is
+   not a Unicode scalar value. Node's UTF-8 encoder substitutes `U+FFFD` for each one, so a
+   string holding only `U+D800` and a string holding only `U+D801` — distinct values —
+   encode to the same three bytes.
+3. **NFC-normalised JSON key collisions.** ACOS adds an NFC rule that RFC 8785 does not
+   have, so two distinct source keys can normalise to one canonical name. RFC 8785 never had
+   to answer this because it never normalises.
+
+### The owner clarification
+
+ACOS canonical text — text fields, the structure kind, JSON string values and JSON object
+keys — admits only **well-formed Unicode scalar sequences containing no `U+0000`**.
+
+* `U+0000` is forbidden. PostgreSQL `text` cannot store it, so nothing is lost, and
+  excluding it restores injectivity: `null` is one `0x00` byte, an empty string is a
+  zero-length value, and no accepted text can imitate either.
+* A string that is not a well-formed scalar sequence is **rejected before NFC normalisation
+  and before any UTF-8 encoding**. RFC 8785 §3.2.2.2 already requires malformed Unicode data
+  to fail rather than be substituted; this states where in the pipeline that happens.
+* For JSON objects the order is fixed: **validate every key, normalise every key to NFC,
+  REJECT if two normalise alike, sort the NORMALISED keys per the declared JCS ordering,
+  serialise the NORMALISED keys.** Sorting pre-normalised keys and normalising while writing
+  would emit an object carrying one canonical name twice, which is not a JSON object; and
+  silently picking one spelling would map two distinct objects onto one canonical form.
+
+Rejection, not repair. An object whose canonical form would be ill-formed **has no canonical
+form**.
+
+### Where it fails closed
+
+At the **wire boundary** for anything model-supplied — `resource_ref`, both selector
+components and `rationale` deny `MALFORMED` / `SELECTOR_MALFORMED` with detail
+`NOT_CANONICAL_TEXT`, before the rationale seal and therefore before any hash. In the
+**byte layer** it throws, because reaching it means an inadmissible string was assembled
+internally.
+
+`rationale` matters here specifically: its lineage commitment is taken over UTF-8 NFC bytes,
+so two distinct rationales carrying different lone surrogates would commit **identically** —
+a silent collision in the one field whose entire purpose is auditability.
+
+### What this does not change
+
+Money encoding, timestamp precision and field framing are untouched. NFC normalisation of
+*values* is unchanged: two Unicode forms of the same string still hash alike, which is the
+existing rule and remains correct.
+
+### Where it is proved
+
+`tests/canonicalisation/canonical-text-injectivity.test.ts`, which first demonstrates the
+hazard against Node itself — two distinct lone surrogates encoding to identical bytes — and
+then proves each rule, each with a positive control (a valid supplementary character is
+accepted; a single canonically-equivalent key serialises normally).

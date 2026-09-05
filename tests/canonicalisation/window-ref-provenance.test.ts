@@ -7,7 +7,6 @@ import {
   ACTION_CATALOGUE,
   type ActionCatalogueEntry,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
-import { authorizationRequestHash } from '../../src/kernel/canonicalisation/canonicaliser.js';
 import { CanonicalisationDenied } from '../../src/kernel/canonicalisation/errors.js';
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
 import { offerForReservation } from '../../src/kernel/canonicalisation/ports/reservationHandoff.js';
@@ -116,9 +115,10 @@ describe('2 — changing the authoritative grant/window context changes window_r
     });
     expect(narrowed.request.windowRefs).toEqual(['W_MONTH_REFUND']);
     expect(offerForReservation(narrowed.request).windowRefs).toEqual(['W_MONTH_REFUND']);
-    expect(authorizationRequestHash(narrowed.request)).not.toBe(
-      authorizationRequestHash(baseline.request),
-    );
+    // S1B.2 finding 5: asserted on `request.windowRefs` and on the reservation offer
+    // directly. The invented `authorizationRequestHash` is gone, and with it the inference
+    // that a moving hash proves the authority moved.
+    expect(narrowed.request.windowRefs).not.toEqual(baseline.request.windowRefs);
   });
 
   it('a grant set naming a window the catalogue never mentioned is carried verbatim', () => {
@@ -159,9 +159,13 @@ describe('3 — rationale cannot change window_refs', () => {
     );
     expect(malicious.request.windowRefs).toEqual(innocuous.request.windowRefs);
     expect(malicious.request.windowRefs).toEqual(VC_C1_EXPECTED_WINDOW_REFS);
-    expect(authorizationRequestHash(malicious.request)).toBe(
-      authorizationRequestHash(innocuous.request),
-    );
+    // And every other authority-bearing output with them, asserted field by field rather
+    // than through an invented request hash — S1B.2 finding 5.
+    expect(offerForReservation(malicious.request)).toEqual(offerForReservation(innocuous.request));
+    expect(malicious.request.exposure).toEqual(innocuous.request.exposure);
+    expect(malicious.request.parameters).toEqual(innocuous.request.parameters);
+    expect(malicious.request.selectedOption).toEqual(innocuous.request.selectedOption);
+    expect(malicious.request.dispatchPayloadHash).toBe(innocuous.request.dispatchPayloadHash);
   });
 });
 

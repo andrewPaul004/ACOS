@@ -2,10 +2,9 @@ import { generateKeyPairSync, sign as signBytes, type KeyObject } from 'node:cry
 
 import { money, type Money } from '../../src/kernel/exposure/money.js';
 import { computed } from '../../src/kernel/canonicalisation/brands.js';
-import {
-  ACTION_CATALOGUE,
-  type ReasonCode,
-  type ReasonCodeScope,
+import type {
+  ReasonCode,
+  ReasonCodeScope,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import type { AuthoritativeRetainedFee } from '../../src/kernel/canonicalisation/authoritativeCost.js';
 import type { AuthoritativeGrantWindowContext } from '../../src/kernel/canonicalisation/grantWindows.js';
@@ -23,12 +22,11 @@ import {
   REFUND_CREATE_CONSTRUCTOR_ID,
   refundCreateConstructor,
 } from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
-import {
-  computeOptionId,
-  refundSemanticOptionDigest,
-} from '../../src/kernel/canonicalisation/optionDigest.js';
+import { computeOptionId } from '../../src/kernel/canonicalisation/optionDigest.js';
+import { refundSemanticOptionDigest } from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
 import type {
   AuthoritativeCanonicalisationContext,
+  ResolvedResource,
   SelectedAuthoritativeRefundOption,
 } from '../../src/kernel/canonicalisation/types.js';
 
@@ -36,6 +34,7 @@ import {
   VC_C1,
   VC_C1_EXPECTED_WINDOW_REFS,
   VC_C1_ORDER,
+  VC_C1_REASON_CODE,
   VC_C1_SEMANTIC_OPTION_FIELDS,
   formatMinor,
 } from './canonicalisationOracle.js';
@@ -129,15 +128,27 @@ export interface ContextOverrides {
   readonly taskId?: string;
   readonly authorisationRef?: string;
   readonly enumerationId?: string;
-  readonly actionClass?: keyof typeof ACTION_CATALOGUE;
   /** The authoritative retained fee. Pass `null` to model a class that carries none. */
   readonly retainedProcessingFee?: AuthoritativeRetainedFee | null;
   readonly grantWindows?: AuthoritativeGrantWindowContext;
+  /**
+   * The RESOLVED resource. S1B.2 finding 1A's cohesion case corrupts exactly one of its
+   * fields, so the override takes the whole record rather than a convenience field.
+   */
+  readonly resource?: ResolvedResource;
+  /** `26 §2.1`: "the single ledger currency". Varied by finding 1C's cohesion case. */
+  readonly ledgerCurrency?: string;
 }
 
-/** The authoritative context. Every field kernel-owned; none of it reaches the model. */
+/**
+ * The authoritative context. Every field kernel-owned; none of it reaches the model.
+ *
+ * S1B.2 finding 1B: there is NO `catalogueEntry` here any more, and no override that could
+ * supply one. The canonicaliser reads the closed catalogue itself. A test that wanted to
+ * give a `refund.create` request another class's recoverability, value_direction, adapter or
+ * method has nothing to pass — which is the structural form of the repair.
+ */
 export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCanonicalisationContext {
-  const actionClass = overrides.actionClass ?? 'refund.create';
   return {
     companyId: computed('company:ACME'),
     taskId: computed(overrides.taskId ?? 'task:T-4471'),
@@ -146,17 +157,18 @@ export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCano
       kind: 'AGENT' as const,
       delegationDepth: 1,
     }),
-    resource: computed({
-      resourceRef: VC_C1_ORDER.resourceRef,
-      resourceId: VC_C1_ORDER.resourceId,
-      grade: 'RECORD' as const,
-    }),
+    resource: computed(
+      overrides.resource ?? {
+        resourceRef: VC_C1_ORDER.resourceRef,
+        resourceId: VC_C1_ORDER.resourceId,
+        grade: 'RECORD' as const,
+      },
+    ),
     enumerationRef: computed({
       enumerationId: overrides.enumerationId ?? FIXTURE_ENUMERATION_ID,
       computedAt: new Date('2026-09-05T10:00:00.000Z'),
     }),
-    catalogueEntry: computed(ACTION_CATALOGUE[actionClass]),
-    ledgerCurrency: computed('USD'),
+    ledgerCurrency: computed(overrides.ledgerCurrency ?? 'USD'),
     retainedProcessingFee:
       overrides.retainedProcessingFee === null
         ? null
@@ -174,8 +186,16 @@ export interface OptionOverrides {
   readonly amount?: Money;
   readonly instrument?: string;
   readonly reasonCodeScope?: ReasonCodeScope;
-  readonly destinationInstrumentRef?: string;
   readonly resourceId?: string;
+  /**
+   * Current authoritative policy state — `26 §8`'s `line_refundable_remaining`.
+   *
+   * S1B.2 finding 2's discriminating pair varies ONLY this: the recorded selected option
+   * must move and `option_id` must not.
+   */
+  readonly lineRefundableRemaining?: Money;
+  /** The option's own currency. Varied by finding 1C's cohesion case. */
+  readonly currency?: string;
 }
 
 /** The selected authoritative option. The model chose its IDENTITY and nothing else. */
@@ -194,11 +214,14 @@ export function makeRefundOption(
     reasonCodeScope: computed(
       overrides.reasonCodeScope ?? VC_C1_SEMANTIC_OPTION_FIELDS.reasonCodeScope,
     ),
-    lineRefundableRemaining: computed(money('40.00')),
-    destinationInstrumentRef: computed(
-      overrides.destinationInstrumentRef ?? VC_C1_ORDER.destinationInstrumentRef,
+    lineRefundableRemaining: computed(
+      overrides.lineRefundableRemaining ??
+        money(formatMinor(VC_C1_ORDER.lineRefundableRemainingMinor)),
     ),
-    currency: computed('USD'),
+    // S1B.2 finding 3: there is no `destinationInstrumentRef` to supply. The destination is
+    // the RECORD-grade parent transaction's own instrument, content-addressed by
+    // `parentTransactionId` and `instrument`, both of which ARE option-identity members.
+    currency: computed(overrides.currency ?? 'USD'),
   };
 }
 
@@ -228,7 +251,7 @@ export function makeRawIntent(
       enumeration_id: overrides.enumerationId ?? FIXTURE_ENUMERATION_ID,
       option_id: overrides.optionId ?? optionIdFor(option),
     },
-    reason_code: overrides.reasonCode ?? 'CUSTOMER_REPORTED_DAMAGE',
+    reason_code: overrides.reasonCode ?? VC_C1_REASON_CODE,
     rationale: overrides.rationale ?? 'Customer photographed a cracked panel on arrival.',
   };
 }

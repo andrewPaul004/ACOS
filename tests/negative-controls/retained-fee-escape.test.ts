@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { toDb } from '../../src/kernel/exposure/money.js';
+import { ACTION_CATALOGUE } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import {
   parseProposedIntent,
   permittedFieldsOf,
@@ -55,6 +56,10 @@ describe('the unsafe constructor reproduces the escape', () => {
     permitted: permittedFieldsOf(intent),
     context,
     option,
+    // S1B.2 finding 1B: the catalogue row is an input the CANONICALISER supplies from the
+    // closed catalogue. Calling the constructor directly means supplying it here, from the
+    // same closed catalogue — there is no context field to take it from.
+    catalogueEntry: ACTION_CATALOGUE['refund.create'],
   });
 
   it('it produces $25.00 where a correct constructor produces $26.03', () => {
@@ -79,6 +84,10 @@ describe('THE CONTROL — the hand-authored VC-C1 fixture rejects it', () => {
     permitted: permittedFieldsOf(intent),
     context,
     option,
+    // S1B.2 finding 1B: the catalogue row is an input the CANONICALISER supplies from the
+    // closed catalogue. Calling the constructor directly means supplying it here, from the
+    // same closed catalogue — there is no context field to take it from.
+    catalogueEntry: ACTION_CATALOGUE['refund.create'],
   });
 
   it('the fixture expects $26.03 and the unsafe constructor gives $25.00', () => {

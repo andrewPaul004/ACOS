@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -253,6 +255,107 @@ describe('the semantic/non-semantic line is declared, not asserted per deploy', 
         ],
       }),
     ).not.toThrow();
+  });
+});
+
+describe('one resolver input identifies one constructor id exactly once (S1B.2, finding 8)', () => {
+  /**
+   * Small hardening while this boundary is open.
+   *
+   * `ConstructorVersionResolver` loaded records into a Map keyed by constructor id, so two
+   * records for one id meant REGISTRATION ORDER decided which signed record won. Both may be
+   * individually valid — the signature check cannot separate them, because both signatures
+   * verify — so nothing downstream could detect the substitution either.
+   *
+   * `26 §2.1.2` makes the record the thing an approval binds to, and `50 §2` class 19 makes
+   * it an owner-signed control artifact. "Whichever was loaded last" is not a resolution rule
+   * either can rest on, and `36 §0`'s discipline says an ambiguity that resolves silently is
+   * indistinguishable from one that resolves correctly.
+   *
+   * WHAT THIS IS NOT: version history, or storage. Those need the approval state machine and
+   * are out of S1B scope. This is only the narrow property that the current selection is
+   * deterministic, and it is a build/configuration failure rather than a runtime condition —
+   * so it fails at resolver CONSTRUCTION, not per request.
+   */
+  const first = signConstructorVersion(signer, REFUND_VERSION_1_0);
+  const second = signConstructorVersion(signer, {
+    ...REFUND_VERSION_1_0,
+    nonSemanticMinor: 1,
+    changedFields: ['logging'],
+  });
+
+  it('both records are individually valid, so the ambiguity is real', () => {
+    // The positive control. Each alone resolves and verifies.
+    for (const record of [first, second]) {
+      const resolver = new ConstructorVersionResolver(signer.publicKey, [record]);
+      const identity = resolver.resolve(REFUND_CREATE_CONSTRUCTOR_ID, 'refund.create');
+      expect(identity.constructorId).toBe(REFUND_CREATE_CONSTRUCTOR_ID);
+    }
+    // And they are genuinely different records, so order would have decided something.
+    expect(
+      new ConstructorVersionResolver(signer.publicKey, [first])
+        .resolve(REFUND_CREATE_CONSTRUCTOR_ID, 'refund.create')
+        .recordHash,
+    ).not.toBe(
+      new ConstructorVersionResolver(signer.publicKey, [second])
+        .resolve(REFUND_CREATE_CONSTRUCTOR_ID, 'refund.create')
+        .recordHash,
+    );
+  });
+
+  it('two records for one constructor id fail resolver INITIALISATION', () => {
+    expect(() => new ConstructorVersionResolver(signer.publicKey, [first, second])).toThrow(
+      /duplicate ConstructorVersionRecord for constructor ctor\.refund\.create/,
+    );
+  });
+
+  it('in either order — it is not a last-writer-wins that happens to throw one way', () => {
+    expect(() => new ConstructorVersionResolver(signer.publicKey, [second, first])).toThrow(
+      /duplicate ConstructorVersionRecord/,
+    );
+  });
+
+  it('two IDENTICAL records fail too — the rule is about the id, not about disagreement', () => {
+    expect(() => new ConstructorVersionResolver(signer.publicKey, [first, first])).toThrow(
+      /duplicate ConstructorVersionRecord/,
+    );
+  });
+
+  it('records for DIFFERENT constructor ids coexist, so the rule is not over-broad', () => {
+    const other = signConstructorVersion(signer, {
+      ...REFUND_VERSION_1_0,
+      constructorId: 'ctor.refund.create.v2',
+    });
+    const resolver = new ConstructorVersionResolver(signer.publicKey, [first, other]);
+    expect(resolver.resolve(REFUND_CREATE_CONSTRUCTOR_ID, 'refund.create').constructorId).toBe(
+      REFUND_CREATE_CONSTRUCTOR_ID,
+    );
+    expect(resolver.resolve('ctor.refund.create.v2', 'refund.create').constructorId).toBe(
+      'ctor.refund.create.v2',
+    );
+  });
+
+  it('it throws rather than denying — a build defect is not a model-visible category', () => {
+    let error: unknown = null;
+    try {
+      new ConstructorVersionResolver(signer.publicKey, [first, second]);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(CanonicalisationDenied);
+  });
+
+  it('and no version history or storage was implemented alongside it', () => {
+    const code = readFileSync(
+      'src/kernel/canonicalisation/constructorVersion.ts',
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    for (const needle of ['history', 'previousVersions', 'versionsFor', 'allVersions']) {
+      expect(code, `constructorVersion.ts carries ${needle}`).not.toContain(needle);
+    }
   });
 });
 

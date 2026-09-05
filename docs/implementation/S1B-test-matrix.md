@@ -59,7 +59,8 @@ source.
 | the four permitted fields, and only those | `PermittedIntentFields`'s member list, read out of the source | `i21-type-boundary.test.ts` |
 | nothing in `src/` parses rationale | source-reading rule over the whole `src/` tree | `source-rules.test.ts` rule 1 |
 
-The six compile-negative cases:
+The compile-negative cases — six at S1B.1, **eight after S1B.2** (§7 adds
+`catalogue-entry-into-context.ts` and `destination-into-option.ts`):
 
 | File | Violation | Diagnostic |
 |---|---|---|
@@ -365,3 +366,211 @@ real `tsc --noEmit` project.
 `S1B-C4` (counterparty `null` for `refund.create`, governed by customer novelty / `P4a`
 rather than counterparty novelty) was **not** revisited. `S1B-C1`, `S1B-C2`, `S1B-C6` and
 `S1B-C7` stand as written. §3's gate table is unchanged: **VC-C1 remains PARTIAL**.
+
+---
+
+## 7. S1B.2 — the independent implementation review repair pass
+
+Eight findings from an independent code review of the S1B/S1B.1 repository. This section
+adds the tests; §2's existing rows are unchanged except where noted.
+
+### Suite shape after S1B.2
+
+```text
+tests/canonicalisation/           19 files
+tests/negative-controls/           4 files  (retained-fee escape + the three S1A controls)
+tests/type-negative/               9 files  (1 positive control + 8 negatives)
+tests/integration/                12 files  (S1A, untouched)
+spikes/durable-execution/          2 files  (ADR-IMP-002; kill point 7 repaired)
+
+npm test                          38 files, 490 tests, all passing
+```
+
+### Finding 1 — canonicalisation input cohesion
+
+`tests/canonicalisation/canonicalisation-cohesion.test.ts`
+
+| Relationship corrupted | Fails how | Assertion |
+|---|---|---|
+| `resource_ref` / resolved resource | throws | `intent resource_ref … is not the resolved resource` |
+| option / resolved resource | denies | `SELECTOR_INVALID` / `OPTION_RESOURCE_MISMATCH` |
+| option action class / intent action class | denies | `SELECTOR_INVALID` / `OPTION_ACTION_CLASS_MISMATCH` |
+| option currency / ledger currency | throws | `denominated in EUR, not the ledger currency USD` |
+| `reason_code` / `reason_code_scope` | denies | `SELECTOR_INVALID` / `REASON_CODE_SCOPE_MISMATCH` |
+
+Structural properties the suite also asserts:
+
+* **exactly one relationship per case** — every other relationship is left intact, so no case
+  can be passing because a different one failed first;
+* **a positive control** — the ordinary VC-C1 fixture canonicalises through the same
+  instrumented registry;
+* **fail closed before an effect is emitted** — the registered constructor is wrapped in a
+  call counter and every failing case asserts it never ran;
+* **the throw cases are not denials** — a coarse model-visible category for a condition no
+  `ProposedIntent` can produce would be a misreport;
+* **the table is complete and has no duplicate row.**
+
+Plus the S1B-C6a pair sweep: every reason code is **accepted** against an option declaring its
+own scope, and **refused** against one declaring a different scope, checked against
+`VC_C1_REASON_CODE_SCOPES` in the oracle, which imports nothing from `src/`.
+
+### Finding 1B — the action catalogue entry is not context
+
+`tests/canonicalisation/catalogue-entry-provenance.test.ts` ·
+`tests/type-negative/catalogue-entry-into-context.ts`
+
+| Property | Test |
+|---|---|
+| the context type declares no catalogue entry field | structural, on `types.ts` |
+| the shared fixture has no override that could supply one | structural, on the fixture |
+| nothing in the canonicaliser reads one off the context | source rule over the whole package |
+| the canonicaliser reads `ACTION_CATALOGUE[intent.actionClass]` | source rule |
+| a refund cannot acquire `campaign.pause`'s recoverability | behavioural |
+| … nor its value_direction, adapter or method | behavioural |
+| the four fields differ between the two classes | **discrimination check** — without it the four rows above would be vacuous |
+| the catalogue and each row are frozen; each row names its own class | structural |
+| the substitution does not compile | `tsc --noEmit`, TS2353 |
+
+### Finding 2 — the refund policy operands survive onto `selected_option`
+
+`tests/canonicalisation/selected-option-projection.test.ts`
+
+| # | Property | Test |
+|---|---|---|
+| 1 | `lineRefundableRemaining` reaches the request's selected option | `$40.00` recorded |
+| 1 | the projection carries every operand `26 §8` reads | exact key set asserted |
+| 2 | amount and instrument agree with the canonical parameters | identity comparison, not equality of copies |
+| 2 | the recorded amount is also the dispatched vendor amount | I18a's operand |
+| 3 | changing only the refundable remaining changes the recorded state | `$40.00 → $18.00` |
+| 3 | and the mutation is decision-relevant | `40 >= 25` permits, `18 >= 25` does not |
+| 4 | changing only the refundable remaining does NOT change `option_id` | `option_id` and digest identical |
+| 4 | the vendor effect is byte-identical | payload, payload hash, idempotency key, exposure |
+| 4 | **contrast** — a declared digest member DOES move `option_id` | without it, row 4 is satisfiable by an id that never moves |
+| 5 | rationale cannot affect any recorded field | two rationales, one recorded option; length is not an operand either |
+
+### Finding 3 — no independently mutable destination
+
+`tests/canonicalisation/destination-provenance.test.ts` ·
+`tests/type-negative/destination-into-option.ts`
+
+| Property | Test |
+|---|---|
+| no destination field on the option, the parameters, the recorded option or the payload | key inspection on all four |
+| no executable line in the canonicaliser names one | source rule |
+| the semantic param digest names none, and still covers what it should | source rule with a non-vacuity check |
+| the payload's destination IS the parent transaction and instrument | behavioural |
+| changing either moves `option_id` | so no destination dimension is unbound |
+| every vendor parameter is identity-bearing, with none left over | exact key set, cross-checked |
+| a destination on the wire denies `MALFORMED` / `EXTRA_FIELD` | the architecture rule retained |
+| prose naming a destination changes nothing dispatched | injection control |
+| no independent destination compiles | `tsc --noEmit`, TS2353 ×2 |
+
+**Withdrawn from §2:** the `idempotency-key.test.ts` row *"a different destination
+instrument"*. It treated the destination as an independent effect dimension, which is the
+defect finding 3 removes.
+
+### Finding 4 — canonical-byte negative controls
+
+`tests/canonicalisation/canonical-text-injectivity.test.ts`
+
+| Case | Expected | Result |
+|---|---|---|
+| the hazard itself: two distinct lone surrogates under Node's UTF-8 encoder | identical bytes | demonstrated, `efbfbd` both |
+| null vs empty string | **distinct**, both valid | PASS |
+| `U+0000` in text | **rejected** | PASS |
+| `U+0000` in a JSON string value / object key | **rejected** | PASS |
+| lone high surrogate | **rejected** | PASS |
+| a second, different lone surrogate | **rejected** | PASS |
+| lone low surrogate | **rejected** | PASS |
+| high surrogate followed by a non-low unit | **rejected** | PASS |
+| valid supplementary character `U+1F600` | **accepted**, four real bytes | PASS |
+| two distinct supplementary characters | hash differently | PASS |
+| composed / decomposed NFC **values** | canonical as specified — hash alike | PASS |
+| two object keys colliding under NFC | **rejected**, in either insertion order, at any depth | PASS |
+| a single canonically-equivalent key | serialises in its **normalised** form | PASS |
+| keys sorted **after** normalisation | order discriminated against the pre-normalised order | PASS |
+| rationale holding a lone surrogate / `U+0000` | denies `MALFORMED` / `NOT_CANONICAL_TEXT` **before the seal** | PASS |
+| `resource_ref`, `enumeration_id`, `option_id` | deny `NOT_CANONICAL_TEXT` at the wire | PASS |
+| an ordinary rationale with a supplementary character | **accepted** | PASS |
+| money scale, framing, boundary forging | unchanged | PASS |
+
+### Finding 5 — no non-architecture request hash
+
+`source-rules.test.ts` rule 7:
+
+* no module in `src/` defines or names `authorizationRequestHash`,
+  `authorizationRequestCanonicalHash`, `request_hash` or `requestHash`;
+* no test imports one, so the concept is gone rather than merely unexported;
+* `dispatchPayloadHash` and `dispatchPayloadCanonicalHash` **remain** — `26 §2.1` declares
+  that field — and the request still records it. The rule is not a purge.
+
+Rewritten to assert authoritative fields directly:
+
+| File | Now asserts |
+|---|---|
+| `retained-fee-provenance.test.ts` | `total_exposure` moves; the cost component's amount, kind and `record:` source; the reservation offer moves; `dispatch_payload_hash` does **not** move; the same fee reproduces the same exposure exactly |
+| `window-ref-provenance.test.ts` | `request.windowRefs` moves; and under a malicious rationale the offer, exposure, parameters, selected option and payload hash are all identical |
+
+### Finding 6 — the core owns no per-class logic
+
+`source-rules.test.ts` rule 8:
+
+* `EffectCanonicaliser` imports no per-class digest and no `./constructors/` module;
+* its executable code contains **no `refund`-specific identifier at all**;
+* the per-class operations are reached as `registered.computeSemanticOptionDigest(option)`
+  and `registered.assertInputCohesion(input)`;
+* `RegisteredConstructor` declares exactly five members, so a new class must supply both new
+  ones;
+* the refund constructor owns `refundSemanticOptionDigest` and its
+  `acos.semantic_option_digest.refund.create.v1` domain;
+* `optionDigest.ts` keeps `computeOptionId` and names no class;
+* no generic fallback constructor exists anywhere.
+
+`registry.test.ts` is unchanged and still proves a class with no constructor denies
+`NOT_CANONICALISABLE`, and `refund-semantic-digest.test.ts` still passes with no assertion
+edited — the digest moved file, not fields.
+
+### Finding 7 — kill point 7 (ADR-IMP-002 spike, not S1B)
+
+`spikes/durable-execution/spike.test.ts`
+
+| | Before | After |
+|---|---|---|
+| `invariantVerdict` | counted `dispatchCount > 1` as a weakened S1A invariant | counts only the application-transaction/checkpoint properties |
+| kill point 7 | `expect(dispatchCount).toBeLessThanOrEqual(1)` | asserts realised delta once, coupling, journal sequence once, ceiling; **records** the dispatch count |
+| the matrix | `dispatch=N` | `externalDispatchNote(o, concurrent)` — names a concurrent duplicate as KNOWN under S1A-H4 |
+| sequential cases | exact-once dispatch asserted | **unchanged** — still asserted |
+| the S1A-H4 negative control | forces and observes two dispatches | **unchanged** |
+
+Kill point 7 additionally asserts `1 <= dispatchCount <= 2`, so a run in which neither
+process reached the step cannot be recorded as evidence.
+
+### Finding 8 — duplicate constructor-version input
+
+`constructor-version.test.ts`
+
+| Property | Test |
+|---|---|
+| both records are individually valid, and different | **positive control** — the ambiguity being refused is real |
+| two records for one constructor id fail resolver initialisation | PASS |
+| in either order | PASS |
+| two identical records fail too | the rule is about the id, not about disagreement |
+| different constructor ids coexist | the rule is not over-broad |
+| it throws, and is not a `CanonicalisationDenied` | a build defect is not a model-visible category |
+| no version history or storage was added | source rule |
+
+### Repetition and determinism
+
+| Gate | Requirement | Result |
+|---|---|---|
+| canonicalisation suite | 10 consecutive runs | **10 / 10**, 341 tests each |
+| VC-S8 | ≥ 25 runs, no harness timeout | **25 / 25**, 0 timeouts |
+| durable-execution spike | ≥ 10 runs after the kill-point-7 correction | **10 / 10** |
+
+### Deliberately unchanged
+
+The exact five-field parser · unknown-field rejection · the opaque rationale · `I21`'s real
+compile-negative project · Ed25519 verification · the five declared digest fields ·
+`$25.00 / $1.03 / $26.03` · S1B-C3a · S1B-C5a · `I18a`/`I18c` · the idempotency key ·
+`dispatch_payload_hash` · full VC-C1 **PARTIAL** · the S1A suite (157/157) · no Cedar · no
+enumeration · no adapter · no outbox.

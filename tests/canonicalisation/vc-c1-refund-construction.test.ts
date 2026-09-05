@@ -15,7 +15,7 @@ import {
   VC_C1_EXPECTED_METHOD,
   VC_C1_EXPECTED_VENDOR_PARAMETERS,
   VC_C1_EXPECTED_WINDOW_REFS,
-  VC_C1_ORDER,
+  VC_C1_SEMANTIC_OPTION_FIELDS,
   formatMinor,
 } from '../support/canonicalisationOracle.js';
 
@@ -204,14 +204,20 @@ describe('every authority field is kernel-derived, none from the intent', () => 
     expect(request.windowRefs).toEqual(VC_C1_EXPECTED_WINDOW_REFS);
   });
 
-  it('counterparty is null and the destination is a computed parameter', () => {
+  it('counterparty is null and the destination is the content-addressed parent transaction', () => {
     // `26 §11.2` row 3, counterparty column, verbatim: "n/a — destination derived by the
     // canonicaliser from the RECORD-grade transaction, never from the intent."
     // S1B-owner-clarifications.md S1B-C4.
+    //
+    // S1B.2 finding 3: the destination is NOT a separate parameter. It is the RECORD-grade
+    // parent transaction and the instrument it is refunded to — the architecture's
+    // two-dimensional refund enumeration, and both members of the semantic option digest.
+    // See destination-provenance.test.ts for the proof that no independent field remains.
     expect(request.counterparty).toBeNull();
-    expect(request.parameters.destinationInstrumentRef).toBe(
-      VC_C1_ORDER.destinationInstrumentRef,
+    expect(request.parameters.parentTransactionId).toBe(
+      VC_C1_SEMANTIC_OPTION_FIELDS.parentTransactionId,
     );
+    expect(request.parameters.instrument).toBe(VC_C1_SEMANTIC_OPTION_FIELDS.instrument);
   });
 
   it('customer_novelty comes from the authoritative customer record', () => {

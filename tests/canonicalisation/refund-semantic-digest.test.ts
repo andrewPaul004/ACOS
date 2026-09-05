@@ -4,10 +4,9 @@ import { money } from '../../src/kernel/exposure/money.js';
 import { hex } from '../../src/kernel/canonicalisation/canonicalBytes.js';
 import { CanonicalisationDenied } from '../../src/kernel/canonicalisation/errors.js';
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
-import {
-  computeOptionId,
-  refundSemanticOptionDigest,
-} from '../../src/kernel/canonicalisation/optionDigest.js';
+import { computeOptionId } from '../../src/kernel/canonicalisation/optionDigest.js';
+// S1B.2 finding 6: the per-class digest now lives with the constructor that owns it.
+import { refundSemanticOptionDigest } from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
 import {
   makeCanonicaliser,
   makeContext,

@@ -1,4 +1,5 @@
 import { fromPermittedIntentField, type PermittedIntentField } from './brands.js';
+import { isCanonicalText } from './canonicalBytes.js';
 import {
   isActionClass,
   isReasonCode,
@@ -145,6 +146,11 @@ export function parseProposedIntent(raw: unknown): ProposedIntent {
   if (typeof resourceRef !== 'string' || resourceRef.length === 0) {
     deny('MALFORMED', 'WRONG_TYPE', 'resource_ref is not a non-empty string');
   }
+  if (!isCanonicalText(resourceRef)) {
+    // S1B.2 finding 4. A value that cannot be canonicalised is malformed at the wire, not
+    // an internal defect discovered later at a hash. See `canonicalBytes.ts`.
+    deny('MALFORMED', 'NOT_CANONICAL_TEXT', 'resource_ref is not admissible canonical text');
+  }
 
   const selectorRaw = raw['selector'];
   if (!isPlainObject(selectorRaw)) {
@@ -161,6 +167,13 @@ export function parseProposedIntent(raw: unknown): ProposedIntent {
   if (typeof optionId !== 'string' || optionId.length === 0) {
     deny('SELECTOR_MALFORMED', 'WRONG_TYPE', 'selector.option_id is not a non-empty string');
   }
+  if (!isCanonicalText(enumerationId) || !isCanonicalText(optionId)) {
+    deny(
+      'SELECTOR_MALFORMED',
+      'NOT_CANONICAL_TEXT',
+      'a selector component is not admissible canonical text',
+    );
+  }
 
   const reasonCode = raw['reason_code'];
   if (typeof reasonCode !== 'string') {
@@ -174,6 +187,14 @@ export function parseProposedIntent(raw: unknown): ProposedIntent {
   const rationale = raw['rationale'];
   if (typeof rationale !== 'string') {
     deny('MALFORMED', 'WRONG_TYPE', 'rationale is not a string');
+  }
+  if (!isCanonicalText(rationale)) {
+    // S1B.2 finding 4B, the rationale half: the lineage commitment is taken over UTF-8 NFC
+    // bytes, and Node's encoder maps EVERY lone surrogate to U+FFFD. Two distinct
+    // rationales carrying different lone surrogates would commit identically, which is a
+    // silent collision in the one field whose whole purpose is auditability. Rejected here,
+    // before the seal — so no inadmissible text reaches a hash.
+    deny('MALFORMED', 'NOT_CANONICAL_TEXT', 'rationale is not admissible canonical text');
   }
   if (Buffer.byteLength(rationale.normalize('NFC'), 'utf8') > MAX_RATIONALE_BYTES) {
     deny('MALFORMED', 'RATIONALE_TOO_LONG', 'rationale exceeds the declared byte bound');

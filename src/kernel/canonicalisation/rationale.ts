@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { canonicalText } from './canonicalBytes.js';
+
 /**
  * `rationale` — the one free-text field on the model-facing surface, and the one field
  * that must never reach authority.
@@ -60,7 +62,10 @@ const commitments = new WeakMap<OpaqueRationale, Buffer>();
  * differing only in Unicode normalisation form commits identically.
  */
 export function sealRationale(text: string): OpaqueRationale {
-  const bytes = Buffer.from(text.normalize('NFC'), 'utf8');
+  // Validated before the commitment, per S1B.2 finding 4B. `intent.ts` denies an
+  // inadmissible value at the wire boundary first; this is the structural backstop, so the
+  // seal cannot be reached with text that would collide under UTF-8 encoding.
+  const bytes = Buffer.from(canonicalText(text, 'the rationale text'), 'utf8');
   const sealed: OpaqueRationale = Object.freeze({
     byteLength: bytes.byteLength,
   }) as OpaqueRationale;

@@ -1,7 +1,6 @@
 import type { Money } from '../exposure/money.js';
 import type { KernelComputed, PermittedIntentField } from './brands.js';
 import type {
-  ActionCatalogueEntry,
   ActionClass,
   ReasonCode,
   ReasonCodeScope,
@@ -84,7 +83,23 @@ export interface AuthoritativeCanonicalisationContext {
   readonly principal: KernelComputed<ResolvedPrincipal>;
   readonly resource: KernelComputed<ResolvedResource>;
   readonly enumerationRef: KernelComputed<EnumerationRef>;
-  readonly catalogueEntry: KernelComputed<ActionCatalogueEntry>;
+  /**
+   * THERE IS DELIBERATELY NO CATALOGUE ENTRY ON THIS TYPE — S1B.2, finding 1B.
+   *
+   * The original S1B carried `catalogueEntry: KernelComputed<ActionCatalogueEntry>` here
+   * and the canonicaliser trusted it. `recoverability`, `value_direction`, the adapter, the
+   * method and the money-carrying / cost-component-free declarations are properties of the
+   * CLOSED ACTION CATALOGUE keyed by `action_class` — `26 §5`, `26 §2.1` ("From the
+   * catalogue, never null (I59)"), `26 §11.2` — and a caller able to hand over a different
+   * row for the same class could give a `refund.create` request `campaign.pause`'s
+   * recoverability, its value_direction, its adapter or its method without the catalogue
+   * changing at all.
+   *
+   * So the field is GONE rather than validated. The canonicaliser reads
+   * `ACTION_CATALOGUE[intent.actionClass]` itself, AFTER `action_class` has passed the
+   * closed-catalogue check, and hands the row to the constructor on `ConstructorInput`.
+   * The substitution is not merely rejected — it has no expressible form.
+   */
   /** `26 §2.1`: "the single ledger currency". */
   readonly ledgerCurrency: KernelComputed<string>;
   /**
@@ -143,10 +158,35 @@ export interface SelectedAuthoritativeRefundOption {
   readonly reasonCodeScope: KernelComputed<ReasonCodeScope>;
 
   // --- authoritative, but not identity-bearing -----------------------------------------
-  /** `26 §8`: `context.selected_option.line_refundable_remaining`. */
+  /**
+   * `26 §8`: `context.selected_option.line_refundable_remaining`.
+   *
+   * CURRENT POLICY STATE, deliberately outside `semantic_option_digest`. The refund policy
+   * evaluates `line_refundable_remaining >= amount` against the value CURRENT at decision
+   * time, and the next C' increment re-enumerates it under the entity advisory lock.
+   * Putting it into option identity would make every change to the line's remaining balance
+   * a different `option_id` for the same effect. It is projected onto the recorded selected
+   * option instead — see `RecordedRefundSelectedOption`.
+   */
   readonly lineRefundableRemaining: KernelComputed<Money>;
-  /** `26 §11.2` row 3: "destination derived by the canonicaliser from the RECORD-grade transaction". */
-  readonly destinationInstrumentRef: KernelComputed<string>;
+  /**
+   * THERE IS DELIBERATELY NO `destinationInstrumentRef` ON THIS TYPE — S1B.2, finding 3.
+   *
+   * The original S1B added one as an independently supplied field and placed it in the mock
+   * vendor payload. `26 §2.2` declares this class's semantic option identity as exactly
+   * "line_id · parent_transaction_id · amount · instrument · reason_code_scope", and
+   * requires the digest to "cover every field whose change would make the option a
+   * different effect". An independently mutable destination satisfied neither rule:
+   * changing it changed the dispatched destination while `option_id` stayed put.
+   *
+   * The repair is NOT to widen the architecture-declared digest. It is to remove the second
+   * identifier. `26 §11.2` row 3's destination is "derived by the canonicaliser from the
+   * RECORD-grade transaction, never from the intent", and that transaction is already named
+   * — content-addressed — by `parent_transaction_id` together with `instrument`, which is
+   * the architecture's two-dimensional refund enumeration. Which concrete vendor fields a
+   * real processor needs for that parent transaction belongs to the adapter /
+   * state-resolution slice, and S1B invents no answer to it.
+   */
   readonly currency: KernelComputed<string>;
 }
 
@@ -213,14 +253,19 @@ export interface Counterparty {
   readonly novelty: 'EXISTING' | 'ALLOWLISTED' | 'NOVEL';
 }
 
-/** `26 §2.1`: "parameters — COMPUTED from selected_option — not supplied". */
+/**
+ * `26 §2.1`: "parameters — COMPUTED from selected_option — not supplied".
+ *
+ * S1B.2 finding 3 removed `destinationInstrumentRef`. No remaining architecture requirement
+ * needs a second destination identifier: the destination is the RECORD-grade parent
+ * transaction's own instrument, and `parentTransactionId` with `instrument` names it.
+ */
 export interface RefundParameters {
   readonly lineId: string;
   readonly parentTransactionId: string;
   readonly amount: Money;
   readonly instrument: string;
   readonly reasonCodeScope: ReasonCodeScope;
-  readonly destinationInstrumentRef: string;
   readonly currency: string;
 }
 
@@ -229,12 +274,62 @@ export type ComputedParameters = RefundParameters;
 /**
  * `26 §2.1`'s `selected_option` field: "the enumerated option whose option_id the selector
  * names, with its full description".
+ *
+ * The IDENTITY half, common to every class.
  */
-export interface RecordedSelectedOption {
+export interface RecordedSelectedOptionIdentity {
   readonly optionId: string;
   readonly semanticOptionDigest: string;
   readonly description: string;
 }
+
+/**
+ * `refund.create`'s recorded selected option — a TYPED, CLASS-SPECIFIC PROJECTION.
+ * S1B.2, finding 2.
+ *
+ * ---------------------------------------------------------------------------------
+ * WHY IDENTITY ALONE WAS NOT ENOUGH
+ *
+ * `26 §8`'s worked refund policy evaluates its operands off `context.selected_option`,
+ * verbatim:
+ *
+ *   context.selected_option.line_refundable_remaining >= context.selected_option.amount
+ *   context.selected_option.instrument == "original"
+ *
+ * The original S1B recorded only `option_id`, `semantic_option_digest` and `description`,
+ * which drops every one of those operands. The later policy slice would then have had to
+ * re-derive authoritative state the canonicaliser already held — or read it from somewhere
+ * else — which is how a policy comes to evaluate a different refund from the one that was
+ * canonicalised.
+ *
+ * So the recorded option carries the five identity-bearing fields AND the current policy
+ * state. Every field is kernel-computed and none is reachable from `ProposedIntent`.
+ *
+ * `line_refundable_remaining` is deliberately NOT added to `semantic_option_digest`: it is
+ * current policy state rather than effect identity, the next C' slice re-enumerates it
+ * under the entity lock, and the policy evaluates the CURRENT value. The discriminating
+ * pair is asserted directly — changing only the refundable remaining MUST change the
+ * recorded option state and MUST NOT change `option_id`.
+ * ---------------------------------------------------------------------------------
+ */
+export interface RecordedRefundSelectedOption extends RecordedSelectedOptionIdentity {
+  /** The discriminant. A second class adds a variant; it does not widen this one. */
+  readonly actionClass: 'refund.create';
+
+  // --- the five declared semantic_option_digest fields, projected ---------------------
+  readonly lineId: string;
+  readonly parentTransactionId: string;
+  readonly amount: Money;
+  readonly instrument: string;
+  readonly reasonCodeScope: ReasonCodeScope;
+
+  // --- current authoritative policy state, NOT part of option identity ----------------
+  /** `26 §8`: `context.selected_option.line_refundable_remaining`. */
+  readonly lineRefundableRemaining: Money;
+}
+
+/** A union of one at S1B, exactly as `SelectedAuthoritativeOption` is. */
+export type RecordedSelectedOption = RecordedRefundSelectedOption;
 
 export interface AuthorizationRequest {
   readonly principal: KernelComputed<ResolvedPrincipal>;

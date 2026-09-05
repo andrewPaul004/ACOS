@@ -183,6 +183,31 @@ function renderMatrix(): string {
  *   - realised is either 0.00 (the transaction did not commit) or exactly the delta
  *     (it committed once) — never a partial and never a double;
  *   - journal_counter is gap-free: next_seq is 1 (unallocated) or 2 (allocated once).
+ *
+ * ---------------------------------------------------------------------------------
+ * S1B.2, FINDING 7 - EXTERNAL DISPATCH IS NOT ONE OF THEM
+ *
+ * This function used to add `dispatchCount > 1` to the list, classifying a duplicated
+ * external dispatch as a weakened S1A substrate invariant. S1A-H4 had already established
+ * the opposite, and ADR-IMP-002 was narrowed to say so: a raw step journal plus an
+ * UNCLAIMED external step is insufficient for external exactly-once, and closing that hole
+ * is the outbox's job (`23 §6` B8, `25 §7`, `33 §1.1`) - S1 work, deliberately not built
+ * here.
+ *
+ * The two properties are therefore SEPARATED rather than merged:
+ *
+ *   this function          the application-transaction/checkpoint property, which the
+ *                          substrate guarantees and which must never weaken;
+ *   externalDispatchNote   the OBSERVATION of what the unclaimed external step did, which
+ *                          is recorded in the matrix and is not a verdict.
+ *
+ * The once-observed `dispatchCount == 2` under concurrent retry was therefore a STALE TEST
+ * EXPECTATION, not evidence that the ledger checkpoint property failed. It is recorded as
+ * repaired, not erased: the deterministic S1A-H4 negative control in
+ * `external-step-race.test.ts` still FORCES and OBSERVES two external dispatches, and this
+ * spike still asserts exact-once dispatch in every SEQUENTIAL case, where no concurrent
+ * external-step race exists.
+ * ---------------------------------------------------------------------------------
  */
 function invariantVerdict(o: SpikeObservation): string {
   const problems: string[] = [];
@@ -194,8 +219,29 @@ function invariantVerdict(o: SpikeObservation): string {
   if (o.journalNextSeq !== null && !['1', '2'].includes(o.journalNextSeq)) {
     problems.push(`journal next_seq is ${o.journalNextSeq}; expected 1 or 2`);
   }
-  if (o.dispatchCount > 1) problems.push(`${String(o.dispatchCount)} dispatches (duplicate)`);
   return problems.length === 0 ? 'NONE WEAKENED' : problems.join('; ');
+}
+
+/**
+ * The EXTERNAL DISPATCH observation. Recorded, never classified as an invariant failure.
+ *
+ * Before the outbox and its exclusive claim exist, a duplicate dispatch under concurrent
+ * retry is a KNOWN POSSIBLE RESULT of the shape `runStep` has:
+ *
+ *     read completed checkpoint  ->  perform step  ->  record completed checkpoint
+ *
+ * Two truly concurrent workers can both pass the read before either records. Reporting that
+ * as "an S1A invariant was weakened" would contradict the accepted S1A-H4 result, and
+ * requiring exactly one dispatch there would make a nondeterministic race into a
+ * nondeterministic test.
+ */
+function externalDispatchNote(o: SpikeObservation, concurrent: boolean): string {
+  if (o.dispatchCount === 1) return 'dispatch=1 (exactly once)';
+  if (o.dispatchCount === 0) return 'dispatch=0 (not reached)';
+  return concurrent
+    ? `dispatch=${String(o.dispatchCount)} (duplicate under concurrent retry - KNOWN, ` +
+        'S1A-H4; the outbox claim is not built - ADR-IMP-002)'
+    : `dispatch=${String(o.dispatchCount)} (UNEXPECTED duplicate with no concurrent race)`;
 }
 
 function wf_id_for(killPoint: string): string {
@@ -242,7 +288,7 @@ describe('candidate B — ACOS-owned Postgres step journal', () => {
       dbAfterKill: describeObservation(o),
       workflowAfterKill: await candidateBWorkflow('wf_b_clean'),
       recovery: 'n/a',
-      duplicates: 'dispatch=1',
+      duplicates: externalDispatchNote(o, false),
       invariantWeakened: invariantVerdict(o),
     });
   });
@@ -322,13 +368,39 @@ describe('candidate B — ACOS-owned Postgres step journal', () => {
         dbAfterKill: describeObservation(afterKill),
         workflowAfterKill: wfAfterKill,
         recovery: `re-run same workflow id → ${describeObservation(afterRecovery)}`,
-        duplicates: `dispatch=${String(afterRecovery.dispatchCount)} (exactly once)`,
+        duplicates: externalDispatchNote(afterRecovery, false),
         invariantWeakened: invariantVerdict(afterRecovery),
       });
     });
   }
 
-  it('kill point 7 — a CONCURRENT retry of the same work item applies it once', async () => {
+  it('kill point 7 — a CONCURRENT retry of the same work item applies the LEDGER once', async () => {
+    /**
+     * S1B.2, FINDING 7 — WHAT THIS KILL POINT ASSERTS, AND WHAT IT ONLY OBSERVES.
+     *
+     * It asserted `dispatchCount <= 1`, and `invariantVerdict` classified a second dispatch
+     * as an S1A substrate invariant failure. S1A-H4 established the opposite and
+     * ADR-IMP-002 was narrowed accordingly: a raw step journal plus an unclaimed external
+     * step is INSUFFICIENT for external exactly-once. The assertion was therefore stale —
+     * the once-observed `dispatchCount == 2` was a wrong expectation, not a failure of the
+     * ledger checkpoint property.
+     *
+     * ASSERTED (the application-transaction/checkpoint property — must never weaken):
+     *   realised delta applied EXACTLY ONCE;
+     *   the TB-04 standing coupling correct;
+     *   the journal sequence allocated EXACTLY ONCE;
+     *   the four-term sum within the window ceiling.
+     *
+     * OBSERVED AND RECORDED (not a verdict):
+     *   how many times the unclaimed external step dispatched. One or two are both possible
+     *   here and neither violates the property above. Requiring one would make a genuine
+     *   race into a nondeterministic test; requiring two would assert that a race always
+     *   loses, which is equally untrue.
+     *
+     * The DETERMINISTIC evidence that the hole is real stays where it can be deterministic:
+     * `external-step-race.test.ts` forces the interleaving with a barrier and observes two
+     * dispatches on every run. The outbox that closes it is S1 work and is not built here.
+     */
     const id = 'wi_b_concurrent';
     await resetForRun(id);
 
@@ -339,14 +411,28 @@ describe('candidate B — ACOS-owned Postgres step journal', () => {
     ]);
 
     const o = await observe(admin, id);
-    // Whatever happened to the two processes, the LEDGER moved exactly once.
+    const processes = `\nA: ${a.stdout}${a.stderr}\nB: ${b.stdout}${b.stderr}`;
+
+    // --- ASSERTED: the application transaction and its checkpoint --------------------
     expect(
       o.realisedMonetary,
-      `concurrent retry applied the delta more than once\nA: ${a.stdout}${a.stderr}\nB: ${b.stdout}${b.stderr}`,
+      `concurrent retry applied the delta more than once${processes}`,
     ).toBe(DELTA);
-    expect(o.journalNextSeq).toBe('2');
-    expect(o.dispatchCount).toBeLessThanOrEqual(1);
+    expect(o.standingMonetary, `the TB-04 coupling broke${processes}`).toBe('60.00');
+    expect(o.journalNextSeq, `a second journal sequence was allocated${processes}`).toBe('2');
+    expect(o.withinCeiling).toBe(true);
+    expect(o.couplingHolds).toBe(true);
     expect(invariantVerdict(o)).toBe('NONE WEAKENED');
+
+    // --- OBSERVED: the unclaimed external step ---------------------------------------
+    // At least one dispatch happened. Without this the row could be recorded from a run in
+    // which neither process reached the step, and it would say nothing at all.
+    expect(
+      o.dispatchCount,
+      `no external dispatch was reached${processes}`,
+    ).toBeGreaterThanOrEqual(1);
+    // And the shape bounds it: two workers can each dispatch at most once.
+    expect(o.dispatchCount).toBeLessThanOrEqual(2);
 
     MATRIX.push({
       candidate: 'B',
@@ -360,7 +446,7 @@ describe('candidate B — ACOS-owned Postgres step journal', () => {
       dbAfterKill: describeObservation(o),
       workflowAfterKill: await candidateBWorkflow('wf_b_concurrent'),
       recovery: 'n/a — both ran forward',
-      duplicates: `dispatch=${String(o.dispatchCount)}`,
+      duplicates: externalDispatchNote(o, true),
       invariantWeakened: invariantVerdict(o),
     });
   });
@@ -432,7 +518,7 @@ describe('the TB-04 interleaving, inside the spike, both orderings', () => {
         dbAfterKill: describeObservation(o),
         workflowAfterKill: `authorisation=${verdict}`,
         recovery: 'n/a',
-        duplicates: `dispatch=${String(o.dispatchCount)}`,
+        duplicates: externalDispatchNote(o, false),
         invariantWeakened: invariantVerdict(o),
       });
     } finally {
@@ -477,7 +563,7 @@ describe('candidate A — DBOS Transact', () => {
         `dbos schema tables in the APPLICATION db: ` +
         `[${dbosTables.rows.map((r) => r.table_name).join(', ') || 'none'}]`,
       recovery: 'see ADR-IMP-002',
-      duplicates: `dispatch=${String(o.dispatchCount)}`,
+      duplicates: externalDispatchNote(o, false),
       invariantWeakened: invariantVerdict(o),
     });
 
@@ -531,7 +617,7 @@ describe('candidate A — DBOS Transact', () => {
         dbAfterKill: describeObservation(afterKill),
         workflowAfterKill: 'workflow status in the SYSTEM database (separate from the ledger)',
         recovery: `${recovered.result} → ${describeObservation(afterRecovery)}`,
-        duplicates: `dispatch=${String(afterRecovery.dispatchCount)}`,
+        duplicates: externalDispatchNote(afterRecovery, false),
         invariantWeakened: invariantVerdict(afterRecovery),
       });
     });
@@ -582,7 +668,7 @@ describe('candidate A — DBOS Transact', () => {
       recovery: workSkipped
         ? 'NOT RE-EXECUTED — the process reports success and the ledger stays untouched'
         : 're-executed against the restored application database',
-      duplicates: `dispatch=${String(afterSecond.dispatchCount)}`,
+      duplicates: externalDispatchNote(afterSecond, false),
       invariantWeakened: workSkipped
         ? 'no ACOS invariant is violated, but the work silently did not happen'
         : 'none',

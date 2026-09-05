@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { money, toDb } from '../../src/kernel/exposure/money.js';
-import {
-  authorizationRequestHash,
-  dispatchPayloadHash,
-} from '../../src/kernel/canonicalisation/canonicaliser.js';
+import { dispatchPayloadHash } from '../../src/kernel/canonicalisation/canonicaliser.js';
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
 import { offerForReservation } from '../../src/kernel/canonicalisation/ports/reservationHandoff.js';
 import type { AuthoritativeRetainedFee } from '../../src/kernel/canonicalisation/authoritativeCost.js';
@@ -131,21 +128,48 @@ describe('B — the authoritative fee moves, the vendor effect does not', () => 
     expect(toDb(offerForReservation(mutated.request).offeredAmount)).toBe('26.10');
   });
 
-  it('the authority commitment over exposure CHANGES', () => {
-    // `dispatch_payload_hash` deliberately does not move: the vendor request is identical.
-    // An authority hash that also did not move would mean the reserved quantity changed
-    // with nothing committing to it.
+  it('the AUTHORITATIVE FIELDS move, and the declared dispatch hash does not', () => {
+    /**
+     * S1B.2, finding 5. S1B.1 asserted this through a generic
+     * `authorizationRequestHash` helper it had invented, described as "the authority
+     * commitment". That helper is gone: `26 §2.1` declares no `request_hash`, and a hash
+     * that covers only some of the authority-relevant fields cannot support the inference
+     * "the hash moved, therefore the authority moved" in either direction.
+     *
+     * So the fields are asserted DIRECTLY, which is both stronger and closer to what the
+     * finding was about. The vendor effect is unchanged, so `dispatch_payload_hash` — the
+     * one hash `26 §2.1` DOES declare — must not move. The economics changed, so every
+     * authoritative economic field must.
+     */
     expect(mutated.request.dispatchPayloadHash).toBe(base.request.dispatchPayloadHash);
-    expect(authorizationRequestHash(mutated.request)).not.toBe(
-      authorizationRequestHash(base.request),
+    expect(mutated.request.dispatchPayloadHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // total_exposure — the reserved quantity.
+    expect(toDb(mutated.request.exposure.totalExposure)).not.toBe(
+      toDb(base.request.exposure.totalExposure),
     );
-    expect(authorizationRequestHash(base.request)).toMatch(/^[0-9a-f]{64}$/);
+    expect(toDb(mutated.request.exposure.totalExposure)).toBe('26.10');
+
+    // The cost component's amount, and its authoritative source.
+    expect(mutated.request.exposure.costComponents).toHaveLength(1);
+    expect(toDb(mutated.request.exposure.costComponents[0]!.amount)).toBe('1.10');
+    expect(mutated.request.exposure.costComponents[0]!.kind).toBe('RETAINED_PROCESSING_FEE');
+    expect(mutated.request.exposure.costComponents[0]!.sourceRef).toBe(
+      FIXTURE_RETAINED_FEE.sourceRef,
+    );
+    expect(mutated.request.exposure.costComponents[0]!.sourceRef).toContain('record:');
+
+    // The reservation offer — I18b's quantity.
+    expect(toDb(offerForReservation(mutated.request).offeredAmount)).not.toBe(
+      toDb(offerForReservation(base.request).offeredAmount),
+    );
   });
 
-  it('and the authority commitment is stable for an identical fee', () => {
-    expect(authorizationRequestHash(canonicaliseWithFee(FIXTURE_RETAINED_FEE).request)).toBe(
-      authorizationRequestHash(base.request),
-    );
+  it('and the same fee reproduces the same authoritative fields exactly', () => {
+    const again = canonicaliseWithFee(FIXTURE_RETAINED_FEE);
+    expect(again.request.exposure).toEqual(base.request.exposure);
+    expect(offerForReservation(again.request)).toEqual(offerForReservation(base.request));
+    expect(again.request.dispatchPayloadHash).toBe(base.request.dispatchPayloadHash);
   });
 
   it('rationale remains irrelevant to all of it', () => {
@@ -157,7 +181,8 @@ describe('B — the authoritative fee moves, the vendor effect does not', () => 
       option,
     );
     expect(toDb(other.request.exposure.totalExposure)).toBe('26.10');
-    expect(authorizationRequestHash(other.request)).toBe(authorizationRequestHash(mutated.request));
+    expect(other.request.exposure).toEqual(mutated.request.exposure);
+    expect(offerForReservation(other.request)).toEqual(offerForReservation(mutated.request));
     expect(other.dispatchPayload).toEqual(mutated.dispatchPayload);
   });
 });

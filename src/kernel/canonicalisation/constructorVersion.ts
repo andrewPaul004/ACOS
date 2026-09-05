@@ -170,6 +170,22 @@ export class ConstructorVersionResolver {
       : publicKey;
     const byId = new Map<string, ConstructorVersionRecord>();
     for (const record of records) {
+      if (byId.has(record.constructorId)) {
+        // S1B.2, finding 8. Two records for one constructor id means REGISTRATION ORDER
+        // decides which signed record wins — and both may be individually valid, so the
+        // signature check cannot separate them. `26 §2.1.2` makes the record the thing an
+        // approval binds to and `50 §2` class 19 makes it an owner-signed control artifact;
+        // "whichever was loaded last" is not a resolution rule either can rest on.
+        //
+        // One active resolver input may identify one constructor id exactly once. This is
+        // NOT version history or storage — those need the approval state machine, which is
+        // out of S1B scope. It is the narrow property that makes the current selection
+        // deterministic, and it is a build/configuration failure rather than a runtime
+        // condition, so it throws at construction rather than denying per request.
+        throw new Error(
+          `duplicate ConstructorVersionRecord for constructor ${record.constructorId}`,
+        );
+      }
       byId.set(record.constructorId, record);
     }
     this.#records = byId;

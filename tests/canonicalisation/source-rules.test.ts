@@ -218,6 +218,119 @@ describe('rule 6 — window_refs are not catalogue-derived (S1B.1, clarification
   });
 });
 
+describe('rule 7 — no non-architecture request hash survives (S1B.2, finding 5)', () => {
+  /**
+   * S1B.1 added `authorizationRequestCanonicalHash` and `authorizationRequestHash` as
+   * production helpers and called the second "the AUTHORITY commitment". `26 §2.1` declares
+   * `dispatch_payload_hash` on the AuthorizationRequest and declares NO `request_hash`.
+   *
+   * A helper covering only some authority-relevant fields cannot support the inference it
+   * invited in either direction, and left in the tree it becomes an accidental protocol the
+   * journal/audit slice inherits. Both are removed, and nothing invented replaces them: the
+   * tests that used them assert the authoritative FIELDS directly.
+   *
+   * The normative commitment of the AuthorizationRequest row under ACOS-JCS-1 belongs to the
+   * journal/audit slice. This rule keeps S1B from pre-designing it.
+   */
+  it('no module in src/ defines or names a generic AuthorizationRequest hash', () => {
+    for (const file of walk('src')) {
+      const code = codeOf(file);
+      for (const needle of [
+        'authorizationRequestHash',
+        'authorizationRequestCanonicalHash',
+        'request_hash',
+        'requestHash',
+      ]) {
+        expect(code, `${file} still carries ${needle}`).not.toContain(needle);
+      }
+    }
+  });
+
+  it('no test imports one either, so the concept is gone rather than merely unexported', () => {
+    for (const file of walk('tests')) {
+      expect(codeOf(file), `${file} imports a removed request hash`).not.toMatch(
+        /authorizationRequest(Canonical)?Hash\s*[,}(]/,
+      );
+    }
+  });
+
+  it('the architecture-declared dispatch_payload_hash REMAINS — this rule is not a purge', () => {
+    // `26 §2.1` prints it explicitly: "binds this request to exactly one dispatch payload".
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'canonicaliser.ts'));
+    expect(code).toContain('export function dispatchPayloadHash');
+    expect(code).toContain('export function dispatchPayloadCanonicalHash');
+    expect(code).toContain('dispatchPayloadHash: computed(dispatchPayloadHash(dispatchPayload))');
+  });
+});
+
+describe('rule 8 — the canonicaliser core owns no per-class logic (S1B.2, finding 6)', () => {
+  /**
+   * The S1B contract states that the closed catalogue plus a registered constructor IS the
+   * extension point. The original core imported `refundSemanticOptionDigest` directly, so a
+   * second money-bearing class would have required editing the canonicaliser — which is the
+   * per-class branch the contract says must not exist.
+   *
+   * The per-class digest and the per-class cohesion checks now hang off the registration.
+   */
+  const core = join('src', 'kernel', 'canonicalisation', 'canonicaliser.ts');
+
+  it('EffectCanonicaliser imports no per-class digest function', () => {
+    const code = codeOf(core);
+    expect(code).not.toContain('refundSemanticOptionDigest');
+    expect(code).not.toMatch(/from '\.\/constructors\//);
+  });
+
+  it('and contains no refund-specific identifier at all, in executable code', () => {
+    // The structural form of "no per-class branch". Comments are stripped: the file's prose
+    // legitimately quotes the architecture, which names the class.
+    const code = codeOf(core);
+    expect(code, 'the canonicaliser core names a refund-specific identifier').not.toMatch(
+      /refund/i,
+    );
+  });
+
+  it('the per-class operations are reached through the registration', () => {
+    const code = codeOf(core);
+    expect(code).toContain('registered.computeSemanticOptionDigest(option)');
+    expect(code).toContain('registered.assertInputCohesion(input)');
+  });
+
+  it('the registered-constructor contract declares them, so a new class must supply both', () => {
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'registry.ts'));
+    const start = code.indexOf('export interface RegisteredConstructor {');
+    const block = code.slice(start, code.indexOf('\n}', start));
+    const fields = [...block.matchAll(/readonly (\w+)[?]?:/g)].map((match) => match[1]!);
+    expect(fields.sort()).toEqual([
+      'actionClass',
+      'assertInputCohesion',
+      'computeSemanticOptionDigest',
+      'construct',
+      'constructorId',
+    ]);
+  });
+
+  it('the refund constructor owns the refund digest definition', () => {
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'constructors', 'refundCreate.ts'));
+    expect(code).toContain('export function refundSemanticOptionDigest');
+    expect(code).toContain("canonicalHash('acos.semantic_option_digest.refund.create.v1'");
+  });
+
+  it('and optionDigest.ts keeps only the class-agnostic address form', () => {
+    const code = codeOf(join('src', 'kernel', 'canonicalisation', 'optionDigest.ts'));
+    expect(code).toContain('export function computeOptionId');
+    expect(code, 'optionDigest.ts still carries a per-class digest').not.toMatch(/refund/i);
+  });
+
+  it('there is still no generic fallback constructor anywhere', () => {
+    for (const file of walk(join('src', 'kernel', 'canonicalisation'))) {
+      const code = codeOf(file);
+      for (const needle of ['defaultConstructor', 'fallbackConstructor', 'genericConstructor']) {
+        expect(code, `${file} carries ${needle}`).not.toContain(needle);
+      }
+    }
+  });
+});
+
 describe('rule 4 — S1B did not touch the accepted S1A exposure ledger', () => {
   /**
    * `phase2-v1.3-implementation-brief.md §7` treats a weakened `I3` as a PASS-revocation

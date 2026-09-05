@@ -153,10 +153,49 @@ export const VC_C1_SEMANTIC_OPTION_FIELDS = Object.freeze({
 export const VC_C1_ORDER = Object.freeze({
   resourceRef: 'order:ORD-123',
   resourceId: 'ORD-123',
-  destinationInstrumentRef: 'instrument:pm_original_CH-9001',
+  /**
+   * `26 §8`: `context.selected_option.line_refundable_remaining`. $40.00.
+   *
+   * Current authoritative policy state, hand-authored here. NOT a member of
+   * `semantic_option_digest` — S1B.2 finding 2 — so a change to it must move the recorded
+   * selected option and must NOT move `option_id`.
+   */
   lineRefundableRemainingMinor: 4000n,
   customerNovelty: 'RETURNING',
 } as const);
+
+/**
+ * A SECOND authoritative refundable remaining, for the finding-2 discriminating pair.
+ * $18.00: still above the $25.00 refund? No — deliberately below it, so the later policy
+ * slice's `line_refundable_remaining >= amount` operand is one whose value actually
+ * decides something.
+ */
+export const VC_C1_MUTATED_REFUNDABLE_REMAINING_MINOR = 1800n;
+
+/**
+ * The `reason_code -> reason_code_scope` mapping, HAND-AUTHORED — S1B-C6, and the fixture
+ * S1B.2 finding 1D is checked against.
+ *
+ * Transcribed from the owner clarification, not imported from `src/`. That is the point: if
+ * production and this table ever disagree, the cohesion suite says so instead of comparing
+ * the production map with itself.
+ *
+ * A FIXTURE-LEVEL consistency rule tied to S1B-C6. Not a claim that this enum or this
+ * grouping is universal production policy.
+ */
+export const VC_C1_REASON_CODE_SCOPES: Readonly<Record<string, string>> = Object.freeze({
+  CUSTOMER_REPORTED_DAMAGE: 'GOODS_FAULT',
+  CUSTOMER_REPORTED_NOT_RECEIVED: 'GOODS_FAULT',
+  ITEM_RETURNED: 'GOODS_RETURNED',
+  DUPLICATE_CHARGE: 'BILLING_ERROR',
+  PRICING_ERROR: 'BILLING_ERROR',
+});
+
+/** The reason code the ordinary VC-C1 fixture proposes. In scope `GOODS_FAULT`. */
+export const VC_C1_REASON_CODE = 'CUSTOMER_REPORTED_DAMAGE';
+
+/** A valid reason code in a DIFFERENT scope, for the finding-1D negative case. */
+export const VC_C1_OUT_OF_SCOPE_REASON_CODE = 'PRICING_ERROR';
 
 /**
  * The window refs the fixture's authoritative grant/window boundary resolves — S1B-C5a.
@@ -179,13 +218,22 @@ export const VC_C1_EXPECTED_WINDOW_REFS: readonly string[] = Object.freeze([
  * The point of authoring it here is that the adapter's future input is pinned by the
  * fixture, not by whatever the constructor happens to emit.
  */
+/**
+ * S1B.2 finding 3: there is NO `destination_instrument_ref` here any more.
+ *
+ * The destination of a refund is the RECORD-grade parent transaction's own instrument, and
+ * the payload names it with `parent_transaction_id` and `instrument` — the architecture's
+ * two-dimensional refund enumeration, both members of `26 §2.2`'s declared
+ * `semantic_option_digest`. A separate identifier was an independent effect dimension
+ * outside option identity, which `26 §2.2` forbids. Which concrete vendor fields a real
+ * processor requires for that parent transaction is the adapter slice's question.
+ */
 export const VC_C1_EXPECTED_VENDOR_PARAMETERS: Readonly<Record<string, string>> = Object.freeze({
   parent_transaction_id: 'txn:CH-9001',
   line_id: 'line:ORD-123:1',
   amount: '25.00',
   currency: 'USD',
   instrument: 'original',
-  destination_instrument_ref: 'instrument:pm_original_CH-9001',
 });
 
 export const VC_C1_EXPECTED_ADAPTER = 'mock_processor';

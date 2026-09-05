@@ -18,6 +18,7 @@ live in `S1A-owner-clarifications.md`; one is a scope narrowing and lives in
 | **S1A-H2** | `40001` is retryable; `40P01` is pass-revoking | §17 |
 | **S1A-H3** | The irrecoverable standing term is explicitly zero | `S1A-owner-clarifications.md §2` |
 | **S1A-H4** | Durable journal selected for in-database checkpointing, not external exactly-once | `ADR-IMP-002 §7` |
+| **S1A-H4a** | The spike's kill point 7 still asserted external exactly-once, contradicting S1A-H4 — corrected during S1B.2 | `ADR-IMP-002 §7.5` |
 | — | The money-path lock order, resolving `30 §5.2`'s internal contradiction | `S1A-owner-clarifications.md §1` |
 
 ---
@@ -565,6 +566,29 @@ readings the owner issued, not choices this implementation made:
 for external exactly-once — is a narrowing of a decision record and lives in
 `ADR-IMP-002 §7`, with its negative control in
 `spikes/durable-execution/external-step-race.test.ts`.
+
+**S1A-H4a**, recorded 2026-09-05 during the S1B.2 independent-review repair pass, is the
+loose end S1A-H4 left behind. S1A-H4 narrowed the ADR's language but did not update the
+spike, which continued to assert `dispatchCount <= 1` at kill point 7 and to classify
+`dispatchCount > 1` inside `invariantVerdict()` as a weakened S1A substrate invariant. Both
+contradict the accepted S1A-H4 result: with no exclusive work-item claim, a duplicate
+external dispatch under concurrent retry is a known possible outcome of the generic step
+shape, not a failure of the application-transaction/checkpoint property.
+
+The single observed `dispatchCount == 2` recorded in `S1B-result.md` — reported honestly at
+the time and explicitly not claimed as repaired — is therefore a **stale test expectation**,
+not evidence of a ledger defect. In that run the delta was applied exactly once and the
+journal sequence was allocated exactly once. The observation is retained in the record; the
+assertion is corrected.
+
+The correction separates the two properties: the application-transaction/checkpoint invariant
+stays asserted, and the external-dispatch count is recorded as an observation. Exact-once
+dispatch assertions are **retained** in every sequential case, and the deterministic S1A-H4
+negative control that forces and observes two dispatches is untouched. The outbox was not
+built — it remains S1 work. Full detail in `ADR-IMP-002 §7.5`.
+
+**No S1A production source was changed by this correction.** It is confined to
+`spikes/durable-execution/spike.test.ts`, and the S1A suite remains 157/157.
 
 ---
 

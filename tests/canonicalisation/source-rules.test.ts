@@ -295,17 +295,31 @@ describe('rule 8 — the canonicaliser core owns no per-class logic (S1B.2, find
     expect(code).toContain('registered.assertInputCohesion(input)');
   });
 
-  it('the registered-constructor contract declares them, so a new class must supply both', () => {
+  it('the registered-constructor contract declares them, so a new class must supply all four', () => {
     const code = codeOf(join('src', 'kernel', 'canonicalisation', 'registry.ts'));
     const start = code.indexOf('export interface RegisteredConstructor {');
     const block = code.slice(start, code.indexOf('\n}', start));
     const fields = [...block.matchAll(/readonly (\w+)[?]?:/g)].map((match) => match[1]!);
+    // S1C widened this set by exactly two, and BOTH are per-class operations moved off a
+    // core rather than new powers granted to a constructor:
+    //
+    //   optionDescriptionFields  `I52`'s per-class CANDIDATE fields. The class declares
+    //                            them; `enumeration/contextSpec.ts` filters and renders.
+    //                            A class still cannot author a description string.
+    //   liveEnumerator           `24 §3` K4 items 1–2 — per-class authoritative state
+    //                            resolution and enumeration, so `EffectEnumerator` and
+    //                            `LiveSelectorCanonicaliser` carry no per-class branch.
+    //
+    // The assertion is written as an EXACT set deliberately: it is the tripwire that makes
+    // widening this contract a visible decision rather than an incidental one.
     expect(fields.sort()).toEqual([
       'actionClass',
       'assertInputCohesion',
       'computeSemanticOptionDigest',
       'construct',
       'constructorId',
+      'liveEnumerator',
+      'optionDescriptionFields',
     ]);
   });
 

@@ -29,6 +29,7 @@ import type {
   ResolvedResource,
   SelectedAuthoritativeRefundOption,
 } from '../../src/kernel/canonicalisation/types.js';
+import type { TaskContextSpec } from '../../src/kernel/enumeration/contextSpec.js';
 
 import {
   VC_C1,
@@ -124,6 +125,55 @@ export const FIXTURE_GRANT_WINDOWS: AuthoritativeGrantWindowContext = Object.fre
 
 export const FIXTURE_ENUMERATION_ID = 'enum:2026-09-05T10:00:00Z:ORD-123:refund.create';
 
+export const FIXTURE_TASK_ID = 'task:T-4471';
+export const FIXTURE_PRINCIPAL_ID = 'principal:support_reasoner:1';
+export const FIXTURE_COMPANY_ID = 'company:ACME';
+
+/**
+ * The S1C task `context_spec` — clarification S1C-C3 and S1C-C5.
+ *
+ * `26 §2.0.1`: option descriptions are "projected through the task's `context_spec` — see
+ * I52". The architecture requires the FILTER and enumerates no field set, so the admitted
+ * set below is an S1C implementation fixture and is recorded as one.
+ *
+ * `refundable_remaining` is DELIBERATELY ADMITTED here and DELIBERATELY WITHHELD by
+ * `narrowedContextSpec()` below: `26 §8`'s worked policy reads it, so a support task
+ * plausibly may see it, and `I52`'s runtime half is only testable against a spec that
+ * withholds something a candidate list offers.
+ */
+export const FIXTURE_ADMITTED_DESCRIPTION_FIELDS: ReadonlySet<string> = new Set([
+  'amount',
+  'currency',
+  'line',
+  'parent_transaction',
+  'instrument',
+  'refundable_remaining',
+]);
+
+export function makeContextSpec(overrides: {
+  readonly admittedResourceRefs?: readonly string[];
+  readonly admittedDescriptionFields?: ReadonlySet<string>;
+  readonly reasonCodeScope?: ReasonCodeScope;
+  readonly taskId?: string;
+  readonly principalId?: string;
+  readonly companyId?: string;
+} = {}): TaskContextSpec {
+  return {
+    companyId: overrides.companyId ?? FIXTURE_COMPANY_ID,
+    taskId: overrides.taskId ?? FIXTURE_TASK_ID,
+    principalId: overrides.principalId ?? FIXTURE_PRINCIPAL_ID,
+    admittedResourceRefs: new Set(overrides.admittedResourceRefs ?? [VC_C1_ORDER.resourceRef]),
+    admittedDescriptionFields: {
+      'refund.create': overrides.admittedDescriptionFields ?? FIXTURE_ADMITTED_DESCRIPTION_FIELDS,
+    },
+    // S1C-C5. `VC_C1_REASON_CODE`'s scope, so the fixture intent and the fixture option
+    // agree and S1B's reason-code-scope cohesion check passes on the happy path.
+    reasonCodeScope: overrides.reasonCodeScope ?? VC_C1_SEMANTIC_OPTION_FIELDS.reasonCodeScope,
+  };
+}
+
+export const FIXTURE_CONTEXT_SPEC: TaskContextSpec = makeContextSpec();
+
 export interface ContextOverrides {
   readonly taskId?: string;
   readonly authorisationRef?: string;
@@ -138,6 +188,8 @@ export interface ContextOverrides {
   readonly resource?: ResolvedResource;
   /** `26 §2.1`: "the single ledger currency". Varied by finding 1C's cohesion case. */
   readonly ledgerCurrency?: string;
+  /** S1C, `I52`. Varied by the context-spec projection tests. */
+  readonly contextSpec?: TaskContextSpec;
 }
 
 /**
@@ -175,6 +227,7 @@ export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCano
         : computed(overrides.retainedProcessingFee ?? FIXTURE_RETAINED_FEE),
     grantWindows: computed(overrides.grantWindows ?? FIXTURE_GRANT_WINDOWS),
     customerNovelty: computed(VC_C1_ORDER.customerNovelty),
+    contextSpec: computed(overrides.contextSpec ?? FIXTURE_CONTEXT_SPEC),
     contextDigest: computed('ctxdigest:8f21c0d4'),
     authorisationRef: computed(overrides.authorisationRef ?? 'auth:AR-0001'),
   };

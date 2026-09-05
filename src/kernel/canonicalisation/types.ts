@@ -11,6 +11,7 @@ import type { AuthoritativeRetainedFee } from './authoritativeCost.js';
 import type { AuthoritativeGrantWindowContext } from './grantWindows.js';
 import type { ConstructorVersionIdentity } from './constructorVersion.js';
 import type { ProposedSelector } from './intent.js';
+import type { TaskContextSpec } from '../enumeration/contextSpec.js';
 
 /**
  * The canonicaliser's types: three kernel-owned INPUTS and two kernel-computed OUTPUTS.
@@ -118,6 +119,26 @@ export interface AuthoritativeCanonicalisationContext {
    */
   readonly grantWindows: KernelComputed<AuthoritativeGrantWindowContext>;
   readonly customerNovelty: KernelComputed<CustomerNovelty> | null;
+  /**
+   * The task's `context_spec` — S1C, `I52`.
+   *
+   * `26 §2.0.1`, the field-visibility row, verbatim: "Governed by the task's `context_spec`.
+   * **No field appears in any option `description` that the `context_spec` does not admit**
+   * (`I52`), enforced by a projection filter at runtime and by spec review in CI."
+   *
+   * It is here because the RECORDED selected option carries a description (`26 §2.1`:
+   * "the enumerated option whose `option_id` the selector names, **with its full
+   * description**") and that description must be the one the model saw. S1B authored it
+   * from a template literal inside the refund constructor, which was correct while there was
+   * no enumeration to agree with and is the second description path the S1C mandate
+   * forbids. The constructor now declares candidate fields and this spec decides which are
+   * admitted — one projection, two call sites.
+   *
+   * `KernelComputed` like every other context field, and `23 §5` B9 lists `context_spec`s
+   * among the sixteen classes of owner-signed control artifact, so it is not model-editable
+   * by construction. `I21` does not move: no `ProposedIntent` field reaches it.
+   */
+  readonly contextSpec: KernelComputed<TaskContextSpec>;
   /** `26 §2.1`: "context_digest — hash of the assembled context the proposer saw". */
   readonly contextDigest: KernelComputed<string>;
   /**

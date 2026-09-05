@@ -1,4 +1,6 @@
 import type { Money } from '../exposure/money.js';
+import type { OptionDescriptionField } from '../enumeration/contextSpec.js';
+import type { LiveEnumerator } from '../enumeration/port.js';
 import type { ActionCatalogueEntry, ActionClass } from './actionCatalogue.js';
 import type { PermittedIntentFields } from './intent.js';
 import type {
@@ -103,10 +105,18 @@ export type EffectConstructor = (input: ConstructorInput) => ConstructedEffect;
  *   assertInputCohesion           the per-class authoritative-input checks, run BEFORE
  *                                 construction so nothing is emitted from contradictory
  *                                 inputs (S1B.2 findings 1C and 1D).
+ *   optionDescriptionFields       S1C. `I52`'s per-class CANDIDATE fields. The class
+ *                                 declares them; `contextSpec.ts` filters and renders them.
+ *                                 A class cannot author its own description string, so it
+ *                                 cannot render past the `context_spec` filter.
+ *   liveEnumerator                S1C. `24 §3` K4 items 1 and 2 — per-class authoritative
+ *                                 state resolution and per-class enumeration. Three classes
+ *                                 have three state models; the enumeration core has none.
  *
  * `EffectCanonicaliser` imports no per-class digest function and carries no per-class
- * branch; a class with no registration still denies `NOT_CANONICALISABLE` at step C2, and
- * there is still no generic fallback.
+ * branch; `EffectEnumerator` and `LiveSelectorCanonicaliser` import no per-class module and
+ * name no commerce table. A class with no registration still denies `NOT_CANONICALISABLE` at
+ * step C2, and there is still no generic fallback.
  * ---------------------------------------------------------------------------------
  */
 export interface RegisteredConstructor {
@@ -129,6 +139,30 @@ export interface RegisteredConstructor {
    * produce that pair.
    */
   readonly assertInputCohesion: (input: ConstructorInput) => void;
+  /**
+   * S1C. The CANDIDATE fields of this class's option description, in declared order.
+   *
+   * `26 §2.0.1`: an option's `description` is "projected through the task's `context_spec`
+   * — see I52". The class knows WHICH fields describe its options; only the `context_spec`
+   * knows which of them a given task may see. So the class declares candidates and
+   * `enumeration/contextSpec.ts` applies the single filter and the single renderer.
+   *
+   * The split is the control. A constructor that returned a finished string would be able to
+   * put an inadmissible field inside it, and `I52`'s "enforced by a projection filter at
+   * runtime" would be enforced by a habit instead.
+   */
+  readonly optionDescriptionFields: (
+    option: SelectedAuthoritativeOption,
+  ) => readonly OptionDescriptionField[];
+  /**
+   * S1C. Per-class authoritative state resolution and enumeration — `24 §3` K4 items 1–2.
+   *
+   * "for a refund, the refundable line items and the remaining maximum per item; for a
+   * budget change, the permitted absolute values given the current budget and the increase
+   * rule; for an address edit, the permitted address sources". Three state models, three
+   * enumeration rules, one core.
+   */
+  readonly liveEnumerator: LiveEnumerator;
   readonly construct: EffectConstructor;
 }
 

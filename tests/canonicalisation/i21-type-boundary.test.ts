@@ -101,7 +101,7 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and eight negative files', () => {
+  it('the fixture directory contains a positive control and nine negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       // S1B.2 findings 1B and 3, as compile-time impossibilities.
@@ -111,6 +111,9 @@ describe('the harness discriminates', () => {
       'intent-as-context.ts',
       'model-amount-into-exposure.ts',
       'model-windows-into-request.ts',
+      // S1C: `26 §2.0` — the selector "is a pair rather than an integer". No index
+      // compatibility layer exists, and adding one would be a visible type change.
+      'positional-selector.ts',
       'positive-control.ts',
       'rationale-into-request.ts',
       'rationale-parsed.ts',
@@ -179,6 +182,14 @@ describe('every I21 violation fails to compile, on the expected line', () => {
       'destination-into-option.ts',
       'supplying an independent destination instrument reference',
       'TS2353',
+    ],
+    [
+      // S1C. `26 §2.0`: the selector "is a pair rather than an integer". `26 §7`'s CAN-05
+      // probing oracle is closed by the ABSENCE of an index, not by a runtime rejection of
+      // one, so the absence is asserted at the type level as well as at the wire.
+      'positional-selector.ts',
+      'expressing a positional selector, as an ordinal or as an index field',
+      'TS2322',
     ],
   ];
 

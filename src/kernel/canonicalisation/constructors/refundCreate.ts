@@ -1,4 +1,9 @@
 import { add, toDb, type Money } from '../../exposure/money.js';
+import {
+  projectOptionDescription,
+  type OptionDescriptionField,
+} from '../../enumeration/contextSpec.js';
+import { refundLiveEnumerator } from '../../enumeration/refundEnumeration.js';
 import { REASON_CODE_SCOPES, type ReasonCode } from '../actionCatalogue.js';
 import { computed } from '../brands.js';
 import { canonicalHash, hex } from '../canonicalBytes.js';
@@ -86,6 +91,53 @@ export function refundSemanticOptionDigest(option: SelectedAuthoritativeRefundOp
     { kind: 'text', value: option.instrument },
     { kind: 'text', value: option.reasonCodeScope },
   ]);
+}
+
+/**
+ * `refund.create`'s CANDIDATE option-description fields — S1C, `I52`.
+ *
+ * `26 §2.0.1`, verbatim: an option's `description` is "projected through the task's
+ * `context_spec` — see I52", and: "**No field appears in any option `description` that the
+ * `context_spec` does not admit**."
+ *
+ * ---------------------------------------------------------------------------------
+ * CANDIDATES, NOT A DESCRIPTION
+ *
+ * This function returns a labelled field list. It does not render a string, and that is the
+ * control rather than a style preference: a constructor that returned finished prose could
+ * embed a field the `context_spec` withholds, and `I52`'s "enforced by a projection filter
+ * at runtime" would then be enforced by this file remembering to consult the spec. The
+ * filter and the rendering both live in `enumeration/contextSpec.ts`, which has no per-class
+ * branch and cannot be bypassed by a class.
+ *
+ * The DECLARED ORDER below is the rendering order — see `projectOptionDescription` — so a
+ * `context_spec` edit that reorders an admitted set cannot reorder a description.
+ *
+ * The field NAMES are the `context_spec`'s admitted-field keys. The S1C fixture spec admits
+ * `amount`, `currency`, `line`, `parent_transaction` and `instrument`; the
+ * `refundable_remaining` candidate exists precisely so a test can withhold it and assert it
+ * cannot appear (S1C-C3).
+ *
+ * NOTE that this list is NOT the semantic option digest and must not be confused with it.
+ * `26 §2.1.2` classes `description_string` as NON-SEMANTIC and the digest's five fields as
+ * semantic by definition. Adding or removing a candidate here changes what a task may be
+ * shown; it does not and must not change any `option_id`.
+ * ---------------------------------------------------------------------------------
+ */
+export function refundOptionDescriptionFields(
+  option: SelectedAuthoritativeRefundOption,
+): readonly OptionDescriptionField[] {
+  return [
+    { name: 'amount', value: toDb(option.amount) },
+    { name: 'currency', value: option.currency },
+    { name: 'line', value: option.lineId },
+    { name: 'parent_transaction', value: option.parentTransactionId },
+    { name: 'instrument', value: option.instrument },
+    // CURRENT POLICY STATE, not option identity — S1B.2 finding 2. A candidate because a
+    // task may legitimately be shown it; withheld by a `context_spec` that does not admit
+    // it, which is what `I52`'s runtime half is asserted against.
+    { name: 'refundable_remaining', value: toDb(option.lineRefundableRemaining) },
+  ];
 }
 
 /**
@@ -272,10 +324,23 @@ export function constructRefundCreate(input: ConstructorInput): ConstructedEffec
       actionClass: 'refund.create',
       optionId,
       semanticOptionDigest: hex(semanticOptionDigest),
-      // Kernel-authored. `26 §2.0.1` filters an option's description through the task's
-      // context_spec (I52) at enumeration time; that projection is the enumeration slice
-      // and no field here is outside what the refund policy already reads.
-      description: `refund ${toDb(parameters.amount)} ${parameters.currency} on line ${parameters.lineId} against transaction ${parameters.parentTransactionId} to ${parameters.instrument}`,
+      // S1C: THE SAME PROJECTION THE MODEL-FACING ENUMERATION USED.
+      //
+      // `26 §2.1`: `selected_option` is "the enumerated option whose `option_id` the
+      // selector names, **with its full description**". The description recorded on the
+      // AuthorizationRequest must therefore BE the one the model saw, not a reconstruction
+      // that happens to look like it — and S1B's template literal here was exactly such a
+      // reconstruction, correct only because there was no enumeration to disagree with.
+      //
+      // Both call sites now reach `projectOptionDescription` over the same authoritative
+      // option and the same `context_spec`, so equality is by construction rather than by
+      // discipline, and `I52`'s admitted-field filter applies to the RECORDED description as
+      // well as to the returned one.
+      description: projectOptionDescription(
+        context.contextSpec,
+        'refund.create',
+        refundOptionDescriptionFields(option),
+      ),
       lineId: parameters.lineId,
       parentTransactionId: parameters.parentTransactionId,
       amount: parameters.amount,
@@ -348,6 +413,10 @@ export const refundCreateConstructor: RegisteredConstructor = {
   actionClass: 'refund.create',
   constructorId: REFUND_CREATE_CONSTRUCTOR_ID,
   computeSemanticOptionDigest: (option) => refundSemanticOptionDigest(assertRefundOption(option)),
+  // S1C. Candidate fields only; the filter and the renderer are contextSpec.ts's.
+  optionDescriptionFields: (option) => refundOptionDescriptionFields(assertRefundOption(option)),
+  // S1C. `24 §3` K4 items 1–2, for this class. The enumeration core has no commerce import.
+  liveEnumerator: refundLiveEnumerator,
   assertInputCohesion: (input) => {
     if (input.permitted.actionClass !== 'refund.create') {
       throw new Error('refund.create constructor invoked for another action class');

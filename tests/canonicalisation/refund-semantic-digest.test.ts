@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { money } from '../../src/kernel/exposure/money.js';
@@ -6,10 +9,15 @@ import { CanonicalisationDenied } from '../../src/kernel/canonicalisation/errors
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
 import { computeOptionId } from '../../src/kernel/canonicalisation/optionDigest.js';
 // S1B.2 finding 6: the per-class digest now lives with the constructor that owns it.
-import { refundSemanticOptionDigest } from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
+import {
+  refundOptionDescriptionFields,
+  refundSemanticOptionDigest,
+} from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
+import { projectOptionDescription } from '../../src/kernel/enumeration/contextSpec.js';
 import {
   makeCanonicaliser,
   makeContext,
+  makeContextSpec,
   makeRawIntent,
   makeRefundOption,
   optionIdFor,
@@ -139,5 +147,85 @@ describe('the selector must content-address the authoritative option', () => {
     expect(() => canonicaliser.canonicalise(intent, makeContext(), baseline)).toThrow(
       CanonicalisationDenied,
     );
+  });
+});
+
+// =====================================================================================
+// S1C additions — 13. Content-address mutation, extended.
+//
+// The mandate: "Retain and extend the S1B semantic-digest tests. […] Do not alter the
+// declared five-field digest."
+//
+// The five-field matrix above is UNCHANGED and is retained verbatim. What S1C adds is the
+// other half of the same property: the fields that must NOT move `option_id`.
+// =====================================================================================
+
+describe('13 — non-semantic and current-state changes leave option_id UNCHANGED', () => {
+  it('line_refundable_remaining is NOT a digest member — changing it moves nothing', () => {
+    // `26 §8` reads `context.selected_option.line_refundable_remaining` as a POLICY operand,
+    // and S1B.2 finding 2 keeps it out of `semantic_option_digest` deliberately: it is
+    // current state, not effect identity. If it were a member, every partial refund against
+    // any line would invalidate every outstanding selector for that line — and CAN-03's
+    // denial would become indistinguishable from ordinary churn.
+    const moved = makeRefundOption({ lineRefundableRemaining: money('18.00') });
+    expect(hex(refundSemanticOptionDigest(moved))).toBe(baselineDigest);
+    expect(optionIdFor(moved)).toBe(baselineOptionId);
+  });
+
+  it('the option CURRENCY is not a digest member either', () => {
+    // The MVP is single-currency (`26 §11.2`, `51 §5.1`) and the constructor's cohesion check
+    // (S1B.2 finding 1C) refuses a mismatch outright, so currency cannot silently change the
+    // effect. It is therefore not identity — and asserting so keeps the declared five-field
+    // digest honest rather than quietly six.
+    const other = makeRefundOption({ currency: 'USD' });
+    expect(optionIdFor(other)).toBe(baselineOptionId);
+  });
+
+  it('PROJECTED DESCRIPTION WORDING is non-semantic — it cannot move option_id', () => {
+    // `26 §2.1.2` classes `description_string` among the NON-SEMANTIC change fields, against
+    // the semantic-by-definition set that includes `the semantic_option_digest`.
+    //
+    // The property matters operationally: a `context_spec` edit that narrows or widens what a
+    // task may see changes every description it renders. If that moved `option_id`, every
+    // outstanding selector in the system would go stale on a `context_spec` deploy, and
+    // `SELECTOR_STALE` would stop meaning "the world moved".
+    //
+    // Asserted through the real projection, over the real candidate fields, under two specs.
+    const option = makeRefundOption();
+    const wide = projectOptionDescription(
+      makeContextSpec(),
+      'refund.create',
+      refundOptionDescriptionFields(option),
+    );
+    const narrow = projectOptionDescription(
+      makeContextSpec({ admittedDescriptionFields: new Set(['amount']) }),
+      'refund.create',
+      refundOptionDescriptionFields(option),
+    );
+    expect(narrow).not.toBe(wide);
+    // Two different descriptions, one identity.
+    expect(optionIdFor(option)).toBe(baselineOptionId);
+    expect(hex(refundSemanticOptionDigest(option))).toBe(baselineDigest);
+  });
+
+  it('the digest reads exactly five fields, and the source says which', () => {
+    // `26 §2.2`'s declared row: line_id · parent_transaction_id · amount · instrument ·
+    // reason_code_scope. Asserted against the source so that widening it is a visible edit
+    // rather than an incidental one — the digest is `26 §2.1.2`'s semantic-by-definition
+    // change class, so a sixth member is a semantic constructor bump, never a refactor.
+    const code = readFileSync(
+      join('src', 'kernel', 'canonicalisation', 'constructors', 'refundCreate.ts'),
+      'utf8',
+    );
+    const start = code.indexOf("canonicalHash('acos.semantic_option_digest.refund.create.v1'");
+    const block = code.slice(start, code.indexOf(']);', start));
+    const fields = [...block.matchAll(/value: option\.(\w+)/g)].map((match) => match[1]!);
+    expect(fields).toEqual([
+      'lineId',
+      'parentTransactionId',
+      'amount',
+      'instrument',
+      'reasonCodeScope',
+    ]);
   });
 });

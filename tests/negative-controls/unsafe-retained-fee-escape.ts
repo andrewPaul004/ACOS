@@ -148,5 +148,10 @@ export const unsafeRetainedFeeEscapeConstructor: RegisteredConstructor = {
   constructorId: UNSAFE_CONSTRUCTOR_ID,
   computeSemanticOptionDigest: refundCreateConstructor.computeSemanticOptionDigest,
   assertInputCohesion: refundCreateConstructor.assertInputCohesion,
+  // S1C: delegated too, for the same reason. The defect under control is the retained-fee
+  // escape and nothing else, so the description projection and the live enumerator are the
+  // production ones.
+  optionDescriptionFields: refundCreateConstructor.optionDescriptionFields,
+  liveEnumerator: refundCreateConstructor.liveEnumerator,
   construct: constructRefundCreateUnsafely,
 };

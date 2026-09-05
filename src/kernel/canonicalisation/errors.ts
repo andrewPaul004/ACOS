@@ -18,20 +18,38 @@
  *    NOT_CANONICALISABLE if no constructor is registered for the class."
  *
  * ---------------------------------------------------------------------------------
- * WHAT IS DELIBERATELY ABSENT
+ * S1C ADDED THE TWO C′ CODES S1B RECORDED AS ABSENT
  *
- * SELECTOR_STALE and SELECTOR_ENUMERATION_STALE are properties of live re-enumeration
- * under the step-C′ entity advisory lock. S1B does not enumerate and does not take that
- * lock, so emitting either would claim a check that was not performed. They are added by
- * the enumeration/selector increment together with I53 and the mandatory positional
- * negative control. See S1B-owner-clarifications.md S1B-C7.
+ * S1B's version of this header said:
  *
- * CONSTRUCTOR_SEMANTIC_CHANGE is the approval-resume denial (I61, `26 §7` step R′). S1B
- * has no approval state machine and emits it nowhere. An unverifiable constructor version
- * denies NOT_CANONICALISABLE instead — S1B-owner-clarifications.md S1B-C2.
+ *   "SELECTOR_STALE and SELECTOR_ENUMERATION_STALE are properties of live re-enumeration
+ *    under the step-C′ entity advisory lock. S1B does not enumerate and does not take that
+ *    lock, so emitting either would claim a check that was not performed. They are added by
+ *    the enumeration/selector increment together with I53 and the mandatory positional
+ *    negative control."
  *
- * PER_ACTION is a POLICY denial and no S1B code path can produce it. `36 §2` VC-C1's
- * denial half is open until the Cedar slice.
+ * **S1C is that increment.** Both codes are added, and both are now emitted by code that
+ * genuinely performs the check they name:
+ *
+ *   SELECTOR_STALE              `src/kernel/enumeration/liveSelector.ts` step 5, after the
+ *                               live re-enumeration under a HELD entity execution lease
+ *   SELECTOR_ENUMERATION_STALE  `liveSelector.ts` step 3, against the kernel's own recorded
+ *                               `computed_at` and the class `max_age` fixture (S1C-C4)
+ *
+ * Neither code is invented: `26 §7`'s C′ row declares the set. S1C extends no category and
+ * adds no model-visible distinction — see `enumeration/workerFacingDenial.ts`, where the
+ * whole selector family collapses to the architecture's single `DENY: SELECTOR`.
+ *
+ * ---------------------------------------------------------------------------------
+ * WHAT IS STILL DELIBERATELY ABSENT
+ *
+ * CONSTRUCTOR_SEMANTIC_CHANGE is the approval-resume denial (I61, `26 §7` step R′). There
+ * is no approval state machine in S1A, S1B or S1C and it is emitted nowhere. An unverifiable
+ * constructor version denies NOT_CANONICALISABLE instead — S1B-owner-clarifications.md
+ * S1B-C2.
+ *
+ * PER_ACTION is a POLICY denial and no code path here can produce it. `36 §2` VC-C1's denial
+ * half is open until the Cedar slice, and the S1C mandate excludes Cedar by name.
  * ---------------------------------------------------------------------------------
  */
 
@@ -40,7 +58,11 @@ export type DenyCode =
   | 'UNKNOWN_ACTION'
   | 'NOT_CANONICALISABLE'
   | 'SELECTOR_MALFORMED'
-  | 'SELECTOR_INVALID';
+  | 'SELECTOR_INVALID'
+  /** S1C. `26 §7` C′: the `option_id` is absent from the live set. `I53`. */
+  | 'SELECTOR_STALE'
+  /** S1C. `26 §7` C′: `computed_at` exceeds the class's `max_age`. */
+  | 'SELECTOR_ENUMERATION_STALE';
 
 /**
  * S1B.2 ADDITIONS, and why each denies under a code the flowchart already declares.
@@ -84,7 +106,18 @@ export type DenyDetail =
   | 'OPTION_ID_MISMATCH'
   | 'OPTION_ACTION_CLASS_MISMATCH'
   | 'OPTION_RESOURCE_MISMATCH'
-  | 'REASON_CODE_SCOPE_MISMATCH';
+  | 'REASON_CODE_SCOPE_MISMATCH'
+  // --- S1C, audit-side only. None of these reaches a worker; see workerFacingDenial.ts ---
+  /** The selector names an `enumeration_id` the kernel has no record of computing. */
+  | 'ENUMERATION_UNKNOWN'
+  /** The named enumeration was computed for another task, principal, class or resource. */
+  | 'ENUMERATION_BINDING_MISMATCH'
+  /** `26 §7` C′: `now - computed_at` exceeds the class's `max_age`. */
+  | 'ENUMERATION_PAST_MAX_AGE'
+  /** `I53`: the `option_id` is absent from the enumeration computed under the C′ lock. */
+  | 'OPTION_ABSENT_FROM_LIVE_SET'
+  /** The `option_id` is live, but was not among the options the named enumeration returned. */
+  | 'OPTION_NOT_IN_NAMED_ENUMERATION';
 
 export class CanonicalisationDenied extends Error {
   readonly code: DenyCode;

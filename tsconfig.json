@@ -20,5 +20,10 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "spikes/**/*.ts", "*.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "spikes/**/*.ts", "*.config.ts"],
+  // tests/type-negative/ is the I21 compile-negative fixture set. Its files are REQUIRED
+  // to fail type checking, and they are compiled by their own project from
+  // tests/canonicalisation/i21-type-boundary.test.ts. Including them here would make the
+  // repository typecheck fail by design, which is the opposite of the property.
+  "exclude": ["tests/type-negative/**"]
 }

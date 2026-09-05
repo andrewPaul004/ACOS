@@ -12,7 +12,15 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
  */
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', 'coverage/**', 'docs/architecture/**'],
+    // tests/type-negative/** is excluded from the root tsconfig by design (it must fail to
+    // compile), so the type-aware lint rules cannot resolve it.
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      'coverage/**',
+      'docs/architecture/**',
+      'tests/type-negative/**',
+    ],
   },
   {
     files: ['**/*.ts'],

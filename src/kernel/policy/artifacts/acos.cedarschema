@@ -1,0 +1,86 @@
+// ACOS Cedar schema — control artifact, `50 §2` class 2 ("Policy set (Cedar source +
+// compiled artifact)"), signer "Owner, second factor", halt scope "All effects".
+//
+// THIS FILE IS THE CLOSURE.
+//
+// `26 §2.3`, on what is deliberately absent from the authority tuple, and `26 §7` property
+// 2, verbatim: "The kernel constructs the request (step C′). It never accepts an amount, a
+// percentage, a vendor parameter or a counterparty from the proposer."
+//
+// Cedar enforces the second half of that structurally: a request whose context carries an
+// attribute this schema does not declare is REJECTED at parse time --
+//
+//   while parsing context, record attribute `evil` should not exist according to the schema
+//
+// -- so there is no generic policy-attribute map, no escape hatch, and nowhere for a
+// model-originated value to be placed even by a caller that wanted to. The context record
+// below is exactly the operand set `26 §8`'s worked refund policy reads, and nothing else.
+//
+// WHAT IS DELIBERATELY NOT DECLARED HERE
+//
+// No window attribute of any kind. `26 §8`'s worked policy carries four window-headroom
+// terms; `26 §7` places window headroom at step R (`DENY: WINDOW_EXHAUSTED`) rather than at
+// step M, ADR-005 states that "numeric aggregation over time windows lives in the exposure
+// ledger, not in policy", and `36 §4` item 2 repeats it. S1D implements step M and does not
+// implement step R, so declaring a window attribute would create a position in which a
+// fixture-supplied headroom could masquerade as an evaluated policy operand. The omission is
+// recorded as an OPEN obligation in docs/implementation/S1D-result.md rather than papered
+// over here.
+//
+// No `rationale`, and no lineage commitment that covers it. `26 §2.0`: "NEVER parsed,
+// NEVER interpreted as authority."
+
+namespace Acos {
+
+  // `26 §3`'s `Principal.role`, as the Cedar group `26 §8` writes as
+  // `principal in Role::"support_reasoner"`.
+  entity Role;
+
+  // `26 §3`: "A principal is not 'an agent.' It is a resolved, attributable identity with a
+  // verified chain." Its role membership is a parent edge, which is what makes `in` the
+  // right operator in the worked policy.
+  entity Principal in [Role] = {
+    kind: String,
+    delegation_depth: Long,
+  };
+
+  // `26 §8`: `resource is Order`, with `resource.exists` and `resource.grade == "RECORD"`.
+  entity Order = {
+    exists: Bool,
+    grade: String,
+  };
+
+  action "refund.create" appliesTo {
+    principal: [Principal],
+    resource: [Order],
+    context: {
+      // `26 §2.1.1`, SR-C1: the cap operand. NOT `vendor_amount`, which is deliberately
+      // ABSENT from this schema so that no policy can be written against it by accident and
+      // no request can carry it. The vulnerable negative control in
+      // tests/negative-controls/ has to place the vendor amount INTO this field to express
+      // the defect, which is precisely why the defect is observable.
+      exposure: {
+        total_exposure: decimal,
+      },
+      // `26 §2.1`: "the enumerated option whose option_id the selector names". Every field
+      // here is projected by the Effect Canonicaliser off the option resolved from the LIVE
+      // C′ enumeration (S1C), never from `ProposedIntent`.
+      selected_option: {
+        amount: decimal,
+        instrument: String,
+        // `26 §8`: "enumerated from the order at fetch time". Current policy state,
+        // deliberately not part of `option_id` -- see `types.ts`.
+        line_refundable_remaining: decimal,
+      },
+      // One of the four fields `I21` permits to cross from `ProposedIntent`. It selects
+      // nothing monetary: the closed enum is `actionCatalogue.ts` and the APPROVED subset is
+      // a literal inside the owner-signed policy artifact, not a request field.
+      reason_code: String,
+      // `26 §2.1`: "NEW | RETURNING | null -- the payer of the original transaction, NOT a
+      // counterparty". Optional because the architecture types it nullable; a policy reading
+      // it must guard with `has`, so an absent novelty fails the grant closed rather than
+      // defaulting.
+      customer_novelty?: String,
+    }
+  };
+}

@@ -452,13 +452,16 @@ export function makeEnumerationHarness(
  * economics from somewhere else.
  */
 export function kernelContext(
-  overrides: { readonly authorisationRef?: string } = {},
+  overrides: { readonly authorisationRef?: string; readonly principalRole?: string } = {},
 ): KernelSuppliedContext {
   return {
     companyId: COMPANY_ID,
     principal: computed({
       id: PRINCIPAL_ID,
       kind: 'AGENT' as const,
+      // `26 §3`'s declared `Principal.role`; `26 §8` reads it as
+      // `principal in Role::"support_reasoner"`. S1D.
+      role: overrides.principalRole ?? 'support_reasoner',
       delegationDepth: 1,
     }),
     grantWindows: {

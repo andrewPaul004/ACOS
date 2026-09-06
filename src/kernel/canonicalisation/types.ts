@@ -50,6 +50,25 @@ export type PrincipalKind = 'AGENT' | 'HUMAN' | 'KERNEL_SERVICE';
 export interface ResolvedPrincipal {
   readonly id: string;
   readonly kind: PrincipalKind;
+  /**
+   * `26 §3`'s declared `Principal.role`, verbatim from the printed record:
+   *
+   *   Principal {
+   *     id, kind,            // OWNER | KERNEL_SERVICE | AI_ROLE | ADAPTER | AUDIT_REVIEWER
+   *     role,                // e.g. ceo, support_reasoner, market_researcher
+   *     ...
+   *   }
+   *
+   * S1D, and required rather than optional. `26 §8`'s worked refund policy opens
+   * `permit(principal in Role::"support_reasoner", …)`, so the role is the operand that
+   * decides whether any grant applies at all. An optional field would let an absent role
+   * default, and `36 §3` layer 2 is explicitly about the case where "the policy is fine and
+   * `exposure` arrives as null" — an absent authority operand must fail closed, not default.
+   *
+   * It is kernel-resolved like every other field on this record: `24 §3` lists identities
+   * and principals as KERNEL-owned state, and no `ProposedIntent` field reaches it.
+   */
+  readonly role: string;
   /** `26 §7` step D: chain depth ≤ 3. Recorded here; step D is policy and is not in S1B. */
   readonly delegationDepth: number;
 }

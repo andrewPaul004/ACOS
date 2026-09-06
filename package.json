@@ -21,6 +21,7 @@
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
+    "@cedar-policy/cedar-wasm": "4.11.2",
     "pg": "8.16.3"
   },
   "devDependencies": {

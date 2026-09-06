@@ -101,7 +101,7 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and nine negative files', () => {
+  it('the fixture directory contains a positive control and twelve negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       // S1B.2 findings 1B and 3, as compile-time impossibilities.
@@ -110,7 +110,22 @@ describe('the harness discriminates', () => {
       'fifth-field-request.ts',
       'intent-as-context.ts',
       'model-amount-into-exposure.ts',
+      // S1D. WIDENED BY EXACTLY THREE, and every existing entry is untouched.
+      //
+      // The three new fixtures are the compile-time halves of S1D's authority-channel
+      // attacks A4, A5/A6 and A7 (docs/implementation/S1D-contract.md §7). They live in this
+      // directory because there is one type-negative tsconfig project and a second one would
+      // duplicate the harness; their EXPECTED DIAGNOSTICS are owned by
+      // `tests/policy/policy-type-boundary.test.ts`, not by this file, so this list is the
+      // only line S1D changes here.
+      //
+      // The harness's discriminating properties are unaffected: the positive control still
+      // compiles clean, and "no diagnostic appears on an unmarked line" now covers the three
+      // new files as well.
+      'model-exposure-into-policy.ts',
       'model-windows-into-request.ts',
+      'mutate-canonical-exposure.ts',
+      'policy-operand-supplied.ts',
       // S1C: `26 §2.0` — the selector "is a pair rather than an integer". No index
       // compatibility layer exists, and adding one would be a visible type change.
       'positional-selector.ts',

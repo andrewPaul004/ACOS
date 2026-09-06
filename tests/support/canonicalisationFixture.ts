@@ -190,6 +190,8 @@ export interface ContextOverrides {
   readonly ledgerCurrency?: string;
   /** S1C, `I52`. Varied by the context-spec projection tests. */
   readonly contextSpec?: TaskContextSpec;
+  /** `26 §3`'s `Principal.role`. S1D — varied by the policy suite's no-grant cases. */
+  readonly principalRole?: string;
 }
 
 /**
@@ -207,6 +209,11 @@ export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCano
     principal: computed({
       id: 'principal:support_reasoner:1',
       kind: 'AGENT' as const,
+      // `26 §3`'s declared `Principal.role`. `26 §8`'s worked refund policy opens
+      // `permit(principal in Role::"support_reasoner", …)`, so this is the operand that
+      // decides whether the grant applies at all. Overridable so the policy suite can
+      // assert that another role reaches no permit.
+      role: overrides.principalRole ?? 'support_reasoner',
       delegationDepth: 1,
     }),
     resource: computed(

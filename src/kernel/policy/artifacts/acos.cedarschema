@@ -74,7 +74,7 @@ namespace Acos {
       },
       // One of the four fields `I21` permits to cross from `ProposedIntent`. It selects
       // nothing monetary: the closed enum is `actionCatalogue.ts` and the APPROVED subset is
-      // a literal inside the owner-signed policy artifact, not a request field.
+      // a literal inside the hash-committed policy artifact, not a request field.
       reason_code: String,
       // `26 §2.1`: "NEW | RETURNING | null -- the payer of the original transaction, NOT a
       // counterparty". Optional because the architecture types it nullable; a policy reading

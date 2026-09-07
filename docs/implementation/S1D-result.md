@@ -29,7 +29,7 @@ code path here can produce it. `36 §2` VC-C1's denial half is open until the Ce
 
 **It is closed.** A real Cedar engine, linked in-process, evaluating an authoritative `$26.03`
 that the S1B canonicaliser computed from authoritative state, against `51 §3.1`'s `$25.00`
-bound held as a literal inside an owner-signed control artifact, returning
+bound held as a literal inside a hash-committed control artifact, returning
 `DENY: PER_ACTION` attributed to the determining policy — end to end from real database rows.
 
 ---
@@ -73,7 +73,7 @@ Asserted by execution rather than by dependency name:
   with `TS2554`.
 
 Exactly **one** of the four `I21` fields reaches Cedar: `reason_code`. It carries no monetary
-meaning — the approved subset it is tested against is a literal inside the signed artifact,
+meaning — the approved subset it is tested against is a literal inside the hash-committed artifact,
 not a request field.
 
 ### 3. Does `rationale` reach Cedar in any form other than an opaque lineage commitment outside authority evaluation?
@@ -117,7 +117,7 @@ scan.
 `tests/negative-controls/unsafe-vendor-amount-policy.ts` is a full second request builder
 differing from production in one expression — `decimalOf(toDb(vendorAmount))` where production
 reads `totalExposure`. Everything downstream is production: the same real Cedar engine, the
-same loaded artifacts, the same signed policy text, the same `$25.00` limit, the same category
+same loaded artifacts, the same policy text, the same `$25.00` limit, the same category
 resolution.
 
 On VC-C1: **production denies `PER_ACTION`, the unsafe control PERMITS.**
@@ -212,7 +212,7 @@ accepted tree-wide `.auditNote` rule still holds after S1D, with **no exemption 
 
 ### 10. Can a caller supply or replace the authoritative policy limit?
 
-**No — there is no position for one.** The `$25.00` figure lives in the owner-signed Cedar
+**No — there is no position for one.** The `$25.00` figure lives in the hash-committed Cedar
 policy text and **nowhere else in the tree**: a source rule asserts it appears in no
 TypeScript file under `src/`, and exactly two `.cedar` artifacts carry it (`26 §8`'s permit
 conjunct and `26 §11` P1's `forbid`), at the same figure, with no other decimal literal used

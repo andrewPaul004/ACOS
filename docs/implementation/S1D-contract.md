@@ -45,7 +45,7 @@ and, immediately following it, verbatim:
 > `exposure.vendor_amount` (SR-C1, `26 §8`).
 
 **S1D invents no limit.** `$25.00` is `51 §3.1`'s figure and it appears in exactly one place
-in the tree: the owner-signed Cedar policy artifact.
+in the tree: the authoritative Cedar policy artifact, which S1D hash-commits and does **not** owner-sign (`S1D-O4`, OPEN).
 
 ### 2.2 The comparison semantics
 
@@ -269,7 +269,7 @@ is asserted to be non-`PERMIT`, which is the property that actually matters.
 | A3 | Populate a generic policy context with `$25.00` | No such parameter exists; Cedar's schema rejects an unknown context attribute | type-level (no parameter) + runtime (Cedar parse failure) |
 | A4 | Mutate the canonical effect after C′ to reduce exposure | Assignment does not compile; and `authoriseUnderLease` gives no caller-visible gap | compile-failure fixture + structural |
 | A5 | Supply an alternate action / resource identity to policy evaluation | No parameter; every entity is derived from the effect | type-level (`TS2554`) |
-| A6 | Substitute another grant / policy limit | The limit is a literal inside the owner-signed artifact and is not a request field; a substituted artifact fails the digest | runtime (digest) + type-level |
+| A6 | Substitute another grant / policy limit | The limit is a literal inside the hash-committed policy artifact and is not a request field; a substituted artifact fails the digest | runtime (digest) + type-level |
 | A7 | Call the policy engine directly with model-originated operands | A raw `Money` is not assignable to `KernelComputed<Money>` | compile-failure fixture |
 | A8 | Bind `vendor_amount` instead of `total_exposure` | The vulnerable control **permits** VC-C1 while production **denies** | isolated unsafe implementation, real Cedar |
 | A9 | Vary the fee only, holding `vendor_amount` fixed | The decision flips across the boundary ⇒ the operand is not `vendor_amount` | runtime, discriminating pair |

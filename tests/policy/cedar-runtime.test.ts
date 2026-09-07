@@ -166,7 +166,7 @@ describe('no home-grown policy language, and no boolean-returning stand-in', () 
     expect(callers.map((f) => f.replace(/\\/g, '/'))).toEqual(['src/kernel/policy/cedarEngine.ts']);
   });
 
-  it('the per-action limit appears in the SIGNED ARTIFACT and nowhere in the code', () => {
+  it('the per-action limit appears in the POLICY ARTIFACT and nowhere in the code', () => {
     // A limit duplicated into TypeScript is a limit that can drift from the policy without a
     // control-artifact change. `51 §3.1`'s figure lives in the `.cedar` text only.
     for (const file of policySource) {

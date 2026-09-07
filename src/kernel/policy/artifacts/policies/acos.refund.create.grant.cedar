@@ -50,7 +50,7 @@
 // name and its comment.
 //
 // ---------------------------------------------------------------------------------
-// `ApprovedReasons`, AND WHY IT IS A LITERAL SET IN THE SIGNED ARTIFACT
+// `ApprovedReasons`, AND WHY IT IS A LITERAL SET IN THE POLICY ARTIFACT
 //
 // `26 §2.0` types `reason_code` as "from a closed enum" and never enumerates the members;
 // S1B declared the closed enum as a fixture under clarification S1B-C6 and recorded it as a
@@ -58,7 +58,7 @@
 // that enum, and it is a grant/policy fact.
 //
 // It lives here, as a literal, because here is the only place a caller cannot reach: the
-// artifact is owner-signed under `50 §2` class 2, its digest is bound into every decision,
+// artifact is a `50 §2` class 2 control artifact whose digest is bound into every decision,
 // and there is no request field, entity attribute or constructor parameter through which a
 // different approved set could be supplied. Putting it in an entity store built at request
 // time would have moved it back onto the code path.

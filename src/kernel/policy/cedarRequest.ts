@@ -203,7 +203,7 @@ export function buildRefundCreateCedarRequest(effect: CanonicalEffect): CedarReq
         line_refundable_remaining: decimalOf(option.lineRefundableRemaining),
       }),
       // One of the four `I21` fields. It carries no monetary meaning: the APPROVED subset it
-      // is tested against is a literal inside the owner-signed policy artifact.
+      // is tested against is a literal inside the hash-committed policy artifact.
       reason_code: request.reasonCode,
       // `26 §2.1` types it nullable. An absent novelty OMITS the attribute rather than
       // substituting a value, so the policy's `context has customer_novelty` guard fails the

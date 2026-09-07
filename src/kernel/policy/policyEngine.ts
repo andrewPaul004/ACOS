@@ -38,7 +38,7 @@ import type { PolicyDecision, PolicyDecisionLineage } from './decision.js';
  * ARTIFACTS ARE LOADED ONCE, AT CONSTRUCTION
  *
  * `26 §11`: "No runtime editing, no admin UI that mutates rules, no model in the path."
- * Loading per evaluation would make a mid-flight edit to a signed control artifact take
+ * Loading per evaluation would make a mid-flight edit to a control artifact take
  * effect silently between two decisions in the same workflow. Loading once means an artifact
  * change requires a control-plane deploy, which is exactly what ADR-005 says it costs:
  * "In-process linkage means a policy-engine upgrade is a control-plane deploy."

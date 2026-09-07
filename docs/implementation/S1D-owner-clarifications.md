@@ -23,7 +23,7 @@ INBOUND_ORIGINAL_INSTRUMENT | COMPENSABLE | EXACT |`, and immediately below it: 
 `exposure.vendor_amount` (SR-C1, `26 §8`)."*
 
 **S1D invented no quantity.** The figure appears in exactly one place in the tree — the
-owner-signed Cedar policy text — and `tests/policy/source-rules-s1d.test.ts` rule 2 asserts it
+hash-committed Cedar policy text — and `tests/policy/source-rules-s1d.test.ts` rule 2 asserts it
 appears in no TypeScript source anywhere under `src/`.
 
 ### S1D-A2 · the comparison is `<=`, so at the limit permits
@@ -74,7 +74,7 @@ gives no grounds for excluding any member.
 been an invented policy quantity — the exact thing the S1D mandate forbids — and the
 alternative, an empty set, would have made the class unreachable and failed `26 §11` P6.
 
-The set lives as a literal **inside the signed policy artifact** rather than in code or in an
+The set lives as a literal **inside the hash-committed policy artifact** rather than in code or in an
 entity store built at request time, so a caller has no position from which to supply a
 different one.
 

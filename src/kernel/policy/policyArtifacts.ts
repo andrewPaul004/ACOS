@@ -123,7 +123,7 @@ function listPolicyFiles(dir: string): readonly string[] {
     (entry) => !entry.isFile() || !entry.name.endsWith(POLICY_SUFFIX),
   );
   if (unexpected.length > 0) {
-    // An unexpected entry is not ignored. A stray file in a signed artifact directory is
+    // An unexpected entry is not ignored. A stray file in a control-artifact directory is
     // either an accident that changes nothing or an artifact nobody reviewed, and the loader
     // cannot tell which.
     policyDefect(

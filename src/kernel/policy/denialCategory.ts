@@ -13,7 +13,7 @@ import { PER_ACTION_POLICY_ID } from './policyArtifacts.js';
  *
  * So the category is decided by WHICH POLICY FIRED, never by re-inspecting an operand. A
  * mapping that re-read `total_exposure` and compared it to `25.00` would be a second
- * implementation of the cap sitting outside the signed artifact, and the two would drift.
+ * implementation of the cap sitting outside the policy artifact, and the two would drift.
  * This function has no access to any amount and takes none.
  *
  * `FORBID_CATEGORY` is EXACT. An unrecognised determining policy is not guessed at and is

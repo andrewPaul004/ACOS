@@ -56,7 +56,7 @@ describe('A1 — smuggle total_exposure through an unknown ProposedIntent field'
       'selector',
     ]);
     // And of those four, exactly ONE reaches Cedar — `reason_code`. It selects nothing
-    // monetary: the approved subset it is tested against is a literal in the signed artifact.
+    // monetary: the approved subset it is tested against is a literal in the policy artifact.
     const request = buildCedarRequest(
       canonicalEffectAt({ vendorAmount: '10.00', retainedFee: '1.03' }),
     );

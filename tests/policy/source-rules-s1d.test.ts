@@ -80,7 +80,7 @@ describe('rule 1 — Cedar computes no money, and the policy tree performs no mo
 });
 
 describe('rule 2 — the per-action limit lives in ONE place', () => {
-  it('it appears in the signed artifacts and in no TypeScript source anywhere', () => {
+  it('it appears in the policy artifacts and in no TypeScript source anywhere', () => {
     // Not only in `src/kernel/policy/` — anywhere in `src/`. A constant elsewhere that
     // happened to equal the cap would be a second source of truth waiting to drift.
     for (const file of walk('src')) {

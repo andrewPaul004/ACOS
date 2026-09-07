@@ -36,7 +36,7 @@ have changed the design:
 That third answer is why the per-action cap is a `forbid` rather than only a `when` conjunct:
 with a single `permit` carrying a conjunction, a denial has no determining policy and
 `26 §7`'s `DENY: PER_ACTION` terminal would have had to be reconstructed by re-reading the
-amount — a second implementation of the cap outside the signed artifact. `26 §11` P1 wants a
+amount — a second implementation of the cap outside the policy artifact. `26 §11` P1 wants a
 `forbid` anyway; the attribution requirement and the property requirement pointed the same
 way.
 

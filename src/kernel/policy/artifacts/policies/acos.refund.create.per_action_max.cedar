@@ -38,7 +38,7 @@
 // `26 §8` fixes the comparison as `<=`, and `26 §11.2` row 3 repeats it as
 // "Bounded by `total_exposure <= $25.00`". At the limit is INSIDE the limit.
 //
-// The figure is a literal HERE, in the owner-signed artifact, and nowhere else in the tree.
+// The figure is a literal HERE, in the hash-committed artifact, and nowhere else in the tree.
 // It is not a request field, not a constructor parameter, not an environment variable and
 // not a fixture: a caller has no position in which to supply or replace it, and a substituted
 // artifact moves the policy-set digest that every decision records (`26 §11`).

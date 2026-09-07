@@ -41,7 +41,7 @@ import type { PolicyDenyCode } from '../../src/kernel/policy/errors.js';
  *   unsafe       total_exposure: decimalOf(request.exposure.vendorAmount)
  *
  * Everything else is identical, and everything DOWNSTREAM is production: the same real Cedar
- * engine, the same loaded artifacts, the same signed policy text, the same `$25.00` limit,
+ * engine, the same loaded artifacts, the same policy text, the same `$25.00` limit,
  * the same denial-category resolution. The only variable is which authoritative field is
  * bound into the cap's operand.
  *

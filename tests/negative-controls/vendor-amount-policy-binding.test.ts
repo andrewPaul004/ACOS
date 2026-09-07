@@ -22,7 +22,7 @@ import { evaluateUnsafely, unsafeVendorAmountRequest } from './unsafe-vendor-amo
  * demonstrate the wrong behavior — e.g. permit or otherwise fail to return the required
  * `PER_ACTION` denial — while production Cedar denies."
  *
- * Both sides run the same real Cedar engine over the same signed artifacts. The only
+ * Both sides run the same real Cedar engine over the same loaded policy artifacts. The only
  * variable is the field bound into `context.exposure.total_exposure`.
  */
 

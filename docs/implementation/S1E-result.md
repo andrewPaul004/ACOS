@@ -19,6 +19,12 @@ intentionally vulnerable implementations demonstrably accept the attacks product
 `npm run verify` is green at 66 files / 901 tests with all 756 accepted tests present,
 unskipped and unweakened.
 
+**Owner-resolution pass, 2026-09-07.** The four items S1E raised for the owner — S1E-C4,
+S1E-C2, S1E-C3 and S1E-C6 — have been disposed of and are RESOLVED (§8). The implementation
+committed at `e1b7a7f` already conformed to all four rulings, so **this pass changed no
+production code, no test and no architecture file**; it changed documentation only, and
+`npm run verify` is green again at the same 66 files / 901 tests.
+
 ---
 
 ## 1. Baseline
@@ -121,6 +127,7 @@ fact id and no session id.
 | `.only` | **0** |
 | architecture files modified | **0** |
 | dependencies changed | **0** — `package.json` and `package-lock.json` byte-identical |
+| owner-resolution pass (2026-09-07) | documentation only — `npm run verify` re-run green at 66 files / 901 tests, 0 failed, 0 skipped |
 
 ---
 
@@ -149,17 +156,28 @@ fact id and no session id.
 | `26 §7.1` KERNEL_SERVICE branch | **DEFERRED** — its prerequisite (`StandingRevocationAuthority`, created by the step-R transaction) does not exist. A kernel principal traverses every worker gate and reaches STD-03's `NO_GRANT`. |
 | `26 §9` utterance policy (step P → Q) | **DEFERRED** — step P is implemented and fails closed |
 | `I47` audit/SCHED leg | **OPEN** — the runtime leg is implemented at step N; the audit plane does not exist |
+| v1.3.1 textual architecture cleanup | **DEFERRED** — three wording items left open by the 2026-09-07 owner dispositions: `24 §6` naming the Metric Layer and Decision Registry writers (S1E-C2), `26 §4` stating the per-action multi-grant composition rule (S1E-C4), and a declared `resource_selector.predicate` syntax (S1E-C3). Behaviour is settled; only the architecture text is outstanding, and `docs/architecture/v1.3.1/` was not edited |
 
 ---
 
-## 8. Architecture conflicts and owner questions
+## 8. Architecture conflicts — OWNER-DISPOSED
 
-| # | Item | Consequence | Conservative behaviour used | Owner decision |
+All four items are **RESOLVED**. The owner disposed of them in the owner-resolution pass of
+2026-09-07, on top of the implementation commit `e1b7a7f`. **No item on this list requires an
+owner disposition any longer, and none of the four required a production change** — the
+implementation as committed at `e1b7a7f` already conformed to every ruling. The full text of
+each ruling, with its conformance evidence, is in `S1E-owner-clarifications.md`.
+
+| # | Item | Consequence | Behaviour implemented | Owner disposition |
 |---|---|---|---|---|
-| 1 | **Multi-grant composition of per-action bounds is undeclared** (`26 §4` declares the window arithmetic and not this). Union vs intersection differ materially. | A broad grant would silently erase a narrow restriction under the union reading | **INTERSECTION** — narrowest bound wins per dimension; window refs union, because step R fails if ANY window lacks headroom | **REQUIRED.** S1E-C4. A negative control implements the union reading so the difference is measured rather than argued |
-| 2 | `24 §5` names the Metric Layer and Decision Registry as writers; `24 §6`'s `writer_kind` enum has no member for either | Representation only — no authority, money or grade ambiguity | Both represented as the `KERNEL_SERVICE` writers they are, discriminated by `derivation_spec` and `decision_authority` | A wording amendment to `24 §6` would close it. No behaviour depends on the answer. S1E-C2 |
-| 3 | `26 §4`'s `resource_selector.predicate` has no declared syntax | An open predicate language would be an interpreter on the money path | A closed three-form language; an unparseable predicate HALTS rather than silently not matching | Confirm the three forms suffice. S1E-C3 |
-| 4 | `26 §3`'s principal kinds diverged from the accepted S1B type | Step D and `§7.1` key on `kind` | Corrected to `26 §3`'s five. No control artifact moved; the policy digest is unchanged | Note only. S1E-C6 |
+| 1 | **Multi-grant composition of per-action bounds is undeclared** (`26 §4` declares the window arithmetic and not this). Union vs intersection differ materially. | A broad grant would silently erase a narrow restriction under the union reading | **INTERSECTION** — narrowest bound wins per dimension; window refs union, because step R fails if ANY window lacks headroom | **RESOLVED — OWNER CLARIFICATION, ACCEPTED.** INTERSECTION is ruled; the permissive/union reading is REJECTED; adding a matching grant may never widen. The union negative control is RETAINED as regression evidence. S1E-C4 |
+| 2 | `24 §5` names the Metric Layer and Decision Registry as writers; `24 §6`'s `writer_kind` enum has no member for either | Representation only — no authority, money or grade ambiguity | Both represented as the `KERNEL_SERVICE` writers they are, discriminated by `derivation_spec` and `decision_authority` | **RESOLVED — ACCEPTED FOR S1; TEXTUAL ARCHITECTURE CLEANUP DEFERRED.** All five conditions of the acceptance hold; the `24 §5` / `24 §6` discrepancy is textual, not behavioural. S1E-C2 |
+| 3 | `26 §4`'s `resource_selector.predicate` has no declared syntax | An open predicate language would be an interpreter on the money path | A closed three-form language; an unparseable predicate HALTS rather than silently not matching | **RESOLVED — ACCEPTED S1 SUBSET; FUTURE EXTENSION REQUIRES EXPLICIT DESIGN.** Not declared ACOS's universal or permanent selector language. S1E-C3 |
+| 4 | `26 §3`'s principal kinds diverged from the accepted S1B type | Step D and `§7.1` key on `kind` | Corrected to `26 §3`'s five. No control artifact moved; the policy digest is unchanged | **RESOLVED — CORRECTION ACCEPTED.** The implementation matches the current `26 §3` and every accepted test is green. S1E-C6 |
+
+`docs/architecture/v1.3.1/` was **not** modified by the owner-resolution pass. Items 1, 2 and
+3 each leave a DEFERRED textual architecture cleanup, recorded in `S1E-owner-clarifications.md`
+for a later architecture-text maintenance pass and listed in §7 above.
 
 No conflict prevented a scoped property, so the verdict is not PARTIAL.
 

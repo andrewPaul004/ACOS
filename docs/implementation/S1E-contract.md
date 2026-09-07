@@ -180,9 +180,17 @@ bypass in the money path" `26 §7.1` was written to close.
 Recorded in full in `S1E-owner-clarifications.md`: S1E-C1 (the declared `refund.create`
 precondition), S1E-C2 (representing the Metric Layer and Decision Registry inside `24 §6`'s
 six writer kinds), S1E-C3 (the closed resource-predicate language), **S1E-C4 (multi-grant
-composition — INTERSECTION, requiring owner disposition)**, S1E-C5 (the grant's
-`irrecoverable_units` half omitted), S1E-C6 (`PrincipalKind` corrected to `26 §3`'s set),
-S1E-C7 (no free-text audit note on the outcome record).
+composition — INTERSECTION)**, S1E-C5 (the grant's `irrecoverable_units` half omitted),
+S1E-C6 (`PrincipalKind` corrected to `26 §3`'s set), S1E-C7 (no free-text audit note on the
+outcome record).
+
+**Four of these were put to the owner and disposed of on 2026-09-07**, after `e1b7a7f`:
+S1E-C4 **ACCEPTED — INTERSECTION**, with the permissive/union reading REJECTED; S1E-C2
+**ACCEPTED FOR S1**, with the `24 §5` / `24 §6` textual cleanup DEFERRED; S1E-C3 **ACCEPTED
+as the S1 subset**, with any future predicate form requiring an explicit design decision
+first; S1E-C6 **ACCEPTED**, the finding RESOLVED. None required a production change: the
+implementation at `e1b7a7f` already conformed to all four. `docs/architecture/v1.3.1/` was
+not modified.
 
 ---
 

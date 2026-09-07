@@ -101,9 +101,23 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and twelve negative files', () => {
+  it('the fixture directory contains a positive control and fourteen negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
+      // S1E. WIDENED BY EXACTLY TWO, and every existing entry is untouched.
+      //
+      // The two new fixtures are the compile-time halves of S1E's authority-channel closure:
+      // no caller-supplied authority operand reaches the pre-reservation pipeline, and an
+      // S1E pass is not a dispatchable authorisation. They live in this directory because
+      // there is one type-negative tsconfig project and a second one would duplicate the
+      // harness; their EXPECTED DIAGNOSTICS are owned by
+      // `tests/authority/authority-type-boundary.test.ts`, not by this file, so this list is
+      // the only line S1E changes here.
+      //
+      // The harness's discriminating properties are unaffected: the positive control still
+      // compiles clean, and "no diagnostic appears on an unmarked line" now covers the two
+      // new files as well.
+      'authority-operand-supplied.ts',
       // S1B.2 findings 1B and 3, as compile-time impossibilities.
       'catalogue-entry-into-context.ts',
       'destination-into-option.ts',
@@ -130,6 +144,8 @@ describe('the harness discriminates', () => {
       // compatibility layer exists, and adding one would be a visible type change.
       'positional-selector.ts',
       'positive-control.ts',
+      // S1E.
+      'prereservation-as-dispatchable.ts',
       'rationale-into-request.ts',
       'rationale-parsed.ts',
     ]);

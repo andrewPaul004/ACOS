@@ -208,12 +208,18 @@ export function makeContext(overrides: ContextOverrides = {}): AuthoritativeCano
     taskId: computed(overrides.taskId ?? 'task:T-4471'),
     principal: computed({
       id: 'principal:support_reasoner:1',
-      kind: 'AGENT' as const,
+      // `26 §3`: "kind, // OWNER | KERNEL_SERVICE | AI_ROLE | ADAPTER | AUDIT_REVIEWER".
+      // S1E corrected the union to the architecture's declared set; this fixture principal
+      // is the `support_reasoner` worker, which is an AI role.
+      kind: 'AI_ROLE' as const,
       // `26 §3`'s declared `Principal.role`. `26 §8`'s worked refund policy opens
       // `permit(principal in Role::"support_reasoner", …)`, so this is the operand that
       // decides whether the grant applies at all. Overridable so the policy suite can
       // assert that another role reaches no permit.
       role: overrides.principalRole ?? 'support_reasoner',
+      // `26 §3`: "model_binding, // model id + version + prompt version — null for non-AI".
+      // S1E. No S1B or S1D assertion reads it; `26 §13`'s autonomy key does.
+      modelBinding: 'model:fixture-binding@1/prompt@1',
       delegationDepth: 1,
     }),
     resource: computed(

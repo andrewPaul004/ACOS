@@ -458,10 +458,13 @@ export function kernelContext(
     companyId: COMPANY_ID,
     principal: computed({
       id: PRINCIPAL_ID,
-      kind: 'AGENT' as const,
+      // `26 §3`'s declared kinds; S1E corrected the union to the architecture's set.
+      kind: 'AI_ROLE' as const,
       // `26 §3`'s declared `Principal.role`; `26 §8` reads it as
       // `principal in Role::"support_reasoner"`. S1D.
       role: overrides.principalRole ?? 'support_reasoner',
+      // `26 §3`: "null for non-AI". S1E; `26 §13`'s autonomy-ledger key reads it.
+      modelBinding: 'model:fixture-binding@1/prompt@1',
       delegationDepth: 1,
     }),
     grantWindows: {

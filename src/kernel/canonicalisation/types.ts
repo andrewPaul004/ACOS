@@ -45,7 +45,27 @@ import type { TaskContextSpec } from '../enumeration/contextSpec.js';
 // INPUT 2 — the authoritative context.  Kernel-owned, every field.
 // =====================================================================================
 
-export type PrincipalKind = 'AGENT' | 'HUMAN' | 'KERNEL_SERVICE';
+/**
+ * `26 §3`'s declared kinds, verbatim from the printed record:
+ *
+ *   Principal {
+ *     id, kind,            // OWNER | KERNEL_SERVICE | AI_ROLE | ADAPTER | AUDIT_REVIEWER
+ *     ...
+ *   }
+ *
+ * S1E CORRECTION. S1B declared this union as `'AGENT' | 'HUMAN' | 'KERNEL_SERVICE'`, which
+ * is not the architecture's set. While no code read `kind`, the divergence cost nothing;
+ * S1E's step D and `26 §7.1`'s `KERNEL_SERVICE` branch both key on it, so the set has to be
+ * the declared one. `AGENT` becomes `AI_ROLE`; `HUMAN` was unused and is replaced by the
+ * three remaining declared kinds. Nothing in the Cedar schema constrains `kind` — it is
+ * declared there as `String` — so no control artifact moves and no policy digest changes.
+ */
+export type PrincipalKind =
+  | 'OWNER'
+  | 'KERNEL_SERVICE'
+  | 'AI_ROLE'
+  | 'ADAPTER'
+  | 'AUDIT_REVIEWER';
 
 export interface ResolvedPrincipal {
   readonly id: string;
@@ -69,7 +89,25 @@ export interface ResolvedPrincipal {
    * and principals as KERNEL-owned state, and no `ProposedIntent` field reaches it.
    */
   readonly role: string;
-  /** `26 §7` step D: chain depth ≤ 3. Recorded here; step D is policy and is not in S1B. */
+  /**
+   * `26 §3`: "model_binding, // model id + version + prompt version — null for non-AI".
+   *
+   * S1E. It is here because `26 §13`'s autonomy-ledger key is
+   * `(task_type, action_class, model_binding, resource_class)` and step N cannot be
+   * evaluated without it, and because SR6's "Model change demotes" is only enforceable if
+   * the binding travels with the principal rather than being looked up later from somewhere
+   * a compromised component could choose.
+   *
+   * Kernel-resolved from the `principal` row like every other field on this record.
+   */
+  readonly modelBinding: string | null;
+  /**
+   * `26 §7` step D: chain depth ≤ 3.
+   *
+   * S1E COUNTS this from the principal's `delegation_hop` rows rather than reading a stored
+   * figure, so the cap is not evaluated against a number its subject wrote. The field
+   * carries the counted value onto the request for the audit record.
+   */
   readonly delegationDepth: number;
 }
 

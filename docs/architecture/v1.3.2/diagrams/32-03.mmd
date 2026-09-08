@@ -1,0 +1,10 @@
+graph LR
+    CMD["Commands<br/>(proposals, ingests)"] --> POL["Policy at append"]
+    POL --> LOG[("Append-only event log<br/>THE authoritative object")]
+    LOG --> P1["State projection"]
+    LOG --> P2["Exposure projection"]
+    LOG --> P3["Financial projection"]
+    LOG --> P4["Causal-chain projection"]
+    LOG --> SAGA["Saga engine"]
+    SAGA --> AD["Adapters"]
+    LOG --> AUD[("Audit replica<br/>independently verified")]

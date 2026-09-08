@@ -1,10 +1,15 @@
 # Normalise line endings for everything this repository authors.
 * text=auto eol=lf
 
-# The architecture package is an IMMUTABLE INPUT. It must round-trip byte-identically
-# against _input/acos-phase2-architecture-v1.3.1.zip, so git performs no line-ending
-# conversion on it in either direction. A checkout on a machine with core.autocrlf=true
-# would otherwise rewrite every file in it and break that property.
+# Every architecture package is an IMMUTABLE INPUT. `v1.3.1` must round-trip
+# byte-identically against _input/acos-phase2-architecture-v1.3.1.zip, so git performs no
+# line-ending conversion on it in either direction. A checkout on a machine with
+# core.autocrlf=true would otherwise rewrite every file in it and break that property.
+#
+# `v1.3.2` is a repository-authored package issue (phase2-v1.3.2-errata.md, JCS-01) rather
+# than an extracted zip, so it has no round-trip target of its own. It is held under the
+# same rule so that a diff against v1.3.1 shows the normative delta and nothing else; its
+# files are committed LF, like v1.3.1's.
 docs/architecture/** -text
 
 _input/*.zip binary

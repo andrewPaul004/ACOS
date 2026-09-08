@@ -14,6 +14,33 @@ representation, so S1H declares it and the declaration is the specification.
 
 ---
 
+## OWNER RESOLUTION — every item dispositioned. `OWNER DECISION STILL REQUIRED`: **ZERO**
+
+The owner resolved all twelve under **architecture package issue v1.3.3**. Each item below
+carries an `OWNER RESOLUTION` block stating its final classification; the full record, the
+evidence, and the two STOP conditions that were checked and found not to trigger are in
+`S1H-owner-resolution.md`.
+
+| Item | Final classification |
+|---|---|
+| `S1H-C1` | **OWNER CLARIFICATION — ACCEPTED.** `51 §3.7`: **USD 20.00** against `total_exposure`, strict |
+| `S1H-C2` | **OWNER CLARIFICATION — ACCEPTED, CONSERVATIVE PARTITION** |
+| `S1H-C3` | **DIRECT ARCHITECTURE REQUIREMENT** |
+| `S1H-C4` | **DEFECT FOUND AND REPAIRED; OWNER ACCEPTED SUBJECT TO REGRESSION** |
+| `S1H-C5` | **IMPLEMENTATION DETAIL — NON-SEMANTIC** |
+| `S1H-C6` | **OWNER CLARIFICATION — ACCEPTED** |
+| `S1H-C7` | **OWNER CLARIFICATION — ACCEPTED** |
+| `S1H-C8` | **OWNER CLARIFICATION — ACCEPTED.** `30 §5.7.1a`: a closed ten-condition audit-owned derivation |
+| `S1H-C9` | **IMPLEMENTATION DETAIL — NON-SEMANTIC** |
+| `S1H-C10` | **OWNER CLARIFICATION — ACCEPTED.** `51 §3.8`: **PT15M** and **PT30M**, both inclusive |
+| `S1H-C11` | **OWNER CLARIFICATION — ACCEPTED**; the item-5 / `I17f(a)` tension stays a **DEFERRED RESIDUAL** |
+| `S1H-C12` | **DEFERRED RESIDUAL** |
+
+**The text of each item below is unchanged from `b524637`**, so the question as it was asked
+is still readable beside the answer.
+
+---
+
 ## S1H-C1 — the per-action approval floor has no declared numeric value
 
 **Disposition: ARCHITECTURE ABSENT. Owner decision required.**
@@ -45,6 +72,18 @@ operand is the catalogue's `approval_requirement` tier rather than a monetary th
 Under the current fixture the two readings differ: at a $25.00 `per_action_max` and a $25.00
 floor, no admissible `refund.create` effect is ever above the floor, and row 2 is
 unreachable for the whole S1 catalogue.
+
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`.** v1.3.3 erratum **APF-01**.
+`51 §3.7` declares `degraded_per_action_approval_floor_monetary` = **USD 20.00**, compared
+**strictly** against `effect.request.exposure.total_exposure`; `30 §5.1a` specifies the
+boundary, prints the reachable band `$20.01 … $25.00`, and records why the `$25.00`
+`per_action_max` is a different quantity of a different kind. **The boolean operand is
+removed**, not renamed: `PrecedenceOperands` now carries `totalExposure: Money` and
+`isAboveDegradedApprovalFloor` is the one comparison site in `src/`. No TEST-ONLY seam
+re-admits it. The hand-authored disposition table still stands, over the same 72 rows.
+Control artifact **class 3**'s `content_hash` moves and a signature is owed, undischarged.
+`S1H-owner-resolution.md §1`.
 
 ---
 
@@ -88,6 +127,16 @@ detector is `I8`. `resolveMirrorState` reports the combination as the
 `SIGNAL_HELD_WITHOUT_DECLARATION` anomaly, which is `I17f(b)`'s own condition, and
 `i17f-attestation-divergence.test.ts` case C exercises it.
 
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED, CONSERVATIVE PARTITION`.** Checked
+against `§17`'s requirement rather than accepted on the argument: the contested combination
+differs between the two readings in exactly one output field, `requiresUnmirroredTag`, and in
+**no** disposition and **no** matched row — which `vc-a2-inversion.test.ts` already asserts
+over all 24 operand combinations, because `36 §6` makes `CORROBORATED_DEGRADED` "as `NORMAL`,
+with every dispatch tagged". **No observable authority outcome differs, so no counterexample
+exists and access is not broadened.** The `SIGNAL_HELD_WITHOUT_DECLARATION` residual is
+unchanged and still reported. `S1H-owner-resolution.md §2`.
+
 ---
 
 ## S1H-C3 — `I63(b)`'s "all records" and the status of a revoked override
@@ -110,6 +159,11 @@ budget: spending it and then revoking the instrument does not refund it. The opp
 reading would make revocation an evasion route — grant, consume, revoke, repeat — which is
 exactly the composition `30 §5.7.2` item 10 bounds.
 
+
+**OWNER RESOLUTION — `DIRECT ARCHITECTURE REQUIREMENT`.** `I63(b)` says "all" and
+`30 §5.7.2`'s status set exempts neither `REVOKED` nor `EXPIRED`. Unchanged by v1.3.3.
+`S1H-owner-resolution.md §3`.
+
 ---
 
 ## S1H-C4 — the S1G journal-immutability guard had a hole
@@ -131,6 +185,14 @@ the rewrite `I41` and `30 §5.5` case 5 exist to make impossible.
 trigger: the one permitted update is still permitted, and every previously refused update
 is still refused. `mirror-journal-rows.test.ts` carries the regression tests.
 
+
+**OWNER RESOLUTION — `DEFECT FOUND AND REPAIRED; OWNER ACCEPTED SUBJECT TO REGRESSION`.**
+`§18`'s four requirements are each verified: the attestation fields are immutable,
+`mirrored_at` remains the one permitted narrow mutation, direct PostgreSQL `UPDATE` attacks
+fail, and the S1G chain / `VC-A3` / attestation suites are green. **Not reverted**, per `§18`.
+v1.3.3 adds no column to `effect_journal`, so the repair is unaffected.
+`S1H-owner-resolution.md §4`.
+
 ---
 
 ## S1H-C5 — `last_attestation_received_at` has no declared nullability
@@ -149,6 +211,10 @@ timestamp inside a SIGNED artifact — is worse.
 legitimately reports `max_journal_seq = 0` WITH a real arrival instant, which is `30 §5.4`'s
 *"the empty attestation is the entire point"*. An earlier draft bound the two with a CHECK
 and that CHECK was wrong; it is removed.
+
+
+**OWNER RESOLUTION — `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** Unchanged by v1.3.3.
+`S1H-owner-resolution.md §5`.
 
 ---
 
@@ -174,6 +240,11 @@ private key, so it cannot be produced by a compromised control plane. The realis
 is clock skew between the two hosts, and `36 §6`'s clock-skew row makes the database clock
 authoritative. The refusal is therefore conservative rather than adversarially necessary.
 
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`.** A refusal cannot unlock authority,
+so it cannot move any row of `VC-A2`'s inversion table in the permissive direction. No
+tolerance quantity was introduced. Unchanged by v1.3.3. `S1H-owner-resolution.md §5`.
+
 ---
 
 ## S1H-C7 — "approval-bearing effects evaluate at rows 3 or 5" is imprecise
@@ -194,6 +265,12 @@ suspends.
 `aboveApprovalFloor && !clockBearing && !hasRecordedApproval`. An approved effect then
 evaluates at row 3, 4 or 5 by its class, and `first-match-order.test.ts` asserts the row-4
 case explicitly.
+
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`.** "Never row 2" is the operative half,
+and it is now asserted at the declared floor as well:
+`dispatch-precedence-approval-floor.test.ts` runs an above-floor APPROVED discretionary
+COMPENSABLE effect and asserts row 4. `S1H-owner-resolution.md §5`.
 
 ---
 
@@ -223,6 +300,18 @@ a derivation later, no control-side change is needed.
 
 **Asked of the owner.** Declare when `STORE_WRITE_REJECTED` is issued, or delete the enum
 member.
+
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`.** v1.3.3 erratum **SWR-01**. The enum
+member is KEPT and `30 §5.7.1a` gives it a **closed ten-condition AUDIT-OWNED derivation**
+over one semantic failure class, `AUDIT_STORE_WRITE_UNAVAILABLE`. The architecture declares
+the semantic class; `src/audit/storeWriteAvailability.ts` and `A0004` declare the PostgreSQL
+mapping as a closed three-code allowlist (`53100`, `58030`, `25006`), each justified, with
+twenty-one codes excluded by name and **fail-closed for everything else**. **Quota saturation
+remains incident-only and never changes mirror mode** — asserted directly. `A0003` adds the
+audit-owned, append-only `audit_store_write_failure`, which the control plane cannot read or
+write. All five of `§8`'s controls discriminate, including the mandatory POSITIVE one.
+`S1H-owner-resolution.md §6`.
 
 ---
 
@@ -256,6 +345,10 @@ literal, and `local-authorisation-boundary.test.ts` forbids it in `src/` until `
 `§18` of the S1H mandate calls the thing being taken "the pre-dispatch override allowance",
 and the identifier says exactly that.
 
+
+**OWNER RESOLUTION — `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** v1.3.3 adds no journal row
+kind and no journal column, so no declared order moved. `S1H-owner-resolution.md §5`.
+
 ---
 
 ## S1H-C10 — the mirror-lag and prolonged-unreachability thresholds are undeclared
@@ -284,6 +377,24 @@ reports it OPEN.
 
 **Asked of the owner.** Declare the mirror-lag threshold and the prolonged-unreachability
 threshold, with their kinds, or state that the halt posture is a later slice.
+
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`.** v1.3.3 errata **MLT-01** and
+**FHT-01**. `51 §3.8` declares `mirror_lag_critical_threshold` = **PT15M** and
+`audit_unreachable_full_halt_threshold` = **PT30M**, both **inclusive at the threshold**, with
+declared operands and — for the second — declared timer start and reset semantics: the open
+`AUDIT_MIRROR_DEGRADED` declaration, at most one per company, starting on open and resetting
+only on close. `30 §5.1a` specifies the **FULL-HALT POSTURE** as a fourth behaviour over the
+three states, and resolves the override composition from item 5's own two sentences — rows 3
+and 4 restorable, rows 1, 2 and **5** not.
+
+**`§3`'s and `§16`'s STOP conditions were both checked and neither triggers.** The
+architecture defines the timer's start and reset (the declaration's lifecycle, plus
+`mirror_declaration_one_open_per_company`), and item 5 does state that the override reaches
+the halt. Both are recorded with the quoted text in `S1H-owner-resolution.md §7`. **No
+override quantity moved.** The 15-minute threshold is **aligned** with `cadence × k` and the
+concepts are **not merged**; a timer alone cannot create `CORROBORATED_DEGRADED`, asserted
+over the durable tables.
 
 ---
 
@@ -316,6 +427,13 @@ published nothing at all. Item 5 is unqualified, so it is implemented as written
 tension is reported in `S1H-result.md §16`. It is not reachable in S1H, because nothing is
 dispatched and nothing is tagged.
 
+
+**OWNER RESOLUTION — `OWNER CLARIFICATION — ACCEPTED`**, and the item-5 / `I17f(a)` tension
+remains a **DEFERRED RESIDUAL**, reported rather than resolved. v1.3.3 resolves only the
+posture leg — which rows an override reaches inside the FULL-HALT POSTURE — and does not
+touch which states it applies in. Not reachable at S1H, because nothing is dispatched and
+nothing is tagged. `S1H-owner-resolution.md §8`.
+
 ---
 
 ## S1H-C12 — `I8`'s additive verification list cannot be populated at S1
@@ -332,3 +450,9 @@ those two residuals have no operative detector at all."*
 **Not implemented, and not simulated.** The clause is reported OPEN in
 `S1H-result.md §16`, and `no-dispatch-boundary.test.ts` asserts the absence of any vendor
 read, sweep or adapter in `src/` so the OPEN status cannot drift into a silent claim.
+
+
+**OWNER RESOLUTION — `DEFERRED RESIDUAL`.** The architecture itself defers it: `37` S1 says
+"`I8` proves nothing at S1". Not implemented and not simulated, and
+`no-dispatch-boundary.test.ts` asserts the absences so the OPEN status cannot drift into a
+silent claim. Unchanged by v1.3.3. `S1H-owner-resolution.md §9`.

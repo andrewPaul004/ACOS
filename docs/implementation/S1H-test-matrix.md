@@ -10,13 +10,34 @@ absence or a confinement. `DUAL` — both PostgreSQL instances, in one test.
 
 ---
 
+## 0. What the v1.3.3 owner-resolution pass added
+
+Five files, and no accepted S1H file was deleted or weakened. `S1H-owner-resolution.md`
+carries the dispositions; the boundary of each new quantity is asserted at the finest unit
+the operand can carry.
+
+| File | Establishes | Oracle |
+|---|---|---|
+| `tests/mirror/degraded-mode-thresholds.test.ts` | `51 §3.7`'s `$20.00` and `51 §3.8`'s `PT15M` / `PT30M`, each against a hand-authored second transcription; the STRICT floor boundary at the minor unit; both INCLUSIVE timing boundaries at the millisecond; `PT30M > PT15M` as arithmetic; the alignment with `cadence × k` and the NON-merger with `max_age` and with every override quantity | HAND |
+| `tests/mirror/dispatch-precedence-approval-floor.test.ts` | **`S1H-C1` closed.** `30 §5.1a`'s boundary table row by row in all three states; `$20.00` vs `$20.01`; `$25.01`'s distinction from the DENY bound; the full 72-row cross-product through the DERIVED operand; row 2 is reached, so the derivation is not vacuous; the absence of the boolean, of any test-only seam, and of `vendor_amount` in the classifier's executable lines | HAND + SOURCE |
+| `tests/integration/mirror/full-halt-posture.test.ts` | **`S1H-C10` closed.** Every recoverability class at `29:59.999` and at `30:00.000`; the posture in `CORROBORATED_DEGRADED` and its absence in `NORMAL`; the reduction is monotone toward HALT; the timer's declared start and every declared non-reset against real PostgreSQL; the coherence guard; `§14`'s vulnerable control and its discrimination; the override reaching rows 3 and 4 and **not** row 5 | HAND + DB |
+| `tests/integration/mirror/mirror-lag-critical.test.ts` | `30 §5.1a`'s lag operand from the real unmirrored backlog; the INCLUSIVE 15-minute boundary; **all four of `§15`'s "unlocks nothing" assertions over the durable tables**; the control-derived operand's exposure proven to be in the SAFE direction | DB + HAND |
+| `tests/integration/audit/store-write-availability.test.ts` | **`S1H-C8` closed.** The closed three-code mapping, asserted against the DEPLOYED function definition; twenty-one excluded codes; fail-closed on everything else; the 15-minute derivation window as arithmetic; **all five of `§8`'s controls including the mandatory POSITIVE one**; the conjunct ORDERING under simultaneous injection; audit ownership and append-only | DUAL + DB + SOURCE |
+
+| Negative control | Defect it embodies | Discriminates? |
+|---|---|---|
+| `tests/negative-controls/unsafe-prolonged-unreachability.ts` | the ordinary three-state table evaluated for ever — **what `b524637` shipped** | **YES**, and the two AGREE below the threshold, so the difference is the posture alone |
+| `tests/negative-controls/unsafe-store-write-classifier.ts` | three mappers: any non-acceptance outcome, any thrown error, and a fail-OPEN-on-error-class SQLSTATE reader | **YES**, on all four of `§8` A–D |
+
+---
+
 ## 1. Pure kernel — the state machine and the classifier
 
 | File | Establishes | Oracle | Notes |
 |---|---|---|---|
 | `tests/mirror/mirror-state-transitions.test.ts` | `30 §5.6`'s three states; every legal transition; every illegal one; the `max_age` boundary at the millisecond | HAND | the `max_age < cadence × k` relation is asserted as ARITHMETIC over the two constants, one of which is the audit side's own transcription |
 | `tests/mirror/first-match-order.test.ts` | `30 §5.1` item 4 is an ORDERED FIRST-MATCH list; `VC-A6`'s three named fixtures; no fixture matches two rows with disagreeing outcomes | HAND | the five predicates are transcribed IN THE TEST and compared to production's matched row; the row order is asserted against a literal, not read from the module |
-| `tests/mirror/vc-a2-inversion.test.ts` | **`VC-A2`.** All 72 rows (24 operand combinations × 3 states) against the hand-authored disposition table, including the matched row and the tag | HAND | `tests/support/mirrorPrecedenceTable.ts` imports nothing; the suite also asserts the oracle is non-constant, so the proof is not vacuous |
+| `tests/mirror/vc-a2-inversion.test.ts` | **`VC-A2`.** All 72 rows (24 operand combinations × 3 states) against the hand-authored disposition table, including the matched row and the tag | HAND | `tests/support/mirrorPrecedenceTable.ts` imports nothing; the suite also asserts the oracle is non-constant, so the proof is not vacuous. **v1.3.3:** the above-floor dimension is now `total_exposure` on either side of `51 §3.7`'s declared floor, so the same 72 rows prove the DERIVATION as well as the table |
 | `tests/mirror/corroboration-signal-contract.test.ts` | `§7`'s eight adversarial artifacts; the freshness boundary; the signed field order | CRYPTO + HAND | every case runs real Ed25519 against real generated keys; the signing bytes are compared to the hand-authored fourth reading |
 
 **The inversion proof, stated as the assertions that carry it.**
@@ -208,6 +229,9 @@ construction, in `vc-a2d-signal-authenticity.test.ts`, which does not use the he
 | No dispatch surface | **both** | `no-dispatch-boundary.test.ts` |
 | Signal replay end to end | **both** | `vc-a2d-signal-replay.test.ts` |
 | Override composition | control | `vc-a2f-...-unbounded.test.ts` |
+| **FULL-HALT POSTURE and the timer's reset semantics** (v1.3.3) | control | `full-halt-posture.test.ts` |
+| **The mirror-lag operand and its four non-effects** (v1.3.3) | control | `mirror-lag-critical.test.ts` |
+| **`STORE_WRITE_REJECTED`'s derivation, its four exclusions and its positive control** (v1.3.3) | **both** | `store-write-availability.test.ts` |
 
 No in-memory mutex, no mocked database and no simulated lock appears anywhere in the S1H
 suite. The one place a delay is injected is the barrier hook in

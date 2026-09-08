@@ -562,3 +562,203 @@ Recorded because each one was a real error and the correction is the interesting
 * `src/audit/db/auditPool.ts` — the fourth connection identity.
 * `src/audit/transportCompleteness.ts` — `ATTESTATION_DIVERGENCE` added to the finding
   union.
+
+---
+
+# PART II — THE v1.3.3 OWNER-RESOLUTION PASS
+
+Chronological, from `b524637`. Three commits, in the order `§25` prefers: the architecture
+package, then the implementation and its tests, then the freeze documentation.
+
+## 12. Baseline, before any edit
+
+| Check | Result |
+|---|---|
+| `HEAD` | `b5246378b9bbe4f9f758c03cdc9447ab4dd801d7` |
+| Required baseline | `b524637` — matches |
+| Worktree clean | yes |
+| Branch | `feature/s1h-mirror-state-machine` |
+| Baseline `npm run verify` | **exit 0**, 639s |
+| Baseline files / tests / passed / failed / skipped | **104 / 1544 / 1544 / 0 / 0** |
+| All twelve S1H-C items recorded verbatim before any documentation edit | yes — `S1H-owner-clarifications.md` was read in full and its item text is unchanged in the final tree |
+
+## 13. Reading the architecture for the two STOP conditions FIRST
+
+`§3` and `§16` each say STOP-and-report rather than assume, so both were checked before a
+line was written. Neither triggers, and the evidence is quoted in
+`S1H-owner-resolution.md §7`.
+
+**`§3` — the timer's start and reset.** The candidate answer was *"the architecture is
+silent, so this is a new normative gap"*. It is not silent. `30 §5.7` already requires the
+control-side declaration to be an `AUDIT_MIRROR_DEGRADED` **journal row**, and `0009`'s
+`mirror_declaration` already carries `opened_at NOT NULL`, `closed_at` and
+`mirror_declaration_one_open_per_company`. So *"continuous unreachability"* has one reading,
+and — the thing that took a second read to see — **there is nothing to reset**: the operand
+is a subtraction over a durable instant that already existed, and every event the owner lists
+as NOT resetting the timer is an event that leaves `opened_at` alone. The reset semantics fall
+out of the schema rather than needing code, which is why `full-halt-posture.test.ts` asserts
+them against real PostgreSQL instead of asserting a function's behaviour.
+
+**`§16` — whether the override escapes the halt.** The answer is in two ADJACENT sentences of
+`30 §5.1` item 5, and reading only the first gives the wrong answer. *"The only escape from
+either the halt or `UNCORROBORATED_STALL`'s row-3 suspension is a `DegradedModeOverride`"*
+says the override reaches the halt; *"An override restores precedence rows 3 and 4 only,
+never rows 1 or 2"*, one sentence later, bounds how far. Composed, **row 5 has no escape** —
+which is a real consequence, not a gap, and `51 §3.6`'s structural `{3, 4}` and `0009`'s
+CHECK already enforce it. Recorded rather than assumed.
+
+## 14. The dead end: a fourth mirror state
+
+The first sketch of the posture made it a fourth `MirrorState`, `FULL_HALT`. It was wrong for
+two reasons and both were found by re-reading rather than by a failing test.
+
+1. `30 §5.6` declares three states and `mirrorState.ts`'s own comment says *"There is no
+   fourth."* A fourth would have changed `resolveMirrorState`'s partition, which `S1H-C2`
+   had already settled, and would have needed a `mirror_state` CHECK change.
+2. It loses `matchedRow`. `VC-A2g` has to be able to distinguish *"REVERSIBLE halted at row 5
+   under the posture"* from *"halted at row 1"*, and a fourth state that short-circuits the
+   list reports neither.
+
+**What was built instead:** a REDUCTION over the disposition, applied after the ordered list
+has run. `matchedRow` is still item 4's own answer, and the reduction is monotone toward
+`HALT` — asserted over `PERMISSIVENESS` for every class, which is what makes it safe to
+compose with the three-state table rather than replace it.
+
+## 15. The dead end: recording the store-write observation from TypeScript
+
+`STORE_WRITE_REJECTED` needs the audit plane's observation to survive between the failed
+ingest and the next `observeStall`. The first design caught the propagated error in
+`auditIngress`, classified it in TypeScript, then opened a SECOND connection and recorded it.
+
+It was wrong three times over:
+
+1. **The role.** `acos_audit_replication` holds INSERT on `audit_journal` and EXECUTE on the
+   ingest entry point and nothing else. It cannot call a recorder, and giving it the grant
+   would have handed the control plane a write path to the derivation's own operand.
+2. **The transaction.** After a `53100` the caller's transaction is aborted, so nothing can
+   be written on it — and a second connection makes the observation a separate transaction
+   whose failure is invisible to the caller.
+3. **`I17d`.** *"Hash and sequence values are computed by database functions inside each
+   instance, under roles the writing principal cannot execute as."* The same reasoning
+   applies to the observation.
+
+**What was built instead:** the mapping lives in `A0004`'s `EXCEPTION` handler, exactly where
+`A0001` already handles `unique_violation`, `ACS41` and `ACS18`. plpgsql's exception block is
+a subtransaction, so the handler's own writes land in the still-live outer transaction and
+COMMIT with a new outcome. **Re-raising was considered and rejected**: it would abort the
+outer transaction and roll the observation back with it, leaving the audit plane with no
+record of its own observation — and `§5.7.1a` makes that record the only operand.
+
+That design also produced the ordering argument for free. Six of the eight disqualifying
+conditions leave `audit_ingest_journal_row` through a `RETURN`, and the trigger performing
+the canonical, hash and quota checks is `BEFORE INSERT`, so an error reaching the new handler
+arrived after all of them. **Asserted rather than argued:** the suite injects the storage
+failure AND a malformed row together and gets `AUDIT_CANONICAL_MISMATCH` with zero
+observations, and injects it AND a saturated quota together and gets
+`AUDIT_QUOTA_SATURATED` with zero observations.
+
+## 16. Two migrations rather than one, and why
+
+`A0003` adds `audit_store_write_failure`, the incident kind, the new
+`audit_ingest_outcome` enum value, the recorder and the derivation window. `A0004` replaces
+the ingest function.
+
+They are separate files because `ALTER TYPE … ADD VALUE` cannot have its new value USED in
+the transaction that adds it, and the migration runner wraps each file in one transaction.
+One file would have worked or not depending on whether `check_function_bodies` resolves an
+enum literal inside a plpgsql `RETURN` — and "probably fine" is not a migration.
+
+`A0004` uses `CREATE OR REPLACE` at the identical signature, so every existing GRANT and
+every existing 27- and 38-argument call site keeps resolving to the same function. The
+accepted suites that call it — `post-commit-and-crash-matrix.test.ts` and
+`vc-a3-cross-implementation.test.ts` — are not amended by this pass.
+
+## 17. The three-code mapping, and the codes that were considered and refused
+
+`§6` requires the concrete mapping to be closed, documented, tested, and fail-closed. It
+also says the architecture must not depend on a vendor list. So `30 §5.7.1a` declares the
+SEMANTIC class and `src/audit/storeWriteAvailability.ts` declares the three codes.
+
+**Refused, each for a stated reason** — the list is in the module and the suite asserts every
+one classifies `UNKNOWN`:
+
+| Code | Why not |
+|---|---|
+| `53200` `out_of_memory` | a server-process resource failure, not the storage layer being unavailable for writes. Same PostgreSQL class as `53100`, which is exactly why a class-prefix mapper is a defect and is one of the vulnerable controls |
+| `53300` `too_many_connections`, `08xxx`, `57P03` | connection-class failures. The attempt may not have been OBSERVED at ingress, which fails conjunct 1 — this is `§5.7.1a`'s own "control-side timeout before audit ingress observed the attempt" exclusion, and a severed connection is indistinguishable from it |
+| `58P01` `undefined_file` | a claim about the store's own state. A store-availability reading would launder a possible integrity problem into a mode change |
+| `40001`, `40P01` | excluded by name in `§7`: retryable, and a deadlock |
+| `42501` | about the PRINCIPAL, not the instance. `25006` is about the instance and is raised identically for a superuser, which is why one is in and the other is out |
+
+## 18. Removing the boolean, and choosing not to add a seam
+
+`§13` permits a TEST-ONLY seam so the pure truth table can still be exercised over both
+values. It was not used, because exposures either side of the declared floor exercise the
+same table AND prove the derivation — strictly more evidence for the same test count. The
+oracle now carries `total_exposure` as a decimal literal and derives the predicate from its
+own hand-transcribed `2000n`, so `36 §0`'s independence is preserved: a seeded edit to
+production's constant fails the suite.
+
+`dispatch-precedence-approval-floor.test.ts` asserts the absence of a seam as a source
+property, over EXECUTABLE lines only — the classifier's own documentation names the withdrawn
+boolean in order to record why it is gone, and a denylist over prose would have forbidden the
+explanation rather than the hatch.
+
+**One guard was added that the mandate did not ask for.** `unreachableSince` is `Date | null`,
+so `mirrorState !== 'NORMAL'` with a `null` would have been an indefinite exemption from the
+posture — the same escape hatch one release later. The classifier THROWS on both incoherent
+pairs, and `mirrorDispatchOperands` reads the state and the instant in one transaction so the
+coherent pair is the easy thing to pass.
+
+## 19. Amendments to accepted test files, and what each is
+
+Nine accepted files were amended and **every amendment is mechanical**: the operand's type
+changed, so every construction site changed. No assertion was deleted, no property weakened.
+
+| File | Change |
+|---|---|
+| `tests/support/mirrorPrecedenceTable.ts` | `OracleCase.aboveApprovalFloor: boolean` → `totalExposure: string`; three hand-transcribed constants added; `expectedUnderFullHalt` added. `expectedFor`'s row logic is otherwise unchanged |
+| `tests/mirror/vc-a2-inversion.test.ts` | operands carry `totalExposure` and `unreachableSince`; the `$30` VC-A6 fixture is re-based on `$22.00`, because `$30` now DENIES `PER_ACTION` and never reaches the classifier |
+| `tests/mirror/first-match-order.test.ts` | same, and the transcribed row-2 predicate becomes the strict minor-unit comparison |
+| `tests/negative-controls/unsafe-precedence-order.ts` | the same transcribed predicate, so the control is not weaker than production on row 2 |
+| `tests/negative-controls/vc-a2-self-declared-degradation.test.ts` | operands built through one helper rather than spread, since the oracle case no longer matches the operand shape |
+| `tests/negative-controls/vc-a2d-signal-replay.test.ts` | `totalExposure` and `unreachableSince` |
+| `tests/integration/mirror/i56-clock-provenance.test.ts` | same |
+| `tests/integration/mirror/vc-a2e-override.test.ts` | same, at six sites |
+| `tests/integration/mirror/no-dispatch-boundary.test.ts` | same, plus the decision's key set gains `fullHaltPosture` and `haltedByFullHaltPosture` — **both derived, neither an adapter, an endpoint or a payload** |
+
+**Every one of them holds the FULL-HALT POSTURE out of scope** by passing a one-minute
+`unreachableSince`, and says so at the point of use. Admitting the posture into the inversion
+table would collapse every row onto `HALT` and make `VC-A2`'s proof vacuous. The one case
+where that matters substantively — `vc-a2e-override.test.ts`'s "expiry restores NOTHING" —
+gains an ADDITIVE counterpart in `full-halt-posture.test.ts` asserting that inside the posture
+the same row HALTS rather than suspends, which is stricter.
+
+## 20. Files added by this pass
+
+**Architecture.** `docs/architecture/v1.3.3/` — a new immutable package. `v1.3.1` and
+`v1.3.2` byte-identical.
+
+**Control plane.**
+
+* `src/kernel/mirror/degradedModeThresholds.ts` — the three declared quantities and their
+  predicates. The only place in `src/` carrying their values.
+
+**Audit plane.**
+
+* `src/audit/storeWriteAvailability.ts` — the closed PostgreSQL mapping and its fail-closed
+  classifier.
+* `src/audit/db/migrations/A0003__store_write_failure.sql` — the audit-owned observation.
+* `src/audit/db/migrations/A0004__store_write_outcome.sql` — the ingest handler.
+
+**Extended.**
+
+* `src/kernel/mirror/dispatchPrecedence.ts` — the derived floor, the posture, the coherence
+  guard.
+* `src/kernel/mirror/mirrorStateMachine.ts` — `openDeclarationOpenedAt`, `mirrorLagMs`,
+  `mirrorLagCondition`, `mirrorDispatchOperands`.
+* `src/audit/mirrorInputStall.ts` — the `STORE_WRITE_REJECTED` derivation.
+* `src/audit/transport/journalRecord.ts` — the new outcome.
+
+**Tests.** Five new files and two new negative controls, listed in
+`S1H-test-matrix.md §0`.

@@ -1,26 +1,31 @@
 # S1H — Result
 
-**Verdict: PARTIAL.**
+**Verdict: PASS**, after the v1.3.3 owner-resolution pass.
 
 The three-state mirror machine, the inversion, the authenticated and fresh corroboration
 signal, the bounded owner override with its composition bound, `I56`'s provenance leg and
-the deterministic pre-dispatch classifier are all built, tested and closed. **PARTIAL
-rather than PASS because three quantities the architecture needs are absent from v1.3.2**,
-and `§42` of the S1H mandate directs that the affected parts stop rather than guess:
+the deterministic pre-dispatch classifier were built, tested and closed in `b524637`. That
+candidate was **PARTIAL** because three quantities the architecture needs were absent from
+v1.3.2 and `§42` directed the affected parts to stop rather than guess. **The owner declared
+all three under architecture package issue v1.3.3, and the three legs are now built:**
 
-1. **The per-action approval floor has no declared numeric value** (`S1H-C1`). Precedence
-   row 2's behaviour is implemented and tested over both values of the operand; the
-   operand's derivation is PARTIAL.
-2. **The mirror-lag and prolonged-unreachability thresholds have no declared values**
-   (`S1H-C10`). The FULL-HALT POSTURE of `30 §5.1` item 5 — all classes halting, including
-   REVERSIBLE — is therefore NOT IMPLEMENTED.
-3. **`STORE_WRITE_REJECTED` has no declared derivation rule** (`S1H-C8`), and the one
-   candidate reading is explicitly forbidden as a mode change. The audit plane never issues
-   it.
+1. **The per-action approval floor** (`S1H-C1`) — `51 §3.7`: **USD 20.00**, compared
+   **strictly** against `effect.request.exposure.total_exposure`. The caller-supplied boolean
+   is REMOVED; the predicate is derived by trusted code.
+2. **The mirror-lag and prolonged-unreachability thresholds** (`S1H-C10`) — `51 §3.8`:
+   **PT15M** and **PT30M**, both inclusive at the threshold. The FULL-HALT POSTURE of
+   `30 §5.1` item 5 is implemented, over every recoverability class including REVERSIBLE.
+3. **`STORE_WRITE_REJECTED`'s derivation** (`S1H-C8`) — `30 §5.7.1a`: a closed
+   ten-condition AUDIT-OWNED predicate over the semantic class
+   `AUDIT_STORE_WRITE_UNAVAILABLE`, with quota saturation and every security or integrity
+   failure excluded normatively.
 
-None of the three is a failure of the security properties. **No unilateral control-side
-state can unlock relaxed authority**, which is the FAIL condition, and it is proven over
-the whole cross-product with a discriminating control.
+**No unilateral control-side state can unlock relaxed authority**, which is the FAIL
+condition, and it is proven over the whole cross-product with a discriminating control —
+through the DECLARED operand now, rather than through a caller-supplied boolean.
+**`OWNER DECISION STILL REQUIRED`: ZERO.** Dispositions in
+`S1H-owner-resolution.md`; the questions as they were asked are unchanged in
+`S1H-owner-clarifications.md`.
 
 ---
 
@@ -35,8 +40,13 @@ the whole cross-product with a discriminating control.
 | Baseline `npm run verify` | exit 0 |
 | Baseline files / tests / passed / failed / skipped | 86 / 1204 / 1204 / 0 / 0 |
 | Implementation commit | `ea7f60e02c3a6aff9a509616838710525126a147` — all source, migrations, tests and the four S1H documents |
-| Final commit | the documentation commit that adds this line and `§14`'s totals, which cannot name its own sha. `git log --oneline -2` on `feature/s1h-mirror-state-machine` shows both |
+| PARTIAL candidate | `b5246378b9bbe4f9f758c03cdc9447ab4dd801d7` — the documentation commit that closed the first pass |
+| **v1.3.3 owner-resolution pass** | reviewed `b524637`; baseline re-verified before any edit at **104 / 1544 / 1544 / 0 / 0**, `npm run verify` exit 0 |
+| — architecture commit | `e5ca7b1` — package issue **v1.3.3**: errata APF-01, MLT-01, FHT-01, SWR-01; gate conditions G1–G10; six seeded negative controls |
+| — implementation commit | the `feat(s1h)` commit carrying the three completed legs, their migrations, their negative controls and their tests |
+| — final commit | the `docs(s1h)` commit that adds this line and `§14`'s totals, and which cannot name its own sha. `git log --oneline -4` on `feature/s1h-mirror-state-machine` shows all four |
 | Worktree clean at end | yes |
+| `b524637` rewritten? | **NO.** Three commits sit on top of it |
 
 ---
 
@@ -44,12 +54,15 @@ the whole cross-product with a discriminating control.
 
 | | |
 |---|---|
-| Architecture | Operating Spine v1.3 |
-| Authoritative package issue | **v1.3.2** |
-| Directory | `docs/architecture/v1.3.2/` — **unmodified.** `git status` reports zero changes under `docs/architecture/` |
-| Mirror-state sources | `30 §5.1`, `§5.4`, `§5.5`, `§5.6`, `§5.7`, `§5.7.1`, `§5.7.2`, `§9.1`; `22 §3.1`; `24 §3` K10/K11; `25 §13`; `36 §6`, `§9`, `§14`, `§15`; `50 §2` classes 3, 20, 24, 25; `51 §3.1`, `§3.6`, `§4.1`, `§5`; `37` S1; registry `I8`, `I17`, `I17e`, `I17f`, `I56`, `I63`, `§3` items 7/9/10; `phase2-v1.3-lower-severity-register.md` TA-08 |
-| Conflicts with the mandate | none. Where the mandate's shorthand differs from v1.3.2, v1.3.2 was followed and the difference recorded |
-| Conflicts within v1.3.2 | one, and it is an ambiguity rather than a contradiction: `30 §5.6`'s three entry conditions are not disjoint as written (`S1H-C2`). The stricter partition reading was taken |
+| Architecture | Operating Spine v1.3 — **unchanged** |
+| Authoritative package issue | **v1.3.3** |
+| Directory | `docs/architecture/v1.3.3/` — a NEW immutable package directory |
+| `docs/architecture/v1.3.2/` modified? | **NO.** `git diff --stat` reports zero changed files and `git ls-files -s` hashes are unchanged. `v1.3.1/` likewise |
+| Normative additions | new `30 §5.1a` (the three quantities, the boundaries, the FULL-HALT POSTURE, the override composition); new `30 §5.7.1a` (`STORE_WRITE_REJECTED`'s closed derivation, the semantic class, the exclusions); new `51 §3.7` and `§3.8`; new `50 §2` class 27; new `36` `VC-A2g` and `VC-A2h`. Edits: `30 §5.1` items 4–5, `30 §5.6`'s reachability table (two rows), `50 §2` class 3 and its counts, `22 §3.1`, `35 §12.1`, `36`'s `VC-A6` fixture, the registry's `§0` and `I63`'s operand block |
+| Unrelated architecture changes | **none.** No mechanism introduced, no invariant added, removed, restated or weakened, no authority quantity moved, MAL unchanged, no Step ordering changed, no audit cadence changed |
+| Mirror-state sources | `30 §5.1`, **`§5.1a`**, `§5.4`, `§5.5`, `§5.6`, `§5.7`, `§5.7.1`, **`§5.7.1a`**, `§5.7.2`, `§9.1`; `22 §3.1`; `24 §3` K10/K11; `25 §13`; `35 §12.1`; `36 §6`, `§9`, `§14`, `§15`; `50 §2` classes 3, 20, 24, 25, **27**; `51 §3.1`, `§3.6`, **`§3.7`**, **`§3.8`**, `§4.1`, `§5`; `37` S1; registry `I8`, `I17`, `I17e`, `I17f`, `I56`, `I63`, `§3` items 7/9/10; `phase2-v1.3-lower-severity-register.md` TA-08 |
+| Conflicts with either mandate | none. Where a mandate's shorthand differs from the package, the package was followed and the difference recorded. Both of the owner-resolution mandate's STOP conditions (`§3`'s timer semantics, `§16`'s override-versus-halt question) were checked and **neither triggers** — the architecture states both, and the quoted text is in `S1H-owner-resolution.md §7` |
+| Conflicts within the package | one, and it is an ambiguity rather than a contradiction: `30 §5.6`'s three entry conditions are not disjoint as written (`S1H-C2`). The stricter partition reading was taken, and `§17` below records that it is authority-equivalent for every precedence outcome |
 
 ---
 
@@ -77,6 +90,10 @@ the whole cross-product with a discriminating control.
 | Durability and `§38`'s crash/restart cases | `mirror-state-durability.test.ts` |
 | `§29` — no canonical-format regression; no JSON column on either plane | `mirror-journal-rows.test.ts` |
 | **`S1H-C4`** — an S1G immutability hole found and closed | `mirror-journal-rows.test.ts` |
+| **`S1H-C1`** — the approval floor DERIVED from `51 §3.7`'s `$20.00` against `total_exposure`; the boolean escape hatch removed | `dispatch-precedence-approval-floor.test.ts`, `degraded-mode-thresholds.test.ts` |
+| **`S1H-C10`** — `30 §5.1a`'s FULL-HALT POSTURE, every class, both boundaries, the timer's declared start and every declared non-reset | `full-halt-posture.test.ts` (discriminating) |
+| **`S1H-C10`** — the mirror-lag CRITICAL condition, and all four of its declared non-effects over the durable tables | `mirror-lag-critical.test.ts` |
+| **`S1H-C8`** — `STORE_WRITE_REJECTED`'s closed audit-owned derivation, its closed PostgreSQL mapping, its four exclusions and its POSITIVE control | `store-write-availability.test.ts` (discriminating) |
 
 ---
 
@@ -92,6 +109,19 @@ against a hand-authored disposition table that imports nothing from `src/`. Not 
 becomes more permissive in `UNCORROBORATED_STALL` than in `NORMAL`, and the suite
 additionally asserts that at least one row becomes STRICTLY stricter, so the proof is not
 vacuous.
+
+**v1.3.3: the above-floor dimension is now the DECLARED OPERAND.** `OracleCase` carries
+`total_exposure` as a decimal literal on either side of `51 §3.7`'s floor, and the oracle
+derives the predicate from its own hand-transcribed `2000n`. So the same 72 rows now prove
+the DERIVATION as well as the table, and `dispatch-precedence-approval-floor.test.ts`
+additionally counts the rows that reach row 2 and fails if none does. **The hand-authored
+table's row-by-row logic is otherwise unchanged**, which is `§13`'s requirement.
+
+**The model and the caller cannot influence it.** `PrecedenceOperands.aboveApprovalFloor` is
+GONE; `totalExposure: Money` replaces it; `isAboveDegradedApprovalFloor` is the one
+comparison site in `src/`; and no TEST-ONLY seam re-admits the boolean — asserted as a source
+property over executable lines, together with the absence of `vendorAmount`, `vendor_amount`,
+`dispatchAmount` and `rationale` from the classifier's executable lines.
 
 Representative rows (the full 72 are enumerated by the suite):
 
@@ -132,8 +162,16 @@ every dispatch tagged".
 
 **PARTIAL on this item:** the HTTP endpoint (`GET /audit/v1/mirror-input-stall`), the
 bearer-credential issuer and the provisioned signing key are OPEN — `30 §5.7.1`'s
-Provisioning note puts them outside the S1 build. And `STORE_WRITE_REJECTED` is never
-issued (`S1H-C8`).
+Provisioning note puts them outside the S1 build.
+
+**`STORE_WRITE_REJECTED` is now DERIVED** (`S1H-C8`, v1.3.3). `30 §5.7.1a`'s closed
+ten-condition predicate, over the semantic class `AUDIT_STORE_WRITE_UNAVAILABLE`, from the
+audit plane's own append-only `audit_store_write_failure` observations and nothing else. The
+PostgreSQL mapping is a closed three-code allowlist (`53100`, `58030`, `25006`), each
+justified at the point of implementation, transcribed independently in `A0004`'s handler and
+asserted against the DEPLOYED function definition; twenty-one codes are excluded by name and
+everything else FAILS CLOSED. **Quota saturation cannot emit it**, and neither can a
+collision, a canonical mismatch, a hash mismatch, a chain break or an unknown error.
 
 ---
 
@@ -263,7 +301,8 @@ or a client.
 | Vendor read / `I8` sweep | **NO** |
 | External anchor (`I17b`) | **NO** |
 | Fake dispatch rows manufactured | **NO** |
-| Architecture package modified | **NO** — zero changes under `docs/architecture/` |
+| Architecture package modified | **NO** for `v1.3.1/` and `v1.3.2/`, which are byte-identical. `v1.3.3/` is a NEW package directory, which is the convention v1.3.1 established |
+| Fake dispatch created by the FULL-HALT POSTURE | **NO** — the posture only ever reduces a disposition to `HALT`, and `full-halt-posture.test.ts` asserts monotonicity toward `HALT` over `PERMISSIVENESS` for every class |
 
 ---
 
@@ -279,13 +318,19 @@ or a client.
 | S1F | green |
 | S1G | green |
 
-**Two accepted test files were amended, both additively, and no accepted test was
-deleted or weakened.**
+**Two accepted test files were amended in the first pass, both additively, and no accepted
+test was deleted or weakened.** The v1.3.3 pass amended nine more, every amendment
+MECHANICAL — the approval-floor operand's type changed from `boolean` to `Money` and the
+posture operand was added, so every construction site changed.
+`S1H-implementation-log.md §19` lists all nine with the change in each.
 
 1. `vc-a1d-adversarial-attester.test.ts` — the audit evaluator's visible-table list goes
-   from 3 to 5. Both new tables are written by the audit plane's own evaluator from its own
-   holdings, neither is an input ABOUT the control journal, and neither settles the
-   `§5.5` case 2b residual. The property is unchanged and still asserted.
+   from 3 to 5, **and to 6 under v1.3.3**. All three new tables are written by the audit
+   plane's own evaluator or by its own ingress from its own observation, none is an input
+   ABOUT the control journal, and none settles the `§5.5` case 2b residual — a store-write
+   failure records that a row the control plane SENT could not be stored and says nothing
+   about a row it WITHHELD, which is the attack this suite builds. The property is unchanged
+   and still asserted.
 2. `local-authorisation-boundary.test.ts` — the mirror-absence assertion is replaced. S1H
    builds the mirror machine, which `37` S1 puts in this slice. The mirror half MOVES to
    `no-dispatch-boundary.test.ts` as CONFINEMENT to four named directories, `I17b`'s anchor
@@ -323,28 +368,72 @@ place S1H could have quietly widened an accepted absence and did not.
 
 ## 14. Verification
 
+### Architecture mechanical verification
+
+| | |
+|---|---|
+| Gate | `docs/architecture/v1.3.3/analysis/consistency-v1.3.py` |
+| Conditions | **35** — C1–C29 (v1.3), E1–E7 (v1.3.1), F1–F3 (v1.3.2), **G1–G10 (v1.3.3)** |
+| Result | **35 PASS / 0 FAIL**, exit 0. Recorded run: `analysis/consistency-v1.3.3-output.txt` |
+| Seeded negative controls | **9** — the two v1.3.2 controls, retained and still failing, plus six new ones. Each exits non-zero |
+| Every G condition failed by at least one seed? | **YES.** G1 ← `floor-25`, `vendor-amount` · G2 ← `floor-25` · G3 ← `floor-25` · G4 ← `vendor-amount` · G5 ← `lag-10m` · G6 ← `full-halt-15m` · G7 ← `full-halt-15m` · G8 ← `quota-as-cause` · G9 ← `quota-as-cause`, `generic-insert-fail` · G10 ← `quota-as-cause`, `generic-insert-fail` |
+| `recompute-v1.3.py` | reproduces `recompute-v1.3-output.txt` **line for line identically**. `MAL_total(month)` at the signature basis = **$756.00**, unchanged |
+
+The ten conditions, in `§12`'s own order:
+
+| `§12` | Condition | Gate |
+|---|---|---|
+| 1 | `$20.00` appears in the authoritative quantity location | **G1** |
+| 2 | every operational reference resolves to that declared operand | **G2** |
+| 3 | no operational passage equates the floor with `$25.00 per_action_max` | **G3** (a denylist over every line, plus required positives) |
+| 4 | the degraded comparison uses `total_exposure` | **G4** |
+| 5 | the mirror-lag threshold is exactly 15 minutes everywhere | **G5** (required statements + a numeric sweep over every stating line) |
+| 6 | the full-halt threshold is exactly 30 minutes everywhere | **G6** (same) |
+| 7 | 30 minutes is strictly greater than 15 minutes | **G7** (parsed arithmetic, both notations) |
+| 8 | quota saturation remains incident-only | **G8** |
+| 9 | `STORE_WRITE_REJECTED` requires an audit-observed, otherwise-valid, in-quota attempt | **G9** (all ten conjuncts individually) |
+| 10 | canonical / hash / security failures are excluded from that cause | **G10** (the exclusion list is parsed; all seventeen members looked up) |
+
+### Repository verification
+
 | | |
 |---|---|
 | `npm run verify` | **exit 0** — typecheck green, lint zero warnings, all tests passing |
-| Test files | **104** (86 accepted + 18 S1H) |
-| Tests | **1544** (1204 accepted + 340 S1H) |
-| Passed | 1544 |
-| Failed | 0 |
+| Test files | **109** (104 at the `b524637` baseline + 5 new) |
+| Tests | **1679** (1544 at the baseline; the increase is additive) |
+| Passed | 1679 |
+| Failed | **0** |
 | Skipped | **0** |
 | `.only` / `.skip` / `.todo` | none |
-| Hidden filters | none — `vitest.config.ts` is unchanged |
-| Focused S1H suite | 18 files / 340 tests / 340 passed |
-| Real-Postgres S1H files | 13 |
-| Dual-Postgres S1H files | 6 |
-| Vulnerable controls | **5** (three files, five entry points); 4 discriminate, and the 1 that does not is reported as non-discriminating rather than counted |
-| Accepted tests deleted | 0 |
-| Accepted assertions weakened | **0 in property.** Stated precisely, because "weakened" deserves a precise answer: two accepted assertions admit one more thing than they did, and both are named in `§13`. `plane-independence.test.ts`'s permitted `db/pool.js` import set gains ONE symbol, `inTransaction`, which the test's own comment already calls generic infrastructure — the property it protects, that the audit plane opens no CONTROL connection, is untouched. `rate-class-local-authorisation.test.ts` exempts ONE directory from a bare `'REVOKED'` literal and holds that directory to a stricter rule instead. Every other accepted assertion is byte-identical |
+| Hidden filters | none — `vitest.config.ts` is unchanged by this pass |
+| Focused S1H suite (the 18 accepted files + the 5 new) | 23 files / 475 tests / 475 passed |
+| Accepted tests deleted | **0** |
+| Accepted assertions weakened | **0.** Nine accepted test files were amended and every amendment is MECHANICAL — the operand's type changed, so every construction site changed. `S1H-implementation-log.md §19` lists all nine with the change in each. No assertion was deleted and no property narrowed; the one case where the posture would have changed an accepted expectation — `vc-a2e-override.test.ts`'s "expiry restores NOTHING" — keeps its assertion and gains an ADDITIVE stricter counterpart in `full-halt-posture.test.ts` |
+| Vulnerable controls | **7** (five accepted + two new). All 7 discriminate except the one accepted non-discriminating control, which is still reported as non-discriminating rather than counted |
 
----
+**The focused tests `§22` requires, each named:**
+
+| Required | File |
+|---|---|
+| approval-floor boundaries | `degraded-mode-thresholds.test.ts`, `dispatch-precedence-approval-floor.test.ts` |
+| `VC-A2` cross-product with the derived floor operand | `dispatch-precedence-approval-floor.test.ts`, `vc-a2-inversion.test.ts` |
+| 15m lag boundaries | `degraded-mode-thresholds.test.ts` (pure), `mirror-lag-critical.test.ts` (durable) |
+| 30m full-halt boundaries | `degraded-mode-thresholds.test.ts` (pure), `full-halt-posture.test.ts` (durable, every class) |
+| `STORE_WRITE_REJECTED` derivation | `store-write-availability.test.ts` |
+| quota negative control | same, `§8` A |
+| collision / integrity negative controls | same, `§8` B and C — including the ordering under simultaneous injection |
+| prolonged-unreachability vulnerable control | `full-halt-posture.test.ts` + `unsafe-prolonged-unreachability.ts` |
+
+### Accepted regression
+
+S1A–S1G all green. `S1H-C4`'s repair re-verified: the three attestation columns refuse
+`UPDATE` with `JOURNAL_ROW_IMMUTABLE`, `mirrored_at` is still the one permitted mutation and
+affects exactly one row, `DELETE` is still refused, and the S1G chain, `VC-A3` and
+attestation suites are unchanged and green.
 
 ## 15. `§43`'s diff audit
 
-`git diff e47a437...HEAD` was read in full. Findings:
+`git diff e47a437...HEAD` and `git diff b524637...HEAD` were both read in full. Findings:
 
 | Audited for | Result |
 |---|---|
@@ -358,7 +447,16 @@ place S1H could have quietly widened an accepted absence and did not.
 | Override changing ceilings | impossible — schema, source, cryptography and behaviour |
 | In-memory-only state | none — no module-level mutable state |
 | Actual or fake dispatch | none |
-| Architecture-package modification | none |
+| Architecture-package modification | none to `v1.3.1/` or `v1.3.2/`; `v1.3.3/` is a new directory |
+| **v1.3.3 additions, audited under `§23`** | |
+| new dispatch code, adapter, outbox, external claim | **none.** A grep over this pass's source additions for `outbox`, `exclusive`, `I36`, `vendorIdempotency`, `adapter`, `.dispatch(`, `fetch(`, `node:http`, `axios`, `undici`, `WebSocket`, `reconcil` and `settlement` returns zero hits |
+| caller-controlled `aboveApprovalFloor` | **removed.** The field does not exist; a source assertion forbids it and any `ForTest` seam |
+| use of `vendor_amount` | **none** in the classifier's executable lines, asserted |
+| quota saturation unlocking degradation | **impossible.** It fails conjunct 8 and returns an OUTCOME rather than reaching the handler; asserted directly, and the unsafe mapper is shown to differ |
+| generic DB errors unlocking degradation | **impossible.** A three-code allowlist, fail-closed by construction; two unsafe mappers are shown to differ |
+| stale signal acceptance | unchanged — freshness is still evaluated at every state evaluation, and the store-write observation additionally ages out at `cadence × k` |
+| owner override changing ceilings | **impossible**, unchanged. The posture changes what an override may be needed FOR, never what it may DO; every `51 §3.6` quantity is asserted unchanged |
+| unrelated architecture changes | none |
 
 ---
 
@@ -386,12 +484,29 @@ place S1H could have quietly widened an accepted absence and did not.
 
 * **`I17f(a)` and `I17f(c)`** — operands are dispatched effects. OPEN until the execution
   slice. `§35`'s instruction was followed: no `DISPATCHED` rows were manufactured
-* **The FULL-HALT POSTURE of `30 §5.1` item 5** — NOT IMPLEMENTED. Both thresholds are
-  undeclared in v1.3.2 (`S1H-C10`). **Owner decision required**
-* **The per-action approval-floor derivation** (`S1H-C1`). The row-2 behaviour is closed;
-  the operand is supplied. **Owner decision required**
-* **`STORE_WRITE_REJECTED`'s derivation** (`S1H-C8`). Never issued. **Owner decision
-  required**
+* ~~The FULL-HALT POSTURE~~ — **CLOSED by v1.3.3** (`51 §3.8`, `30 §5.1a`)
+* ~~The per-action approval-floor derivation~~ — **CLOSED by v1.3.3** (`51 §3.7`)
+* ~~`STORE_WRITE_REJECTED`'s derivation~~ — **CLOSED by v1.3.3** (`30 §5.7.1a`)
+* **`I19` on control artifact class 3** (whose `content_hash` moves because the approval-floor
+  field finally has a value) **and on the new class 27** (the degraded-mode threshold set).
+  **Two owner signatures are newly owed and neither is discharged**, and no production
+  owner-signing mechanism and no runtime `I19` verification exist. **The class-20 residual
+  carried from v1.3.2 is unaffected and remains owed**
+* **`STORE_WRITE_REJECTED`'s narrowness, recorded rather than engineered around.** The
+  derivation is reachable only where the audit storage layer is unavailable for the JOURNAL
+  HOLDINGS while the audit plane's own tables remain writable. Where the whole store is
+  unavailable, nothing is published and the answer is `UNCORROBORATED_STALL` plus the
+  override — `30 §5.6`'s reachability table's new last row
+* **The `mirror_lag` operand is control-derived and control-forgeable**, because `mirrored_at`
+  is advisory (`30 §5.2`). Admissible in this direction only: `30 §5.1a` makes the condition
+  an escalation, understating it suppresses an alarm rather than obtaining authority, and the
+  unforgeable detector for the understated case is the audit plane's attestation-absence check
+  and `I17f(b)`. `mirror-lag-critical.test.ts` proves the direction and nothing more
+* **`mirror_declaration` carries no immutability trigger.** `opened_at` is the FULL-HALT
+  operand and a direct `UPDATE` as the control role is admitted by the schema, so the
+  operand's integrity rests on the migration-principal boundary (`49 §3.11`) and not on a
+  trigger. What IS asserted is that no production path moves it, over every production path
+  that touches the declaration. Recorded rather than claimed away
 * **`30 §5.7.1`'s HTTP endpoint and the provisioned signing key** — realised as a scoped
   PostgreSQL role and a harness-generated keypair. `§5.7.1`'s Provisioning note puts both
   outside the S1 build
@@ -417,33 +532,46 @@ place S1H could have quietly widened an accepted absence and did not.
 
 ## 17. Architecture conflicts and owner clarifications
 
-Twelve items, in full in `S1H-owner-clarifications.md`. **Three require an owner decision:**
+Twelve items, in full in `S1H-owner-clarifications.md`, each now carrying its
+`OWNER RESOLUTION` block. The dispositions, the evidence and the two STOP conditions that
+were checked are in `S1H-owner-resolution.md`.
 
-| Item | Decision asked |
-|---|---|
-| `S1H-C1` | Declare the numeric per-action approval floor, or declare that row 2's operand is the catalogue's `approval_requirement` tier rather than a monetary threshold |
-| `S1H-C8` | Declare when `STORE_WRITE_REJECTED` is issued, or delete the enum member |
-| `S1H-C10` | Declare the mirror-lag threshold and the prolonged-unreachability threshold, or state that the full-halt posture is a later slice |
+| Item | Issue | Final classification | Owner disposition | Code change |
+|---|---|---|---|---|
+| `S1H-C1` | the per-action approval floor has no declared value | **OWNER CLARIFICATION — ACCEPTED** | `51 §3.7`: **USD 20.00** vs `total_exposure`, strict | **YES** — the boolean removed, the predicate derived |
+| `S1H-C2` | `30 §5.6`'s three entry conditions are not disjoint | **OWNER CLARIFICATION — ACCEPTED, CONSERVATIVE PARTITION** | authority-equivalent for every precedence outcome; no counterexample | none |
+| `S1H-C3` | `I63(b)`'s "all records" includes revoked and expired | **DIRECT ARCHITECTURE REQUIREMENT** | the literal and fail-closed reading | none |
+| `S1H-C4` | the S1G journal-immutability guard had a hole | **DEFECT FOUND AND REPAIRED** | accepted subject to regression; **not reverted** | already in `b524637`; re-verified |
+| `S1H-C5` | `last_attestation_received_at`'s nullability | **IMPLEMENTATION DETAIL — NON-SEMANTIC** | the declaration stands | none |
+| `S1H-C6` | `§5.7.1`'s conjunction admits a future-dated signal | **OWNER CLARIFICATION — ACCEPTED** | the refusal stands; strictly stricter | none |
+| `S1H-C7` | "rows 3 or 5" is imprecise | **OWNER CLARIFICATION — ACCEPTED** | "never row 2" is operative | none; one assertion added |
+| `S1H-C8` | `STORE_WRITE_REJECTED` has no derivation | **OWNER CLARIFICATION — ACCEPTED** | `30 §5.7.1a`: a closed ten-condition audit-owned derivation | **YES** — `A0003`, `A0004`, the classifier, the derivation |
+| `S1H-C9` | the byte order for the three new row kinds | **IMPLEMENTATION DETAIL — NON-SEMANTIC** | the declarations stand | none |
+| `S1H-C10` | the two timing thresholds are undeclared | **OWNER CLARIFICATION — ACCEPTED** | `51 §3.8`: **PT15M** and **PT30M**, both inclusive | **YES** — the posture, the lag condition, both operands |
+| `S1H-C11` | whether an override applies in `NORMAL` / `CORROBORATED_DEGRADED` | **OWNER CLARIFICATION — ACCEPTED**; the item-5 / `I17f(a)` tension stays a **DEFERRED RESIDUAL** | the row-scoped reading stands; `30 §5.1a` resolves the posture leg | none |
+| `S1H-C12` | `I8`'s additive verification list at S1 | **DEFERRED RESIDUAL** | the architecture itself defers it | none |
 
-**One is a defect found in accepted code and closed here:** `S1H-C4`, the journal
-immutability guard's hole, which left the attested prefix of a chained row mutable in the
-control database.
+**`OWNER DECISION STILL REQUIRED`: ZERO**, which is `§19`'s expected count. No new
+load-bearing ambiguity appeared.
 
-**Six are readings or declarations, taken and recorded:** `S1H-C2` (the stricter partition
-reading of `30 §5.6`), `S1H-C3` (`I63(b)` counts revoked and expired records),
-`S1H-C5` (nullable attestation instant), `S1H-C6` (a future-dated signal is refused — an
-addition strictly stricter than the declared rule), `S1H-C7` ("never row 2" is the
-operative half), `S1H-C9` (the three new byte orders).
+**`§3`'s and `§16`'s STOP conditions were both checked and neither triggers.** The
+architecture defines the full-halt timer's start and reset — the `AUDIT_MIRROR_DEGRADED`
+declaration's lifecycle, plus `mirror_declaration_one_open_per_company` — and `30 §5.1`
+item 5 does state that the override reaches the halt, in the same sentence that says
+"either the halt". Both are recorded with the quoted text in `S1H-owner-resolution.md §7`,
+and neither was assumed.
 
-**Two are deferrals the architecture itself makes:** `S1H-C11` (the item-5/`I17f(a)`
-tension) and `S1H-C12` (`I8` proves nothing at S1).
+**One item is a defect found in accepted code and closed:** `S1H-C4`.
 
-**The architecture package was not modified.** No conflict required an erratum.
-
----
+**The architecture package was extended, not modified.** Four normative declarations
+required a new package issue; `v1.3.1/` and `v1.3.2/` are byte-identical.
 
 ## 18. Recommended next slice
 
 **S1I — the outbox and `I36`'s exclusive claim.**
 
-Named only. Not implemented.
+Named only. **Not implemented, and nothing in this pass touches it.** `§20` of the
+owner-resolution mandate forbids the outbox, the exclusive external claim, `I36`, vendor
+idempotency, the adapter, HTTP or vendor execution, reconciliation, settlement, approval
+resume, standing-revocation execution and AI, and `§14`'s audit over this pass's source
+additions returns zero hits for every one of them.

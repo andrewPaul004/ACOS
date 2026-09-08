@@ -1,5 +1,17 @@
 # S1I — Result
 
+> **PACKAGE ISSUE v1.3.4 SUPERSEDES PARTS OF THIS DOCUMENT.** It was written against
+> v1.3.3, and two of the seven clarifications it reports were genuine architecture defects
+> that the owner has now resolved: **CSB-01** declares the effect→case binding, so `30 §5.1`
+> **row 3 is reachable**; **IRN-01** state-qualifies row 1, so an **IRRECOVERABLE effect is
+> claimable in `NORMAL`**. Five further declarations — OBX-01/02/03, JCS-02, SEQ-01 —
+> confirm what this document implemented and asked about.
+>
+> **The sections affected are marked inline.** `S1I-owner-resolution.md` is the
+> disposition, `docs/architecture/v1.3.4/phase2-v1.3.4-errata.md` is the normative record,
+> and `S1I-final-acceptance.md` is the current status. **`OWNER DECISION STILL REQUIRED = 0`.**
+
+
 **DURABLE OUTBOX & EXCLUSIVE DISPATCH CLAIM.**
 
 > **S1I DOES NOT PROVIDE EXTERNAL EXACTLY-ONCE.**
@@ -198,28 +210,42 @@ Every expectation below is the accepted hand-authored oracle's
 
 | State | REVERSIBLE (`campaign.pause`) | COMPENSABLE discretionary (`refund.create`, $10.00) | IRRECOVERABLE (`fulfilment.reship`) |
 |---|---|---|---|
-| `NORMAL` | **CLAIMED**, row 5, untagged | SUSPEND, row 4, nothing written | HALT, row 1 |
+| `NORMAL` | **CLAIMED**, row 5, untagged | **CLAIMED**, row 3, untagged, with the evidentiary `clock_ref`, when a qualifying live clock exists; SUSPEND at row 4 when none does | **CLAIMED**, row 1, untagged (v1.3.4, IRN-01) |
 | `UNCORROBORATED_STALL` | **CLAIMED**, row 5, untagged (`I17f(a)`) | SUSPEND, row 4 | HALT, row 1 |
 | `CORROBORATED_DEGRADED` | **CLAIMED**, row 5, **TAGGED** (`36 §6`) | SUSPEND, row 4 | HALT, row 1 |
 | FULL-HALT POSTURE (`≥ PT30M`) | **HALT**, row 5, `haltedByFullHaltPosture` | HALT | HALT |
-| Valid in-scope override (row 4, COMPENSABLE, `refund.create`) | n/a — row 5 has no override path | **CLAIMED**, row 4, **TAGGED**, `override_id` bound, counters incremented | **HALT** — the grant itself is refused by the database |
+| Valid in-scope override (row 4, COMPENSABLE, `refund.create`) | n/a — row 5 has no override path | **CLAIMED**, row 4, **TAGGED**, `override_id` bound, counters incremented | **HALT** — the grant itself is refused by the database, and row 1 is unreachable by override in every state |
 | Expired override | n/a | HALT | HALT |
 | Out-of-scope override (another class) | n/a | SUSPEND | HALT |
 
 **Row 2, `30 §5.1a`'s strict boundary:** `$20.00` is NOT above the floor and falls to row 4;
 `$20.01` IS and HALTS at row 2.
 
-**Row 3 — PARTIAL, and it fails closed.** `S1I-C1`: v1.3.3 declares no binding from an
-effect to a `statutory_clock.case_ref`, and row 3's operand is keyed on one.
-`clockBearingAtClaim()` takes no arguments and returns `false`, so row 3 is unreachable at
-claim time and a COMPENSABLE effect falls to row 4. **No relaxation is obtained that the
-architecture has not authorised.**
+**Row 3 — RESOLVED at package issue v1.3.4 (CSB-01). It is reachable.** `S1I-C1` reported
+that v1.3.3 declared no binding from an effect to a `statutory_clock.case_ref` while row 3's
+operand is keyed on one, and S1I stopped: `clockBearingAtClaim()` took no arguments and
+returned `false`.
 
-**`S1I-C6` — the class ADR-026 is titled for cannot be claimed at S1.** `22 §3.1` prints row
-1 as Halt in **all three** states including `NORMAL`, and `30 §5.1` item 5 plus `51 §3.6`
-make it unreachable by override. So `fulfilment.reship` — and by the same rule `email.send`
-when it exists — is never dispatch-eligible under v1.3.3 as issued. Reported as a finding;
-not routed around.
+`30 §9.2` now declares `effect.case_ref` — **kernel-owned, immutable, never model-supplied**,
+inherited from the authoritative task in the same transaction that creates the effect — and
+`§9.2.4` declares the claim-time derivation against CURRENT clock state. The operand is now
+true where a legitimate qualifying case exists and **unforgeable by substitution**:
+`0011`'s `effect_derive_case_ref` overwrites any supplied value, `effect_append_only` admits
+no rewrite, and the claim reads the committed row. Invariants `I64` and `I65`.
+`effect-case-binding.test.ts` and `outbox-claim-clock.test.ts` carry it, with two
+discriminating classifiers in `unsafe-caller-case-ref.ts`.
+
+**`S1I-C6` — RESOLVED at v1.3.4 (IRN-01). The class ADR-026 is titled for IS claimable, in
+`NORMAL` only.** S1I reported that `22 §3.1` printed row 1 as Halt in all three states,
+which — composed with `30 §5.1` item 5 and `51 §3.6` — made an IRRECOVERABLE effect never
+dispatch-eligible anywhere, leaving ADR-026, `25 §7`'s outbox, `25 §5`'s
+`PRESUMED_EXECUTED` branch, `I20` and `37` S4's autonomous sends with no reachable subject.
+
+`30 §5.1b` state-qualifies row 1: **dispatch in `NORMAL`, halt in `UNCORROBORATED_STALL`, in
+`CORROBORATED_DEGRADED`, under the `§5.1a` posture, and against any override.** Row 1's
+condition and its position ahead of row 2 are unchanged.
+`outbox-irrecoverable-claim.test.ts` runs the five-condition matrix against a hand-authored
+oracle and the ADR-026 path end to end — **and stops at `CLAIMED`**.
 
 ---
 
@@ -418,6 +444,24 @@ were amended, and each amendment is a NARROWING recorded in the file itself and 
 | Vulnerable controls | **10**, in **6** TEST-ONLY modules |
 | Worktree clean at finish | yes |
 
+### 17a. v1.3.4 owner-resolution pass — re-verified
+
+| | v1.3.3 candidate (`2d5193b`) | v1.3.4 |
+|---|---|---|
+| `npm run verify` | GREEN, exit 0 | **GREEN, exit 0** |
+| typecheck / lint | green / green at `--max-warnings 0` | **green / green at `--max-warnings 0`** |
+| Test files | 120 | **125** (+5) |
+| Tests | 1797 | **1850** (+53) |
+| Passed | 1797 | **1850** |
+| Failed | 0 | **0** |
+| Skipped | 0 | **0** |
+| Duration | 644.79s | 579.68s |
+| `.only` / `.skip` / `.todo` / hidden filtering | none | **none** |
+
+**Every one of the 1797 accepted tests is retained.** The +53 are additive; seven accepted
+suites were re-based rather than removed, with each change and its reason in
+`S1I-test-matrix.md §14.6`.
+
 
 ### The eleven focused suites, individually
 
@@ -462,7 +506,7 @@ additions recorded in `§16`.
 | `PRESUMED_EXECUTED` from a real uncertain request | **OPEN** |
 | Delivery-event reconciliation; `VERIFIED`; `NEVER_SENT` | **OPEN** |
 | MIE consumption at `PRESUMED_EXECUTED` | **DEFERRED.** All three irrecoverable ledgers asserted zero. |
-| Row 3's claim-time eligibility (`S1I-C1`) | **PARTIAL, fail-closed** |
+| Row 3's claim-time eligibility (`S1I-C1`) | **CLOSED at v1.3.4 (CSB-01).** The binding is declared, trusted and immutable; the operand is derived at the decision instant; the evidentiary clock is deterministic and persisted |
 | **`I20`** — provider accepted ≤ reserved irrecoverable units | **OPEN.** No provider. Outbox row count is not provider accepted count. |
 | **`I8`** — the audit plane's inverse vendor sweep | **OPEN.** No vendor credential exists. |
 | `I17b` — hourly external anchoring | **OPEN** |
@@ -534,13 +578,17 @@ credentials"*. **OPEN.**
 
 | Id | Subject | Disposition |
 |---|---|---|
-| **S1I-C1** | No declared binding from an effect to a `statutory_clock.case_ref`, and row 3's operand is keyed on one | **STOPPED.** Fail-closed; the row-3 claim-time leg is PARTIAL. **Owner decision required.** |
-| S1I-C2 | v1.3.3 names `CLAIMED` and declares no pre-claim state | `ENQUEUED` declared; the structure is architecture. Confirmation requested. |
-| S1I-C3 | "the dispatching transaction" is undefined in a slice with no dispatcher | the CLAIM transaction — the only reading that preserves the cap. Confirmation requested. |
-| S1I-C4 | No declared byte order for a record of the claim | declared in `S1I-contract.md §5`; class-20 signature obligation extended. |
-| S1I-C5 | The outbox is scoped to "irrecoverable sends" in four places and presented generally in two | widened uniformly; strictly stronger. Confirmation requested. |
-| **S1I-C6** | `22 §3.1` prints row 1 as Halt in `NORMAL` too, so the class ADR-026 is titled for cannot be claimed at S1 | reported as a finding; the printed table implemented. **Owner reading required.** |
-| S1I-C7 | `37` schedules the outbox at S4 | owner sequencing decision, recorded. |
+| **S1I-C1** | No declared binding from an effect to a `statutory_clock.case_ref` | **ARCHITECTURE DEFECT RESOLVED** (CSB-01). The binding is declared: kernel-owned, immutable, never model-supplied. `I64`, `I65` |
+| S1I-C2 | v1.3.3 names `CLAIMED` and declares no pre-claim state | **ACCEPTED** (OBX-01). `ENQUEUED`; no timeout, lease, expiry or reclaim |
+| S1I-C3 | "the dispatching transaction" is undefined in a slice with no dispatcher | **ACCEPTED** (OBX-03). The claim transaction is it |
+| S1I-C4 | No declared byte order for a record of the claim | **ACCEPTED AND MADE NORMATIVE** (JCS-02). `30 §5.3a`; class-20 obligation extended and still owed |
+| S1I-C5 | The outbox is scoped to "irrecoverable sends" in four places and presented generally in two | **ACCEPTED WITH EXTERNAL-WRITE SCOPE** (OBX-02). `I66` |
+| **S1I-C6** | `22 §3.1` prints row 1 as Halt in `NORMAL` too | **ARCHITECTURE DEFECT RESOLVED** (IRN-01). Eligible in `NORMAL` only; every degraded halt unchanged |
+| S1I-C7 | `37` schedules the outbox at S4 | **ACCEPTED** (SEQ-01). Foundation at S1, vendor half at S4 |
+
+**`OWNER DECISION STILL REQUIRED = 0`.** Full dispositions in
+`S1I-owner-resolution.md`; the normative record is
+`docs/architecture/v1.3.4/phase2-v1.3.4-errata.md`.
 
 ---
 

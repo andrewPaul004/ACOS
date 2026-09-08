@@ -146,12 +146,23 @@ Neither alone would suffice.
 ## 5. `acos.journal.outbox_claimed.v1` — THE DECLARED FIELD ORDER
 
 `30 §5.3` requires a hashed row's order to be *"declared per row kind, in the
-specification"*. **This section is that specification.** `S1I-C4` records that v1.3.3
-declares no order for a claim record and that the order is therefore an implementation
-declaration, exactly as S1H's three kinds were.
+specification"*. `S1I-C4` recorded that v1.3.3 declared no order for a claim record — nor
+for any row kind — and this section was that declaration, as an implementation declaration
+following S1H's precedent.
 
-Implemented independently in `src/db/migrations/0010__dispatch_outbox.sql` (control) and
-`src/audit/db/migrations/A0005__outbox_claim.sql` (audit). Judged by BOTH against
+> **SUPERSEDED AT PACKAGE ISSUE v1.3.4 (JCS-02).** `30 §5.3a` is now the specification, and
+> the order is **NORMATIVE** rather than an implementation convention. The table below is
+> retained as the implementation's own transcription of it and gains **field 18**, the
+> evidentiary clock. `§16` of the S1I owner-resolution mandate adds two obligations that
+> `30 §5.3a` states normatively: **no shared canonicalisation helper may defeat the two
+> planes' independence**, and **the order may not depend on object or map insertion order**.
+> `tests/integration/outbox/outbox-claim-field-order.test.ts` asserts both, and seeds a
+> transposition of two adjacent same-typed fields that a membership check would pass.
+
+Implemented independently in `src/db/migrations/0011__effect_case_binding.sql` (control,
+v1.3.4; `0010` for the kind's introduction) and
+`src/audit/db/migrations/A0006__claim_clock_evidence.sql` (audit, v1.3.4; `A0005` for the
+kind's introduction). Judged by BOTH against
 `outboxClaimedFields` in `tests/support/jcs1Oracle.ts`, hand-authored, importing nothing
 from `src/`. Never compared to each other.
 
@@ -174,8 +185,9 @@ from `src/`. Never compared to each other.
 | 15 | `outbox_mirror_state` | text | `30 §5.6`'s state at the claim |
 | 16 | `outbox_requires_unmirrored_tag` | bool | `§16`'s requirement |
 | 17 | `override_id` | text, **NULLABLE** | `30 §5.7.2` item 5. NULL carried in the framing word (v1.3.2, JCS-01) |
-| 18 | `occurred_at` | ts | RFC 3339, UTC, 6 fractional digits |
-| 19 | `prev_hash` | bytes | what makes it a chain |
+| 18 | `outbox_claim_clock_ref` | text, **NULLABLE** | **v1.3.4 (CSB-01, JCS-02).** `30 §9.2.5`'s deterministically selected evidentiary clock. Non-NULL **only** where the matched row is 3 |
+| 19 | `occurred_at` | ts | RFC 3339, UTC, 6 fractional digits |
+| 20 | `prev_hash` | bytes | what makes it a chain |
 
 **Required-absent on this kind:** `decision_id`, `reservation_id`, `approval_id`, `verdict`,
 `vendor_amount`, `total_exposure`, `forward_integral`, `is_rate_class`, the constructor

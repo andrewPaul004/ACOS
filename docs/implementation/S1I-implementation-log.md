@@ -369,3 +369,113 @@ fixture, the five changed accepted test files and the whole S1I document set as 
 implementation time. The commit that follows it records that sha in this section and in
 `S1I-result.md §1`, for the reason S1H recorded the same split: a result document cannot
 contain the sha of the commit that contains it.
+
+
+---
+
+## 13. The v1.3.4 owner-resolution pass
+
+**A separate pass, on a separate package issue, against candidate `2d5193b`.** `§1` through
+`§12` above are the S1I implementation as it was written at v1.3.3 and are unmodified.
+
+### 13.1 What the baseline actually was
+
+```
+$ git rev-parse HEAD
+2d5193b24c7ec85d8b555263c0468adfb959b7fa
+$ git status --porcelain
+(clean)
+$ npm run verify
+Test Files  120 passed (120)
+     Tests  1797 passed (1797)
+  Duration  644.79s
+[exited with code 0]
+```
+
+**120 files, 1797 tests, 1797 passed, 0 failed, 0 skipped.** Confirmed before any edit.
+
+### 13.2 The decisions that were genuinely open, and how each was closed
+
+**Where the case binding lives.** The candidates were a `case_ref` on the
+`AuthorizationRequest` computed by the constructor, or a relation resolved from the
+authoritative task. **The task**, because `24 §3` K7 already owns task records as kernel
+state and a constructor-computed value would put the binding inside the layer whose inputs
+`26 §2.1` spends its length excluding. The lookup path is
+`effect.authorisation_id → authorisation.task_id → authority_task.case_ref` and nothing
+else; `resource_ref`, customer identifiers and sibling orders are not read, and the way to
+not read them is to not write the query.
+
+**Derivation versus a check.** A `CHECK` comparing a supplied `case_ref` against the
+authoritative one was rejected: it is a check one code path can skip, and it leaves a
+parameter on the surface for a later caller to find. `effect_derive_case_ref` **overwrites**
+instead — a caller that supplies a case is ignored rather than refused, which is stronger,
+because a refusal tells an attacker the field exists.
+
+**A `BEFORE INSERT` trigger versus a change to `commitLocalAuthorisation`.** The trigger,
+because `§21` requires the binding to commit with the effect and a trigger writes it **as
+part of the INSERT itself** — so there is no instant between the two to crash at, and no
+new kill point is expressible. `local-transaction-atomicity.test.ts` records that claim as
+an assertion rather than a comment.
+
+**Whether row 1 keeps its position.** Yes. Moving it after row 2 would have made an
+above-floor unapproved IRRECOVERABLE effect halt at row 2 in `NORMAL`, which is a second
+behaviour change the owner did not direct — `§10` of the mandate says "Correct only the
+`NORMAL` state". Keeping the position means row 2's reachability is exactly what it was.
+
+**Whether the evidentiary clock is journaled.** Yes, as `30 §5.3a` field 18. `§16` requires
+a later **audit** to be able to answer which obligation justified a degraded claim, and
+control-plane state the control plane can rewrite does not answer an audit question. The
+`case_ref` itself is **not** journaled: the clock reference is the fact the audit needs and
+is the narrower disclosure.
+
+**Whether to widen `ClaimingRow`.** `3 | 4 | 5` became `1 | 3 | 4 | 5`, and the database's
+`claim_matched_row IN (3,4,5)` CHECK became `IN (1,3,4,5)` **paired with a second CHECK**
+requiring `claim_mirror_state = 'NORMAL'` whenever the row is 1. A plain widening would have
+admitted a row-1 claim recorded in a degraded state, which no code path produces and which
+a later classifier edit could otherwise introduce silently.
+
+### 13.3 Two defects found while doing the work, both disclosed
+
+**A hand-transcription defect in this pass, caught by PostgreSQL.** The first draft of
+`0011` hand-copied branches 1–5 of `effect_journal_canonical_bytes` and got the
+`AUDIT_MIRROR_DEGRADED` branch wrong — `mirror_reason` and `mirror_observed_at` for
+`mirror_declaration_event` and `mirror_observed_reason`. The migration failed to apply with
+`missing FROM-clause entry for table "row_in"`. **The repair was not to fix the copy but to
+stop copying**: both `0011` and `A0006` now take their predecessor's exact function body and
+insert only field 18, so branches 1–5 are byte-identical by construction rather than by
+proofreading. Recorded because a reviewer will see the extraction in the diff and should
+know why it is there.
+
+**The composite-cast arity in `vc-a3-cross-implementation.test.ts` caught the new column.**
+That test's own comment says the positional `NULL`s are "listed rather than omitted so a
+future column cannot silently shift a field". It did exactly that, on the first run after
+`0011`. The note is now in the file.
+
+### 13.4 What the accepted suites cost, and what was refused
+
+**Seven accepted suites needed re-basing**, and every change is recorded in
+`S1I-test-matrix.md §14.6` with its reason. Two are worth naming here because they could
+have been done wrongly:
+
+- **`outbox-controls.test.ts`.** The recoverability-relabelling and claim-bypass controls
+  both used an IRRECOVERABLE fixture whose observable consequence was a `NORMAL` halt. That
+  consequence is gone. They were moved to `UNCORROBORATED_STALL` — where the class genuinely
+  matters, because the mirror cannot record what is sent — rather than being deleted or
+  weakened to an assertion that still passed.
+- **`source-rules.test.ts` was NOT widened.** `0011`'s header quoted `30 §9.2.1`'s
+  forbidden-source list verbatim, which put the model's free-text field name into `src/` and
+  failed rule 1. `codeOf` strips TS comments and not SQL `--` comments, so the rule reads a
+  migration comment as code. **The exemption list was left alone and the quotation was
+  paraphrased**, with the reason recorded in the file: widening an accepted source-hygiene
+  rule to accommodate a comment is a worse outcome than a paraphrase.
+
+### 13.5 What was deliberately not built
+
+- **No approval-resume slice.** `§7` forbids it. The `RemedyObligation` lineage test proves
+  the LINEAGE leg — an obligation's case reaches the successor effect with no owner or model
+  re-entry — and says in the file which half it does not cover.
+- **No internal-only action class.** `§17` asks for one "if such a class currently exists",
+  and none does. The predicate's false branch is exercised over a local literal.
+- **No clock-volume bound.** TA-08 stays at S5, which is why `30 §9.2.5`'s deterministic
+  selection is required rather than optional.
+- **No transport, adapter, provider outcome or `DISPATCHED` state.**

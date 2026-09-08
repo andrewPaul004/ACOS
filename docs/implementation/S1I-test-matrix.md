@@ -3,8 +3,12 @@
 Every S1I property, the mandate section that requires it, the file that asserts it, and the
 discriminating control where one exists.
 
-**11 suites, 118 tests, all passing.** 113 of them against real PostgreSQL; the remaining
-five are a real `tsc` run.
+> **EXTENDED AT PACKAGE ISSUE v1.3.4.** Five suites are new and several accepted ones were
+> re-based. `§14` below is the addendum, and `§13` records what the owner resolutions took
+> off the not-tested list.
+
+**16 suites, all passing.** Almost all against real PostgreSQL; the remainder are a real
+`tsc` run and pure-kernel evaluations.
 
 **Real PostgreSQL throughout.** Two servers — control and audit — through the accepted S1G
 replication fixture, with the accepted S1E/S1F authority world and the accepted S1H mirror
@@ -245,6 +249,111 @@ asserts that afterwards.
 | Kill points 3, 4 and 5 of `44 §5.2` (request left / response / outcome commit) | They are defined by a request existing. **OPEN.** |
 | `PRESUMED_EXECUTED`, `VERIFIED`, `NEVER_SENT` transitions | Provider evidence only. `§23` forbids manufacturing it. **OPEN.** |
 | `I20` — provider accepted count ≤ reserved irrecoverable units | No provider. Outbox row count is NOT provider accepted count. **OPEN.** |
-| Row 3's claim-time eligibility | `S1I-C1`: no declared effect → `case_ref` binding. **PARTIAL, fail-closed.** |
+| ~~Row 3's claim-time eligibility~~ | **NO LONGER OPEN.** `S1I-C1` is resolved at v1.3.4 (CSB-01): `30 §9.2` declares the binding and `§14.1`–`§14.2` are the coverage. |
+| ~~An IRRECOVERABLE claim~~ | **NO LONGER OPEN.** `S1I-C6` is resolved at v1.3.4 (IRN-01): `§14.3` is the coverage. |
+| An internal-only action class enqueuing nothing, END TO END | **No such class exists in `37` S1's closed catalogue.** The predicate's false branch is exercised over a local literal in `§14.4`; registering a class to make a test pass would be inventing architecture. |
+| A live-clock VOLUME bound | TA-08 schedules it at S5 and v1.3.4 did not bring it forward. `30 §9.2.5`'s deterministic selection exists **because** the population is unbounded. **DEFERRED.** |
 | MIE consumption at `PRESUMED_EXECUTED` | `§24`: not consumed early, and the transition does not exist. The irrecoverable ledger stays zero throughout. **DEFERRED.** |
 | Two genuinely independent audit hosts | Two containers on one machine are not `30 §5`'s separation. Carried from S1G. **OPEN.** |
+
+
+---
+
+## 14. v1.3.4 addendum — the owner-resolution suites
+
+**Five new suites**, plus re-based cases in seven accepted ones. Every case runs against
+real PostgreSQL except where noted.
+
+### 14.1 `tests/integration/outbox/effect-case-binding.test.ts` — 13 cases
+
+`30 §9.2`, `I64`. **The binding is trusted.**
+
+| Property | Mandate | Control |
+|---|---|---|
+| An effect under a case-bound task carries that case, and no API supplied it | `§2` | — |
+| A task with no case, and a task row that does not exist, both yield NULL | `§4` | — |
+| ATTACK 1 — rewrite case A to case B: `UPDATE` and `DELETE` both refused | `§3` | `effect_append_only` |
+| ATTACK 1b — move the TASK afterwards: the committed effect keeps case A | `§3` | — |
+| ATTACK 2 — a direct INSERT supplying a case: the value is **discarded**, not refused | `§2` | — |
+| ATTACK 3 — a caller-supplied case at claim time | `§8` | **`unsafeClockBearingFromCallerCase` reaches row 3; production does not** |
+| ATTACK 3 REVERSED — the caller cannot remove a real clock | `§8` | same |
+| ATTACK 4 — a sibling effect on the SAME resource lends its clock | `§3` | **`unsafeClockBearingFromResourceLookup` borrows it; production does not** |
+| The dispatch payload is byte-identical under two different cases | `§20` | — |
+| The idempotency key is unchanged, because `case_ref` is a function of `task_id` | `§19` | — |
+| `RemedyObligation` lineage reaches the effect with no owner or model re-entry | `§7` | — |
+
+### 14.2 `tests/integration/outbox/outbox-claim-clock.test.ts` — 13 cases
+
+`30 §9.2.4`, `§9.2.5`, `I65`. **The operand is live, and the evidence is deterministic.**
+
+| Property | Mandate | Control |
+|---|---|---|
+| Enqueued with NO clock; one opens before the claim → **row 3 applies** | `§22` (1) | — |
+| Enqueued WITH a clock; it closes before the claim → row 3 stops | `§22` (2) | — |
+| A clock past its own deadline is not live — a breach is not a relaxation | `§22` (2) | — |
+| A process restart, on a FRESH POOL, gives the same current answer | `§22` (4) | — |
+| A case-less effect with THREE unrelated live clocks is still not clock-bearing | `§4` | — |
+| Several clocks → **earliest `deadline_at`**, inserted in the wrong order on purpose | `§6` | hand-authored ordering oracle |
+| Equal deadlines → **ascending `clock_ref`**, with an alphabetically-first later clock NOT selected | `§6` | same |
+| The selection does not change the boolean | `§6` | — |
+| Evidence persisted at row 3 and **absent** at row 5 | `§23` | — |
+| The DATABASE refuses a cross-case clock, a non-live clock, a dangling reference, a case-less citation, and evidence at a non-row-3 claim | `§23` | five direct-SQL attacks |
+
+### 14.3 `tests/integration/outbox/outbox-irrecoverable-claim.test.ts` — 8 cases
+
+`30 §5.1b`, IRN-01. **The five-condition matrix, and the ADR-026 path.**
+
+| Condition | Expected (hand-authored) | Control |
+|---|---|---|
+| `NORMAL` | **ELIGIBLE**, row 1, durably `CLAIMED` | **`unsafeIrrecoverableRow1` DENIES — the discrimination** |
+| `UNCORROBORATED_STALL` | HALT, row 1, nothing written | control AGREES |
+| `CORROBORATED_DEGRADED` | HALT, row 1 | control AGREES |
+| FULL HALT | HALT, row 1, posture recorded | control AGREES |
+| FULL HALT + valid ordinary override | HALT, row 1, **override allowance untouched** | control AGREES |
+| An override naming IRRECOVERABLE or row 1 | refused by the database | `51 §3.6` |
+| **`§24` end to end** | authorise → `NORMAL` → enqueue → claim → `CLAIMED`, **STOP**: zero HTTP, zero `DISPATCHED`, zero provider outcome, all three irrecoverable ledgers zero, one journal row, second claim `ALREADY_CLAIMED`, no economic movement | — |
+| **`§25`** | the same fixture claims in `NORMAL` and is refused in all four degraded conditions | — |
+
+### 14.4 `tests/integration/outbox/outbox-scope.test.ts` — 8 cases
+
+`25 §7`, `I66`, OBX-02. **External-write, and only external-write.**
+
+| Property | Mandate | Control |
+|---|---|---|
+| One REVERSIBLE, one COMPENSABLE and one IRRECOVERABLE external effect each enqueue | `§17` | — |
+| All three coexist, one row per effect identity | `§17` | — |
+| Every S1 catalogue class is external-write, enumerated over the whole catalogue | `§17` | — |
+| The predicate is **not** recoverability: three classes, one answer | `§17` | — |
+| An INTERNAL-ONLY entry is FALSE, with recoverability untouched | `§17` | the half no registered class can exercise |
+| The catalogue is frozen, and mutating an entry throws | `§17` | — |
+
+### 14.5 `tests/integration/outbox/outbox-claim-field-order.test.ts` — 8 cases
+
+`30 §5.3a`, JCS-02. **The order is normative, and a transposition is caught.**
+
+| Property | Mandate | Control |
+|---|---|---|
+| Twenty fields, in the declared sequence, with field 18 the clock | `§16` | a SECOND hand transcription, of the ORDER |
+| All three readings agree on a row-3 claim carrying a non-null clock | `§16` | — |
+| Two adjacent NULLs frame as eight bytes of reserved word | `§16` | v1.3.2's withdrawn sentinel would have collided |
+| **Fields 8 and 9 transposed → different bytes at the SAME LENGTH** | `§16` | **and the membership check PASSES, asserted — which is why the suite is positional** |
+| Both production planes reject the swapped bytes | `§16` | — |
+| The two NULLABLE fields transposed also diverge | `§16` | — |
+| Neither migration names the other's helpers, and neither reaches the other plane | `§16` | source assertion over both migrations |
+| Reordering the row object's keys changes nothing | `§16` | — |
+
+### 14.6 Re-based accepted cases
+
+| Suite | What changed, and why |
+|---|---|
+| `outbox-claim-eligibility.test.ts` | The IRRECOVERABLE case is state-qualified: eligible in `NORMAL`, halted in both degraded states, expectation taken from the oracle |
+| `outbox-claim.test.ts` | `§24`'s MIE case now CLAIMS the IRRECOVERABLE effect **and still asserts every ledger zero** — the property is only testable once the claim can happen |
+| `outbox-controls.test.ts` | The recoverability-relabelling and claim-bypass controls moved to a DEGRADED state, where the class actually matters. **Sharper, not weaker** |
+| `first-match-order.test.ts` | Row 1's two properties — unconditional MATCH, state-qualified BEHAVIOUR — asserted separately |
+| `vc-a2-inversion.test.ts` | `36 §6`'s equality becomes an ordering with exactly one strict row, and `§5.6`'s inversion is asserted to be exactly rows 1 and 3 |
+| `no-transport-boundary.test.ts` | The clock module joins the allowed-import list, with the reason; `claimClockRef` joins the claim's key set |
+| `local-transaction-atomicity.test.ts` | `§21`: `I64`'s binding commits with the effect. **No new kill point, because there is no instant between them to kill at** |
+| `post-commit-and-crash-matrix.test.ts` | `§28`: the replacement assertions are **demonstrated firing** against seeded occurrences, and the defective pattern is reproduced and shown not to fire |
+| `vc-a3-cross-implementation.test.ts` | One more positional `NULL` per plane. **The composite-cast arity is exactly the mechanism that catches a shifted field, and it caught this one** |
+| `mirrorPrecedenceTable.ts` (oracle) | Row 1 transcribed from `22 §3.1` as v1.3.4 prints it; still imports nothing |
+| `unsafe-precedence-order.ts` (control) | Row 1's behaviour tracks the architecture, so ORDER remains the control's only variable |

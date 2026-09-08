@@ -1,5 +1,28 @@
 # S1I — Owner Clarifications
 
+> ## ALL SEVEN ARE RESOLVED. `OWNER DECISION STILL REQUIRED = 0`.
+>
+> **This document is the record of what was ASKED, as it was asked, at package issue
+> v1.3.3. It is retained unmodified below.** The owner's dispositions are in
+> **`S1I-owner-resolution.md`**, and the normative record is
+> **`docs/architecture/v1.3.4/phase2-v1.3.4-errata.md`**.
+>
+> | Id | Disposition | Errata item |
+> |---|---|---|
+> | **S1I-C1** | **OWNER CLARIFICATION / ARCHITECTURE DEFECT RESOLVED** — a trusted, kernel-owned, immutable effect→case binding is declared; row 3 is **not** intentionally unreachable | **CSB-01** |
+> | **S1I-C2** | **OWNER CLARIFICATION — ACCEPTED.** `ENQUEUED`, with no timeout, lease, expiry or reclaim out of `CLAIMED` | **OBX-01** |
+> | **S1I-C3** | **OWNER CLARIFICATION — ACCEPTED.** The claim transaction is the local durable dispatching transaction | **OBX-03** |
+> | **S1I-C4** | **OWNER CLARIFICATION — ACCEPTED AND MADE NORMATIVE.** `30 §5.3a` declares the row-kind field order | **JCS-02** |
+> | **S1I-C5** | **OWNER CLARIFICATION — ACCEPTED WITH EXTERNAL-WRITE SCOPE.** Every effect crossing an external-write boundary, and only those | **OBX-02** |
+> | **S1I-C6** | **ARCHITECTURE DEFECT RESOLVED.** IRRECOVERABLE is dispatch-eligible in `NORMAL` **only**; every degraded halt is unchanged | **IRN-01** |
+> | **S1I-C7** | **OWNER SEQUENCING CLARIFICATION — ACCEPTED.** The outbox foundation lands at S1; the vendor half stays at S4 | **SEQ-01** |
+>
+> **Two of the seven — C1 and C6 — were genuine architecture defects**, and both were
+> reported rather than routed around. That is the outcome `§51` of the S1I mandate was
+> written to produce.
+
+---
+
 Package issue **v1.3.3** is authoritative. Baseline commit **`8ce0d41`**.
 
 Every item below is a place where the S1I mandate names a load-bearing point and v1.3.3
@@ -26,7 +49,9 @@ the owner is being asked to confirm.
 
 ## S1I-C1 — v1.3.3 declares no binding from an effect to a `statutory_clock.case_ref`
 
-**STATUS: STOPPED. The affected leg is reported PARTIAL and reads FAIL-CLOSED.**
+**STATUS AS ASKED: STOPPED. The affected leg was reported PARTIAL and read FAIL-CLOSED.**
+
+**RESOLVED at v1.3.4 (CSB-01): resolution (a) — the binding is declared.** `30 §9.2` gives it as `effect.case_ref`, kernel-owned, immutable, inherited from the authoritative task, NULL where there is no case, with claim-time derivation, deterministic evidentiary selection and persisted evidence. Invariants `I64` and `I65`. See `S1I-owner-resolution.md §1`.
 
 ### What row 3 needs
 
@@ -104,7 +129,9 @@ which case `S1I-result.md §9`'s PARTIAL becomes the settled position for S1.
 
 ## S1I-C2 — v1.3.3 names `CLAIMED` and declares no pre-claim state
 
-**STATUS: IMPLEMENTED as `ENQUEUED`. The STRUCTURE is architecture; the IDENTIFIER is not.**
+**STATUS AS ASKED: IMPLEMENTED as `ENQUEUED`. The STRUCTURE is architecture; the IDENTIFIER was not.**
+
+**RESOLVED at v1.3.4 (OBX-01): ACCEPTED.** `25 §7` declares the state machine — two states, one transition, and **no timeout, lease, expiry or reclaim out of `CLAIMED`**. The identifier is now architecture too.
 
 `25 §7`, verbatim: *"The row **transitions to** `CLAIMED` in a committed transaction before
 the HTTP call."* ADR-026 decision item 2 uses the same words.
@@ -128,7 +155,9 @@ domain is a two-value `CHECK`, read out of the running catalogue by
 
 ## S1I-C3 — "the dispatching transaction" is undefined in a slice with no dispatcher
 
-**STATUS: IMPLEMENTED as the CLAIM transaction. The only sound reading, and it is proved.**
+**STATUS AS ASKED: IMPLEMENTED as the CLAIM transaction. The only sound reading, and it is proved.**
+
+**RESOLVED at v1.3.4 (OBX-03): ACCEPTED.** `25 §7` identifies the claim transaction with `30 §5.7.2` item 3's dispatching transaction, and records that this does not put the HTTP request inside the database transaction.
 
 `30 §5.7.2` item 3, verbatim:
 
@@ -165,7 +194,9 @@ transaction, or name a later one — noting that a later one admits N+1.
 
 ## S1I-C4 — no declared byte order for a record of the claim
 
-**STATUS: IMPLEMENTED as an implementation declaration, exactly as S1H's three kinds were.**
+**STATUS AS ASKED: IMPLEMENTED as an implementation declaration, exactly as S1H's three kinds were.**
+
+**RESOLVED at v1.3.4 (JCS-02): ACCEPTED AND MADE NORMATIVE.** New `30 §5.3a` declares the twenty-field order in the specification, with the independence and insertion-order obligations stated normatively, and adds field 18 for `§9.2.5`'s evidentiary clock. **Class 20's signature obligation is extended and remains owed.**
 
 `23 §6` B8 requires that no effect reach the outside without a committed record, and the
 claim is the last local record before one could. `30 §5.3` requires a hashed row's field
@@ -191,7 +222,9 @@ obligation now covers one further row kind.
 
 ## S1I-C5 — the outbox is scoped to "irrecoverable sends" in three places
 
-**STATUS: WIDENED to every catalogue class. Strictly stronger. Confirmation requested.**
+**STATUS AS ASKED: WIDENED to every catalogue class. Strictly stronger. Confirmation requested.**
+
+**RESOLVED at v1.3.4 (OBX-02): ACCEPTED WITH EXTERNAL-WRITE SCOPE.** The predicate is `effect requires external dispatch`, derived from the closed catalogue — **not** the irrecoverable class, and **not** every catalogue action unconditionally. Invariant `I66`.
 
 Three passages scope it narrowly:
 
@@ -223,7 +256,9 @@ subject at S1.
 
 ## S1I-C6 — the class ADR-026 is titled for cannot reach a claim at S1
 
-**STATUS: A FINDING, reported. Nothing invented and nothing worked around.**
+**STATUS AS ASKED: A FINDING, reported. Nothing invented and nothing worked around.**
+
+**RESOLVED at v1.3.4 (IRN-01): reading (b) — ARCHITECTURE DEFECT.** `22 §3.1`'s `NORMAL` column for row 1 was a transcription artefact of a table written about degraded states. `30 §5.1b` state-qualifies row 1: **dispatch in `NORMAL`, halt in both degraded states, halt under the posture, unreachable by override in every state.** See `S1I-owner-resolution.md §2`.
 
 `30 §5.1` item 4 row 1, verbatim: *"`recoverability == IRRECOVERABLE` | **Halt.** No send,
 no reship, no public post, no address edit. Unmirrored and unundoable is the combination the
@@ -267,7 +302,9 @@ the fail-closed direction.
 
 ## S1I-C7 — `37` schedules the outbox at S4, and S1I builds it now
 
-**STATUS: RECORDED. An owner sequencing decision, not an architecture conflict.**
+**STATUS AS ASKED: RECORDED. An owner sequencing decision, not an architecture conflict.**
+
+**RESOLVED at v1.3.4 (SEQ-01): ACCEPTED.** `37 §2` splits the outbox: the durable schema, tag, recovery and non-reclaimable claim at S1; the adapter, HTTP, provider idempotency/query, unknown-outcome transition, sandbox and reconciliation at S4. `I36`'s enforcement leg lands at S1 and its verification leg stays at S4.
 
 `37 §2` S4's Build list, verbatim: *"**The ACOS-owned outbox** with at-most-once `CLAIMED`,
 provider-visible correlation tag, recoverability-keyed unknown-outcome policy and

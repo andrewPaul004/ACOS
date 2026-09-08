@@ -581,21 +581,94 @@ describe('the excluded future steps are absent from `src/`', () => {
     expect(leaks, `the mirror reached the authority path:\n  ${leaks.join('\n  ')}`).toEqual([]);
   });
 
-  it('there is no SETTLEMENT, RECONCILIATION or EXTERNAL CLAIM path', async () => {
+  it('there is no SETTLEMENT or RECONCILIATION path, and the CLAIM is confined', async () => {
+    /*
+     * ---------------------------------------------------------------------------------
+     * S1I NARROWED THIS ASSERTION, AND THIS COMMENT IS THE RECORD OF EXACTLY HOW MUCH.
+     *
+     * S1F asserted `/CLAIMED/` and `/outboxClaim/i` as ABSENCES over the whole of `src/`,
+     * with the stated reason (`degradedModeOverride.ts`,
+     * `emit_degraded_mode_override_event`) that "`25 §7` layer 4's outbox owns that
+     * literal [...] and `local-authorisation-boundary.test.ts` forbids it in `src/` UNTIL
+     * THE OUTBOX EXISTS."
+     *
+     * The outbox exists. So the property becomes CONFINEMENT rather than absence — the
+     * same move S1H made when it built the mirror mechanism S1G had asserted absent — and
+     * the confinement is asserted against a HAND-AUTHORED FILE LIST, so a new file
+     * acquiring the literal fails this test rather than joining a pattern exemption.
+     *
+     * WHAT IS UNCHANGED AND STILL GLOBAL: `settled_total` and `vendorQuery`. S1I builds no
+     * settlement and no vendor read, and both remain absent from every file INCLUDING the
+     * outbox directory.
+     *
+     * WHAT THE MONEY PATH STILL MAY NOT KNOW: clause 3 asserts the four authority
+     * directories contain neither literal, so no authorisation decision can depend on a
+     * claim. `30 §5.1` item 3's ordering is why: the claim happens after the COMMIT and
+     * after the audit push.
+     * ---------------------------------------------------------------------------------
+     */
     const files = await sourceOf();
-    const offenders: string[] = [];
+
+    // 1. `settled_total` and `vendorQuery` remain absent from ALL of `src/`.
+    const settlement: string[] = [];
     for (const { path, code } of files) {
       // `reconciler.ts` is the ACCEPTED S1A settlement-observation writer for
       // `standing_window_exposure`, which is a LOCAL ledger move and not an external
       // reconciliation; it is allowed and named here so its exemption is deliberate.
       if (path.endsWith(join('exposure', 'reconciler.ts'))) continue;
-      for (const pattern of [/settled_total/, /CLAIMED/, /outboxClaim/i, /vendorQuery/i]) {
-        if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
+      for (const pattern of [/settled_total/, /vendorQuery/i]) {
+        if (pattern.test(code)) settlement.push(`${path} (${String(pattern)})`);
       }
     }
-    expect(offenders, `settlement or claim code in src/:\n  ${offenders.join('\n  ')}`).toEqual(
-      [],
+    expect(
+      settlement,
+      `settlement or vendor-read code in src/:\n  ${settlement.join('\n  ')}`,
+    ).toEqual([]);
+
+    // 2. The `CLAIMED` literal and the outbox vocabulary live ONLY in these files.
+    const claimSites = [
+      join('src', 'kernel', 'outbox', 'outboxState.ts'),
+      join('src', 'kernel', 'outbox', 'claim.ts'),
+      join('src', 'kernel', 'outbox', 'enqueue.ts'),
+      join('src', 'kernel', 'outbox', 'recovery.ts'),
+      join('src', 'kernel', 'outbox', 'correlationTag.ts'),
+      // The transport carries the claim's journal row to the audit plane. `30 §5.1` item 2
+      // and `I17`'s two-sided diff make that mandatory, not optional — see A0005's header.
+      join('src', 'audit', 'transport', 'journalRecord.ts'),
+      join('src', 'audit', 'ingress.ts'),
+      join('src', 'replication', 'journalPusher.ts'),
+      // The ACCEPTED S1H module whose comment names the literal in order to disclaim it.
+      join('src', 'kernel', 'mirror', 'degradedModeOverride.ts'),
+    ];
+    const unexpected: string[] = [];
+    for (const { path, code } of files) {
+      const relative = path.replace(`${process.cwd()}${sep}`, '');
+      if (claimSites.includes(relative)) continue;
+      for (const pattern of [/CLAIMED/, /\boutbox\b/i]) {
+        if (pattern.test(code)) unexpected.push(`${relative} (${String(pattern)})`);
+      }
+    }
+    expect(
+      unexpected,
+      `the claim vocabulary escaped its declared files:\n  ${unexpected.join('\n  ')}`,
+    ).toEqual([]);
+
+    // 3. And the MONEY PATH still knows nothing about it — the property that matters.
+    const moneyPath = files.filter(
+      ({ path }) =>
+        path.includes(join('kernel', 'authority')) ||
+        path.includes(join('kernel', 'policy')) ||
+        path.includes(join('kernel', 'exposure')) ||
+        path.includes(join('kernel', 'canonicalisation')),
     );
+    expect(moneyPath.length).toBeGreaterThan(20);
+    const leaked: string[] = [];
+    for (const { path, code } of moneyPath) {
+      for (const pattern of [/CLAIMED/, /\boutbox\b/i, /claimForExternalDispatch/]) {
+        if (pattern.test(code)) leaked.push(`${path} (${String(pattern)})`);
+      }
+    }
+    expect(leaked, `the claim reached the money path:\n  ${leaked.join('\n  ')}`).toEqual([]);
   });
 
   it('there is exactly ONE Cedar decision path, and S1F added none', async () => {

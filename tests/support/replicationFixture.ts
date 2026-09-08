@@ -222,6 +222,14 @@ export function recordFromControlRow(row: Record<string, unknown>): JournalTrans
       overrideId: (row['override_id'] as string | null) ?? null,
       overrideEvent: (row['override_event'] as string | null) ?? null,
       overrideActor: (row['override_actor'] as string | null) ?? null,
+      // S1I's `OUTBOX_CLAIMED`. Read off `j.*` exactly as every other kind's columns are.
+      outboxId: (row['outbox_id'] as string | null) ?? null,
+      outboxCorrelationTag: (row['outbox_correlation_tag'] as string | null) ?? null,
+      outboxClaimId: (row['outbox_claim_id'] as string | null) ?? null,
+      outboxMatchedRow: (row['outbox_matched_row'] as number | null) ?? null,
+      outboxMirrorState: (row['outbox_mirror_state'] as string | null) ?? null,
+      outboxRequiresUnmirroredTag:
+        (row['outbox_requires_unmirrored_tag'] as boolean | null) ?? null,
       occurredAt: row['occurred_at'] as Date,
       prevHash: (row['prev_hash'] as Buffer | null) ?? null,
     },

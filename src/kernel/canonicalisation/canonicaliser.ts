@@ -1,7 +1,12 @@
 import { toDb } from '../exposure/money.js';
 import { ACTION_CATALOGUE, type ActionCatalogueEntry } from './actionCatalogue.js';
 import { computed } from './brands.js';
-import { canonicalHash, hex } from './canonicalBytes.js';
+import {
+  canonicalBytes,
+  canonicalHash,
+  hex,
+  type CanonicalStructure,
+} from './canonicalBytes.js';
 import { ConstructorVersionResolver } from './constructorVersion.js';
 import { deny } from './errors.js';
 import { permittedFieldsOf, type ProposedIntent } from './intent.js';
@@ -224,8 +229,17 @@ export class EffectCanonicaliser {
  * literal in `refundCreate.ts` cannot move it — which is the property
  * tests/canonicalisation/hash-binding.test.ts asserts directly.
  */
-export function dispatchPayloadCanonicalHash(payload: DispatchPayload): Buffer {
-  return canonicalHash('acos.dispatch_payload.v1', [
+const DISPATCH_PAYLOAD_KIND = 'acos.dispatch_payload.v1';
+
+/**
+ * The declared field order, written once.
+ *
+ * Factored out of `dispatchPayloadCanonicalHash` below so the ORDER exists in exactly one
+ * place. Two literals would be two things to keep in step, and the whole property
+ * `hash-binding.test.ts` asserts is that the order is declared rather than incidental.
+ */
+function dispatchPayloadStructure(payload: DispatchPayload): CanonicalStructure {
+  return [
     { kind: 'text', value: payload.adapter },
     { kind: 'text', value: payload.method },
     { kind: 'json', value: { ...payload.vendorParameters } },
@@ -233,7 +247,37 @@ export function dispatchPayloadCanonicalHash(payload: DispatchPayload): Buffer {
     { kind: 'money', value: payload.monetaryEffect },
     { kind: 'text', value: payload.preconditionToken },
     { kind: 'text', value: payload.authorisationRef },
-  ]);
+  ];
+}
+
+/**
+ * The payload's canonical BYTES, under the same declared order the hash commits to.
+ *
+ * ---------------------------------------------------------------------------------
+ * WHY THE BYTES ARE NOW A PRODUCTION EXPORT, AND WHY THAT IS NOT A WIDENING.
+ *
+ * `26 §2.1` declares `dispatch_payload_hash` and no payload column, so S1B and S1F
+ * persisted the hash alone. The canonical effect subsequently has to cross an
+ * ASYNCHRONOUS boundary — `25 §7`'s durable pre-dispatch row — and a hash cannot be
+ * carried across one: a future dispatcher holding only a digest would have to REBUILD the
+ * vendor request from whatever state is current when it runs, which is the reconstruction
+ * `33 §1` forbids ("Each [adapter] receives the kernel's `dispatch_payload` verbatim").
+ *
+ * So the bytes have to be storable, and this function is how they are obtained. It adds no
+ * new commitment and no second field order: `dispatchPayloadCanonicalHash` is now defined
+ * as `sha256` OF THIS FUNCTION'S OUTPUT, so the bytes and the hash cannot diverge, and
+ * every previously computed hash is byte-identical.
+ *
+ * IT IS NOT A DISPATCH SURFACE. It returns bytes. It performs no I/O, names no vendor, and
+ * takes and returns nothing an adapter could use as an address.
+ * ---------------------------------------------------------------------------------
+ */
+export function dispatchPayloadCanonicalBytes(payload: DispatchPayload): Buffer {
+  return canonicalBytes(DISPATCH_PAYLOAD_KIND, dispatchPayloadStructure(payload));
+}
+
+export function dispatchPayloadCanonicalHash(payload: DispatchPayload): Buffer {
+  return canonicalHash(DISPATCH_PAYLOAD_KIND, dispatchPayloadStructure(payload));
 }
 
 export function dispatchPayloadHash(payload: DispatchPayload): string {

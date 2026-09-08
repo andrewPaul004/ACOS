@@ -101,7 +101,7 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and fifteen negative files', () => {
+  it('the fixture directory contains a positive control and sixteen negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       // S1E. WIDENED BY EXACTLY TWO, and every existing entry is untouched.
@@ -153,6 +153,20 @@ describe('the harness discriminates', () => {
       'model-exposure-into-policy.ts',
       'model-windows-into-request.ts',
       'mutate-canonical-exposure.ts',
+      // S1I. WIDENED BY EXACTLY ONE, and every existing entry is untouched.
+      //
+      // The new fixture is the compile-time half of S1I's outbox authority boundary: no
+      // caller-supplied recoverability, correlation tag, payload hash, eligibility, mirror
+      // state or override reaches the enqueue or the claim, and an `AcquiredClaim` is not a
+      // `DispatchPayload`. It lives in this directory because there is one type-negative
+      // tsconfig project and a second one would duplicate the harness; its EXPECTED
+      // DIAGNOSTICS are owned by `tests/integration/outbox/outbox-type-boundary.test.ts`,
+      // not by this file, so this list is the only line S1I changes here.
+      //
+      // The harness's discriminating properties are unaffected: the positive control still
+      // compiles clean, and "no diagnostic appears on an unmarked line" now covers the new
+      // file as well.
+      'outbox-caller-supplied-authority.ts',
       'policy-operand-supplied.ts',
       // S1C: `26 §2.0` — the selector "is a pair rather than an integer". No index
       // compatibility layer exists, and adding one would be a visible type change.

@@ -26,6 +26,19 @@ import {
  * mirror mechanism is absent — S1H builds exactly that mechanism — while keeping every
  * absence S1G asserted that S1H does not build: the anchor, the outbox, the adapter, the
  * exclusive claim, the vendor read, and any `DISPATCHED` state at all.
+ *
+ * ---------------------------------------------------------------------------------
+ * S1I AMENDED EXACTLY TWO OF THOSE ABSENCES AND NO OTHERS.
+ *
+ * S1I builds `25 §7`'s OUTBOX and `I36`'s EXCLUSIVE CLAIM, so those two become CONFINEMENT
+ * properties — the same move this file already made for the mirror — and the confinement is
+ * asserted against hand-authored file and relation lists below and in
+ * `local-authorisation-boundary.test.ts`.
+ *
+ * THE ANCHOR, THE ADAPTER, THE VENDOR READ, SETTLEMENT AND ANY `DISPATCHED` STATE REMAIN
+ * ABSENT, globally and unchanged, and `tests/integration/outbox/no-transport-boundary.test.ts`
+ * adds the transport absences S1I's own directory has to satisfy on top of these.
+ * ---------------------------------------------------------------------------------
  * =================================================================================
  */
 
@@ -147,7 +160,7 @@ describe('NO EXTERNAL CALL SURFACE EXISTS ANYWHERE IN `src/`', () => {
     expect(offenders, `external call surface in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
-  it('no adapter, no outbox, no exclusive claim, no vendor query, no anchor', async () => {
+  it('no adapter module, no vendor query, no anchor, no settlement', async () => {
     const files = await sourceOf();
     const offenders: string[] = [];
     for (const { path, code } of files) {
@@ -161,14 +174,20 @@ describe('NO EXTERNAL CALL SURFACE EXISTS ANYWHERE IN `src/`', () => {
       // own scope — so a bare `/adapter/` would flag the catalogue and every module that
       // reads it, and would prove nothing. What must be absent is an adapter MODULE, an
       // outbox, an exclusive claim, a vendor read and the hourly anchor.
+      // S1I NARROWED THIS LIST BY EXACTLY THREE PATTERNS: `/\boutbox\b/i`,
+      // `/outboxClaim/i` and `/exclusiveClaim/i`. S1I builds `25 §7`'s outbox and `I36`'s
+      // exclusive claim, so their ABSENCE is no longer the property; their CONFINEMENT is,
+      // and it is asserted in `local-authorisation-boundary.test.ts` against a
+      // hand-authored file list and again in `no-transport-boundary.test.ts`.
+      //
+      // EVERY OTHER PATTERN IS UNCHANGED AND STILL GLOBAL. S1I builds no adapter module,
+      // no vendor read, no anchor and no settlement, and `no-transport-boundary.test.ts`
+      // adds the transport absences the outbox directory has to satisfy on top.
       for (const pattern of [
         /from\s+['"][^'"]*adapters?\//,
         /callAdapter/i,
         /adapterClient/i,
         /\.dispatch\s*\(/,
-        /\boutbox\b/i,
-        /outboxClaim/i,
-        /exclusiveClaim/i,
         /vendorQuery/i,
         /vendorRead/i,
         /externalAnchor/i,
@@ -214,6 +233,12 @@ describe('THE MIRROR MECHANISM IS CONFINED TO ITS OWN DIRECTORIES', () => {
     const allowed = [
       `${sep}kernel${sep}mirror${sep}`,
       `${sep}kernel${sep}clocks${sep}`,
+      // S1I. `30 §5.1` item 3 puts the precedence evaluation at "dispatch, per (4)", and
+      // the outbox CLAIM is the first durable step of that. So the claim service is the
+      // architecture's own reader of the mirror state, not a leak of it — and `§13` of the
+      // S1I mandate requires it to reuse `classifyDispatchPrecedence` rather than build a
+      // second precedence implementation, which `no-transport-boundary.test.ts` asserts.
+      `${sep}kernel${sep}outbox${sep}`,
       `${sep}audit${sep}`,
       `${sep}replication${sep}`,
       `${sep}db${sep}`,
@@ -278,25 +303,38 @@ describe('NEITHER DATABASE HAS A DISPATCH SURFACE', () => {
   it('the control schema has no dispatch table and no dispatch column', async () => {
     const client = await h.control.connect();
     try {
+      /*
+       * S1I NARROWED THIS TO A HAND-AUTHORED ALLOWLIST, and the allowlist is the point:
+       * `25 §7`'s outbox now exists, so "no relation whose name matches `outbox`" is the
+       * wrong property. What must still be true is that the ONLY such relations are the
+       * two S1I declares, and that NO ADAPTER OR VENDOR RELATION EXISTS AT ALL.
+       */
       const tables = await client.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
       );
+      const declaredOutboxRelations = ['dispatch_outbox', 'dispatch_outbox_missing'];
       for (const row of tables.rows) {
-        expect(row.table_name).not.toMatch(/outbox|dispatch|adapter|vendor/i);
+        // No adapter and no vendor relation, in any slice. Unchanged and still global.
+        expect(row.table_name).not.toMatch(/adapter|vendor/i);
+        if (/outbox|dispatch/i.test(row.table_name)) {
+          expect(declaredOutboxRelations, row.table_name).toContain(row.table_name);
+        }
       }
       const columns = await client.query<{ table_name: string; column_name: string }>(
         `SELECT table_name, column_name FROM information_schema.columns
           WHERE table_schema = 'public' AND column_name ~ 'dispatch'`,
       );
-      // THREE columns match `dispatch`, and each is named here so its presence is deliberate:
+      // Each column matching `dispatch` is named here so its presence is deliberate:
       //
       //   `dispatch_payload_hash`  the ACCEPTED S1B canonicaliser column — the HASH of a
-      //                            payload that is never sent.
+      //                            payload. S1I stores the payload's BYTES beside it on the
+      //                            outbox row; neither is ever sent anywhere.
       //   `effects_dispatched`     `30 §5.7.2` item 3's override counters, incremented in the
-      //   `monetary_dispatched`    transaction that WOULD dispatch. `§18` of the mandate
+      //   `monetary_dispatched`    transaction that WOULD dispatch. `§18` of the S1H mandate
       //                            calls it "the pre-dispatch override allowance".
       //
-      // Nothing else. In particular no `dispatched_at`, which would be a record of a send.
+      // NOTHING ELSE. In particular no `dispatched_at` and no `dispatched` status column,
+      // either of which would be a record of a send — `§41` of the S1I mandate.
       for (const row of columns.rows) {
         expect(
           ['dispatch_payload_hash', 'effects_dispatched', 'monetary_dispatched'],

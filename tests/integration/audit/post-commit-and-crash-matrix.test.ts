@@ -389,20 +389,62 @@ describe('the retry source is PostgreSQL, not an in-memory queue', () => {
     expect(held.map((r) => r.chain_seq)).toEqual(['1', '2', '3', '4']);
   });
 
-  it('the backlog query names `effect_journal` and `mirrored_at IS NULL`, and no outbox exists', async () => {
+  it('the backlog query names `effect_journal` and `mirrored_at IS NULL`, and claims nothing', async () => {
     const source = await readFile(
       join(process.cwd(), 'src', 'replication', 'journalPusher.ts'),
       'utf8',
     );
     expect(source).toContain('mirrored_at IS NULL');
     expect(source).toContain('FROM effect_journal');
-    // `37` S4 owns the outbox and `25 §7` layer 4 owns the exclusive claim (`I36`). S1G
-    // introduces neither: no second queue, and no `CLAIMED` state on anything.
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-    expect(code.toLowerCase()).not.toContain('outbox');
-    expect(code).not.toMatch(/CLAIMED/);
+
+    /*
+     * -----------------------------------------------------------------------------
+     * S1I NARROWED TWO OF THESE FOUR ASSERTIONS, AND THIS COMMENT IS THE RECORD OF IT.
+     *
+     * S1G asserted that the pusher names no `outbox` and no `CLAIMED`, with the stated
+     * reason that "`37` S4 owns the outbox and `25 §7` layer 4 owns the exclusive claim
+     * (`I36`). S1G introduces neither: no second queue, and no `CLAIMED` state on
+     * anything."
+     *
+     * S1I introduces both, and the pusher HAS to carry the claim's journal row: `I17` is
+     * a TWO-SIDED DIFF over `journal_seq`, and `30 §5.2` gives a missing sequence value
+     * "exactly one interpretation" — suppression. A control-side row kind the audit store
+     * could not ingest would be a permanent, unresolvable `I17` discrepancy. So the six
+     * `outbox_*` columns and the `OUTBOX_CLAIMED` row kind are on the wire BY
+     * REQUIREMENT, and `A0005`'s header carries the argument.
+     *
+     * THE PROPERTY THIS CASE IS ACTUALLY ABOUT IS UNCHANGED AND IS RESTATED BELOW: the
+     * pusher is a REPLICATOR, not a queue consumer. It takes no row lock, skips no locked
+     * row, claims nothing and decides nothing — which is what `FOR UPDATE` and
+     * `SKIP LOCKED` were standing in for, and both remain forbidden. The list below adds
+     * six further absences that say the same thing in the outbox's own vocabulary.
+     *
+     * DISCLOSED WHILE EDITING THIS BLOCK, BECAUSE A REVIEWER WILL SEE IT IN THE DIFF:
+     * the accepted `expect(code).not.toMatch(/…CLAIMED…/)` line contained two literal
+     * `0x08` BACKSPACE bytes where `\b` word boundaries were intended, so the pattern
+     * matched `BACKSPACE + CLAIMED + BACKSPACE` and could never fire. It was a no-op in
+     * the accepted baseline. S1I does not silently repair it and does not silently keep
+     * it: the assertion it was reaching for — the pusher does not claim anything — is
+     * restated below as `claimForExternalDispatch`, `enqueueDispatch`, `dispatch_outbox`
+     * and `'CLAIMED'` absences, which DO fire.
+     * -----------------------------------------------------------------------------
+     */
     expect(code).not.toContain('FOR UPDATE');
     expect(code).not.toContain('SKIP LOCKED');
+    for (const forbidden of [
+      'dispatch_outbox',
+      'claimForExternalDispatch',
+      'enqueueDispatch',
+      "'CLAIMED'",
+      'INSERT INTO',
+      'DELETE FROM',
+    ]) {
+      expect(code, `journalPusher.ts carries ${forbidden}`).not.toContain(forbidden);
+    }
+    // What it DOES name is the claim row's columns, on the wire and nowhere else.
+    expect(code).toContain('outbox_correlation_tag');
+    expect(code).toContain('outbox_requires_unmirrored_tag');
   });
 });
 

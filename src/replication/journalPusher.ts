@@ -116,6 +116,14 @@ interface BacklogRow {
   readonly override_id: string | null;
   readonly override_event: string | null;
   readonly override_actor: string | null;
+  // S1I's `OUTBOX_CLAIMED`. `SELECT j.*` already returned these columns the moment 0010
+  // added them; naming them here is what puts them on the wire.
+  readonly outbox_id: string | null;
+  readonly outbox_correlation_tag: string | null;
+  readonly outbox_claim_id: string | null;
+  readonly outbox_matched_row: number | null;
+  readonly outbox_mirror_state: string | null;
+  readonly outbox_requires_unmirrored_tag: boolean | null;
   readonly occurred_at: Date;
   readonly prev_hash: Buffer | null;
   readonly row_hash: Buffer;
@@ -172,6 +180,12 @@ function toRecord(row: BacklogRow): JournalTransportRecord {
       overrideId: row.override_id,
       overrideEvent: row.override_event,
       overrideActor: row.override_actor,
+      outboxId: row.outbox_id,
+      outboxCorrelationTag: row.outbox_correlation_tag,
+      outboxClaimId: row.outbox_claim_id,
+      outboxMatchedRow: row.outbox_matched_row,
+      outboxMirrorState: row.outbox_mirror_state,
+      outboxRequiresUnmirroredTag: row.outbox_requires_unmirrored_tag,
       dispatchPayloadHash: row.dispatch_payload_hash,
       constructorSemanticMajor: row.constructor_semantic_major,
       constructorNonSemanticMinor: row.constructor_non_semantic_minor,

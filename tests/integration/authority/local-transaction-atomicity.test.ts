@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import type { PoolClient } from 'pg';
 
@@ -144,6 +144,25 @@ const RATE_ONLY_POINTS: readonly LocalCommitPoint[] = ['AFTER_STANDING_ROWS'];
 
 /** The one point only an APPROVAL-BEARING proposal reaches. */
 const APPROVAL_ONLY_POINTS: readonly LocalCommitPoint[] = ['AFTER_APPROVAL_ROW'];
+
+/**
+ * The files permitted to name the outbox. HAND-AUTHORED — see the narrowing note below.
+ *
+ * `src/kernel/outbox/` is the mechanism `25 §7` specifies. The three transport files carry
+ * the claim's journal row to the audit plane, which `30 §5.1` item 2 and `I17`'s two-sided
+ * diff make mandatory rather than optional: a control-side row kind the audit store cannot
+ * ingest is a permanent gap, and `30 §5.2` gives a gap "exactly one interpretation".
+ */
+const OUTBOX_FILES: readonly string[] = [
+  join('src', 'kernel', 'outbox', 'outboxState.ts'),
+  join('src', 'kernel', 'outbox', 'correlationTag.ts'),
+  join('src', 'kernel', 'outbox', 'enqueue.ts'),
+  join('src', 'kernel', 'outbox', 'claim.ts'),
+  join('src', 'kernel', 'outbox', 'recovery.ts'),
+  join('src', 'audit', 'transport', 'journalRecord.ts'),
+  join('src', 'audit', 'ingress.ts'),
+  join('src', 'replication', 'journalPusher.ts'),
+];
 
 describe('the declared point list covers the whole production sequence', () => {
   it('every declared point is claimed by exactly one of the three coverage lists', () => {
@@ -366,14 +385,52 @@ describe('the two-transaction pattern does not exist in `src/`', () => {
           /require\(['"]https?['"]\)/,
           /\baxios\b/,
           /\bundici\b/,
-          /\boutbox\b/i,
         ]) {
           if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
+        }
+        /*
+         * -----------------------------------------------------------------------------
+         * S1I NARROWED THE `outbox` PATTERN, AND THIS COMMENT IS THE RECORD OF IT.
+         *
+         * S1F asserted `/\boutbox\b/i` as an ABSENCE over the whole of `src/`. S1I builds
+         * `25 §7`'s outbox, so the property becomes CONFINEMENT — the same move S1H made
+         * when it built the mirror mechanism S1G had asserted absent — held against a
+         * HAND-AUTHORED FILE LIST so that a NEW file acquiring the word fails this test
+         * rather than joining a pattern exemption.
+         *
+         * EVERY TRANSPORT PATTERN ABOVE IS UNCHANGED AND STILL GLOBAL. S1I adds no `fetch`,
+         * no `XMLHttpRequest`, no `node:https`, no `node:net`, no `node:dgram`, no `axios`
+         * and no `undici`, and `tests/integration/outbox/no-transport-boundary.test.ts`
+         * adds twenty-three further absences over the outbox directory on top of these.
+         *
+         * AND THE PROPERTY THIS SUITE IS ABOUT IS UNTOUCHED: the S1F transaction itself
+         * still contains no outbox write. The outbox row is a POST-COMMIT derivative —
+         * `30 §5.1` item 3's ordering block lists the transaction's writes exhaustively and
+         * no outbox row appears in it — which the assertion below states directly.
+         * -----------------------------------------------------------------------------
+         */
+        const relative = path.replace(`${process.cwd()}${sep}`, '');
+        if (/\boutbox\b/i.test(code) && !OUTBOX_FILES.includes(relative)) {
+          offenders.push(`${relative} (/\\boutbox\\b/i)`);
         }
       }
     }
 
     await walk(root);
     expect(offenders, `transport or outbox code in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
+
+    // AND THE S1F TRANSACTION KNOWS NOTHING ABOUT IT. The sharpest form of the property
+    // this suite exists for: the module that owns the atomic authorisation transaction
+    // cannot reach the outbox at all, so no outbox write can join that commit point.
+    const transaction = (
+      await readFile(
+        join(process.cwd(), 'src', 'kernel', 'authorisation', 'localAuthorisation.ts'),
+        'utf8',
+      )
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(transaction).not.toMatch(/\boutbox\b/i);
+    expect(transaction).not.toMatch(/CLAIMED/);
   });
 });

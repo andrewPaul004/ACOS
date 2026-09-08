@@ -60,7 +60,25 @@ export type JournalRowKind =
   | 'JOURNAL_ATTESTATION'
   | 'AUDIT_MIRROR_DEGRADED'
   | 'MIRROR_CORROBORATION_CONSUMED'
-  | 'DEGRADED_MODE_OVERRIDE_EVENT';
+  | 'DEGRADED_MODE_OVERRIDE_EVENT'
+  /**
+   * S1I. `25 §7` / ADR-026 item 2 / `I36`: the at-most-once outbox claim, recorded.
+   *
+   * IT TRAVELS THIS PATH BECAUSE `I17` IS A TWO-SIDED DIFF OVER `journal_seq`. A
+   * control-side kind the audit store cannot ingest is a permanent gap in that diff, and
+   * `30 §5.2` gives a gap "exactly one interpretation" — suppression. So a new control
+   * kind is not optional here.
+   *
+   * `30 §5.10` is the second reason: `I8`'s additive verification list is built from
+   * dispatches outside `NORMAL` (`§5.7.2` item 6), and this row carries
+   * `outboxRequiresUnmirroredTag` and `overrideId` — the two operands that list needs,
+   * held in the audit plane's OWN copy.
+   *
+   * IT IS A CLAIM AND NOT A DISPATCH. The audit plane learns that ACOS committed to at
+   * most one external attempt. It learns nothing about whether one happened, because
+   * nothing did.
+   */
+  | 'OUTBOX_CLAIMED';
 
 /**
  * The structured fields of one journal row.
@@ -115,10 +133,23 @@ export interface JournalRowFields {
   readonly corroborationExpiresAt: Date | null;
   readonly corroborationReason: string | null;
 
-  /** `30 §5.7.2` item 7's lifecycle events. `DEGRADED_MODE_OVERRIDE_EVENT` only. */
+  /**
+   * `30 §5.7.2` item 7's lifecycle events. `DEGRADED_MODE_OVERRIDE_EVENT` — and
+   * `overrideId` ALONE also on `OUTBOX_CLAIMED`, because `§5.7.2` item 5 requires an
+   * override-backed dispatch to "carry `override_id`". The EVENT columns stay absent
+   * there: item 7 makes each override event "its own row".
+   */
   readonly overrideId: string | null;
   readonly overrideEvent: string | null;
   readonly overrideActor: string | null;
+
+  /** S1I. `25 §7`'s outbox claim. `OUTBOX_CLAIMED` only. */
+  readonly outboxId: string | null;
+  readonly outboxCorrelationTag: string | null;
+  readonly outboxClaimId: string | null;
+  readonly outboxMatchedRow: number | null;
+  readonly outboxMirrorState: string | null;
+  readonly outboxRequiresUnmirroredTag: boolean | null;
 
   /** `30 §5.4`'s `attested_at` on an attestation row; the effect's instant otherwise. */
   readonly occurredAt: Date;

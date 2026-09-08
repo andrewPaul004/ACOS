@@ -99,7 +99,13 @@ async function controlBytes(row: Record<string, unknown>): Promise<Buffer> {
                   -- table's arity, and these are NULL because an EFFECT_AUTHORISATION row
                   -- REQUIRES them absent (journal_row_shape_per_kind). They are listed
                   -- rather than omitted so a future column cannot silently shift a field.
-                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                  -- S1I's six columns (0010), for exactly the reason the note above gives:
+                  -- the arity moved, so the literal moves with it, and 0010's extension of
+                  -- journal_row_shape_per_kind REQUIRES all six absent on this row kind.
+                  -- Nothing about the EFFECT_AUTHORISATION field order changes, which is
+                  -- what the assertions below continue to prove.
+                  NULL, NULL, NULL, NULL, NULL, NULL
                 )::effect_journal
               ) AS bytes`,
       compositeParams(row),
@@ -123,7 +129,9 @@ async function auditBytes(row: Record<string, unknown>): Promise<Buffer> {
                   $21::TIMESTAMPTZ, $22::BYTEA,
                   '\\x00'::BYTEA, '\\x00'::BYTEA, NULL, NULL, NULL, NULL, NULL,
                   -- S1H's eleven columns (A0002), for the same reason as above.
-                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                  -- S1I's six columns (A0005), for the same reason again.
+                  NULL, NULL, NULL, NULL, NULL, NULL
                 )::audit_journal
               ) AS bytes`,
       compositeParams(row),

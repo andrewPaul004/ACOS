@@ -441,6 +441,65 @@ export function overrideEventFields(row: OverrideEventRow): readonly OracleField
   ];
 }
 
+export interface OutboxClaimedRow {
+  readonly companyId: string;
+  readonly journalSeq: bigint;
+  readonly outboxId: string;
+  readonly claimId: string;
+  readonly correlationTag: string;
+  readonly effectId: string;
+  readonly authorisationId: string;
+  readonly idempotencyKey: string;
+  readonly actionClass: string;
+  readonly resourceRef: string;
+  readonly dispatchPayloadHash: string;
+  readonly matchedRow: number;
+  readonly mirrorState: string;
+  readonly requiresUnmirroredTag: boolean;
+  readonly overrideId: string | null;
+  readonly occurredAt: Date;
+  readonly prevHash: Buffer | null;
+}
+
+/**
+ * S1I's `acos.journal.outbox_claimed.v1`, transcribed by hand from
+ * `docs/implementation/S1I-contract.md §5`.
+ *
+ * THE FOURTH READING. The control plane declares this order in
+ * `src/db/migrations/0010__dispatch_outbox.sql` and the audit plane declares it
+ * INDEPENDENTLY in `src/audit/db/migrations/A0005__outbox_claim.sql`.
+ * `outbox-journal-rows.test.ts` compares BOTH against this function, never against each
+ * other — `36 §0`, and the same discipline `VC-A3` established for the accepted kinds.
+ *
+ * `override_id` is the LAST field before the timestamp and the chain, and it is NULLABLE:
+ * `30 §5.7.2` item 5 requires an override-backed dispatch to "carry `override_id`", and a
+ * claim needing no override carries NULL — which `ACOS-JCS-1` frames in the length word
+ * rather than as a payload byte (v1.3.2, JCS-01).
+ */
+export function outboxClaimedFields(row: OutboxClaimedRow): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.journal.outbox_claimed.v1' },
+    { kind: 'text', value: row.companyId },
+    { kind: 'int', value: row.journalSeq },
+    { kind: 'text', value: 'OUTBOX_CLAIMED' },
+    { kind: 'text', value: row.outboxId },
+    { kind: 'text', value: row.claimId },
+    { kind: 'text', value: row.correlationTag },
+    { kind: 'text', value: row.effectId },
+    { kind: 'text', value: row.authorisationId },
+    { kind: 'text', value: row.idempotencyKey },
+    { kind: 'text', value: row.actionClass },
+    { kind: 'text', value: row.resourceRef },
+    { kind: 'text', value: row.dispatchPayloadHash },
+    { kind: 'int', value: row.matchedRow },
+    { kind: 'text', value: row.mirrorState },
+    { kind: 'bool', value: row.requiresUnmirroredTag },
+    { kind: 'text', value: row.overrideId },
+    { kind: 'ts', value: row.occurredAt },
+    { kind: 'bytes', value: row.prevHash },
+  ];
+}
+
 /**
  * `30 §5.7.1`'s signed artifact. NOT a journal row — it lives in the audit store and
  * travels over the fetch path — but it is `ACOS-JCS-1` bytes under the same rules, and its

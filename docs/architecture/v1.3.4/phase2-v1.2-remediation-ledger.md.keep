@@ -1,0 +1,527 @@
+# ACOS Operating Spine v1.2 — Remediation Ledger
+
+**Phase 2.3. Issued 2026-09-03. Sole authoritative record of the disposition of every BLOCKING defect raised by the second independent red team.**
+
+Source: `57-second-redteam-remediation.md`, which is the authoritative remediation specification. Verdict source: `52-second-redteam-executive-verdict.md` (CONDITIONAL PASS — REMEDIATION REQUIRED, 0 FATAL · 22 BLOCKING · 24 MATERIAL · 6 MINOR · 4 WORDING · 10 attacks defeated). Gate source: `58-implementation-gate.md`.
+
+**Twenty-two entries. No merges. No silent consolidation.** Every entry terminates in exactly one of `APPLIED`, `APPLIED WITH EXPLICIT RESIDUAL`, `NOT APPLIED — BLOCKING`.
+
+---
+
+## 0. Scope correction, recorded before the ledger
+
+`57 §0`'s prose header states that third review is required for *"SR-A1 and SR-B2"*. **`SR-B2` does not exist.** `57`'s own tier table, its `§6`, `52 §4` and `58 §9` all agree that the third-review items are `SR-A1`, `SR-A2` (jointly, one mechanism) and `SR-S2`. This ledger records the typo and does not propagate it. **No `SR-B2` finding is created anywhere in the v1.2 package.**
+
+Two design additions require third review, represented by three finding ids:
+
+| Review mechanism | Finding ids | Why it is a new mechanism |
+|---|---|---|
+| **A — audit independent input + degraded-mode corroboration** | SR-A1, SR-A2 | Changes what the audit plane *is*: it acquires an independent input signal and a veto over a dispatch relaxation |
+| **B — standing exposure cessation and release** | SR-S2 | Introduces a lifecycle whose release condition has a commercial cost that must be visible before it is built |
+
+---
+
+## 1. Disposition summary
+
+| Disposition | Count |
+|---|---|
+| APPLIED | 15 |
+| APPLIED WITH EXPLICIT RESIDUAL | 7 |
+| **NOT APPLIED — BLOCKING** | **0** |
+
+| Group | Items | Applied | With residual |
+|---|---|---|---|
+| R1 — Effect Canonicaliser | SR-C1…C4 | 3 | 1 |
+| R2 — StandingAuthorization | SR-S1…S4 | 2 | 2 |
+| R3 — Audit ordering / degraded mode | SR-A1…A6 | 4 | 2 |
+| R8 — MAL / MIE / limits | SR-L1…L4 | 3 | 1 |
+| R9 + R17-P4 | SR-R1…R4 | 3 | 1 |
+
+**A residual is not a partial application.** Every entry marked `APPLIED WITH EXPLICIT RESIDUAL` applies the specified change in full and additionally records a named quantity or property that architecture reasoning cannot settle, each carrying a `IMPLEMENTATION_VALIDATION_REQUIRED` marker and a conservative default. `57 §7`'s instruction — *do not answer a BLOCKING finding by weakening the invariant* — is checked entry by entry in `§4` below.
+
+---
+
+## 2. The ledger
+
+### SR-C1 — `I18`'s equality is ill-typed
+
+| Field | Value |
+|---|---|
+| **Source attack** | CAN-01 (`53 §1`), traced in `54 §3.1` |
+| **Defect** | `I18` requires `dispatch_payload.monetary_effect == authorisation.exposure == reservation.amount` while `26 §2.1` defines exposure to include `cost_components[]`. Vacuous if `monetary_effect` is a copy of the kernel figure; false for every correctly constructed refund if it is the dispatched amount; and for `fulfilment.reship` the first term has no referent because the vendor request carries no money field. |
+| **Affected artifacts** | `26 §2.1`, `26 §2.2` row 12, `26 §8`, `24 §3` K4, `36 §2`, `51 §3.1`/`§5`, invariant registry |
+| **Required change** | Split `exposure.monetary_amount` into `vendor_amount` (nullable) and `total_exposure`. Restate `I18` as separate type-correct assertions. Refund policy must test `total_exposure` against the cap. Declare a per-action-class settlement tolerance. |
+| **Applied change** | `26 §2.1` v1.2 carries the nine-field `exposure` block of `57 §1`. `I18` is now a conjunction of four lettered clauses **I18a–I18d** (`§3` of the registry). `26 §8`'s refund policy tests `context.exposure.total_exposure <= 25.00`. `51 §5.1` v1.2 declares `settlement_tolerance` per class with two kinds — `EXACT` for classes whose settled cost is fully determined pre-dispatch, `BAND(basis)` for `[ESTIMATE]`-graded classes — and `MIE_cost` acquires a p50/p95 band so the band has a declared basis. |
+| **Invariant** | `I18` restated as I18a (`dispatch_payload.monetary_effect == exposure.vendor_amount` where a vendor monetary field exists), I18b (`reservation.amount == exposure.total_exposure`, always), I18c (`total_exposure >= vendor_amount` where `vendor_amount` is non-null, equality only for classes declaring no cost components), I18d (settled cost within the class's declared `settlement_tolerance` against `total_exposure`). `I3`'s reservation term now unambiguously references `total_exposure`. |
+| **Test** | `36 §2.1` VC-C1: per-class construction fixture with a hand-computed table, containing at least one null-`vendor_amount` class (`fulfilment.reship`) and one non-zero-cost-component class (`refund.create`). Fixture authored from the processor's published fee schedule, never from the production constructor. |
+| **Third review** | No |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | `unit_cost_p95` for `fulfilment.reship` and `order.address.edit` is `[ESTIMATE]`-graded and **unmeasured**. Marked `IMPLEMENTATION_VALIDATION_REQUIRED` in `51 §3.3`. Conservative default: the interim p95 is the figure the owner signs, and a class whose p95 is unmeasured is autonomy-eligible only within that interim value. `58 §12` item 12 remains the only unforgeable test. |
+| **Sections changed** | `26 §2.1`, `26 §2.2`, `26 §8`, `26 §10.1`, `24 §3` K4, `30 §5.3`, `36 §2`, `51 §3.1`, `51 §3.3`, `51 §5` |
+
+---
+
+### SR-C2 — enumeration transport unspecified
+
+| Field | Value |
+|---|---|
+| **Source attack** | CAN-02 (`53 §1`), `54 §3.3` |
+| **Defect** | Enumerate-then-select requires the model to see the enumeration and no capability returns it. Either `selector` is uninformed and the class stops working, or an unspecified read exists at the trust boundary with no `context_spec`, no journal, no quota and no invariant. |
+| **Affected artifacts** | `24 §3` K4, `25 §4`, `26 §2.0`, `26 §7`, `23 §5.2` |
+| **Required change** | Define `enumerate_effects(action_class, resource_ref) → EnumeratedOptionSet` as a first-class READ capability inside the task's `tool_scope`, governed by `context_spec`, journaled as a read row, rate-limited per principal per window, exposing no field the `context_spec` does not admit. |
+| **Applied change** | `24 §3` K4 v1.2 declares `enumerate_effects` in "What AI may do" with the full return type including `enumeration_id`, `computed_at`, `constructor_version` and content-addressed `option_id`. `25 §4` v1.2 lists it in the task contract's read capability set. `26 §2.0` v1.2 defines the capability and its quota. `26 §7`'s closing paragraph is corrected — enumeration scoping is a mechanism, not an assertion. The read is journaled with `journal_row_kind = READ`, not as an effect. |
+| **Invariant** | New **I52**: no `EnumeratedOptionSet` option description contains a field outside the requesting task's `context_spec` admitted-field set. Enforcement CI (spec review) + RUNTIME (projection filter). |
+| **Test** | `36 §2.2` VC-C2: per class, assert the option description's field set is a subset of the `context_spec`'s admitted fields; assert an out-of-scope `resource_ref` denies; assert the read is journaled and quota-counted. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `24 §3` K4, `25 §4`, `26 §2.0`, `26 §7`, `23 §5.2`, `29 §4`, `50 §2` |
+
+---
+
+### SR-C3 — positional selector permits substitution
+
+| Field | Value |
+|---|---|
+| **Source attack** | CAN-03 (`53 §1`) — the constructed path in which the executed effect is economically different from the selected one and `I18`, `I21`, `I2`, `I3`, `I29`, `I31` all hold |
+| **Defect** | Index *n* denotes a different effect at C′ than at selection time when enumeration membership changes. `SELECTOR_INVALID` fires only when the set shrinks past the index — the benign case. Reordering is undetectable by an ordinal. |
+| **Affected artifacts** | `26 §2.0`, `26 §2.1`, `26 §7` step C′, `24 §3` K4, `36 §2` |
+| **Required change** | Content-address the options. `option_id = H(action_class ‖ resource_id ‖ semantic_option_digest)`. `ProposedIntent.selector` becomes `{enumeration_id, option_id}`. C′ re-enumerates under the lock and denies rather than substituting. |
+| **Applied change** | `26 §2.0` v1.2 replaces the index with `selector { enumeration_id, option_id }`. `26 §7` step C′ v1.2 re-enumerates under the entity advisory lock and denies `SELECTOR_STALE` when `option_id` is absent from the live set, `SELECTOR_ENUMERATION_STALE` when `enumeration_id.computed_at` exceeds the class's `max_age`, and `SELECTOR_MALFORMED` when the pair does not parse. **Substitution is never performed.** `selector` remains one field for `I21`'s purposes. `26 §2.2` gains the `semantic_option_digest` definition per class. |
+| **Invariant** | `I21` unchanged in content (`selector` is still one of the four permitted fields). New **I53**: no effect is dispatched whose `option_id` was absent from the enumeration computed under the C′ lock. Enforcement RUNTIME at C′ + DB (the `option_id` is a not-null column on the effect row and is re-derivable from the journaled enumeration). |
+| **Test** | `36 §2.3` VC-C3: `53 §1` CAN-03's reordering scenario with an injected concurrent partial refund, asserting `SELECTOR_STALE`. **Mandatory negative control**: the same test with positional selectors must produce the substitution, or the test does not detect the bug. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §2.0`, `26 §2.1`, `26 §2.2`, `26 §7`, `24 §3` K4, `36 §2`, `35 §12.4` |
+
+---
+
+### SR-C4 — `constructor_version` unrecorded
+
+| Field | Value |
+|---|---|
+| **Source attack** | CAN-04 (`53 §1`), RES-06 (`53 §5`) |
+| **Defect** | `26 §11`'s reproducibility claim is false across any constructor change, and `I18`'s settlement-side investigation cannot identify which constructor computed the disputed exposure. |
+| **Affected artifacts** | `26 §2.1`, `26 §11`, `26 §12`, `24 §3` K3/K4, `30 §5`, `50` |
+| **Required change** | `constructor_version` on `AuthorizationRequest`, `AuthorizationDecision`, the journal row and the approval binding. Constructors become signed control artifacts. Declare semantic versus non-semantic change classes, consumed by SR-R1's resume rule. |
+| **Applied change** | `constructor_version` is a not-null field in all four locations and in the replay context. `50 §2` gains **class 19 — Effect constructors** (owner signature, second factor, halt scope = the constructor's action class). A `ConstructorVersionRecord{constructor_id, version, semantic_major, non_semantic_minor, changed_fields[], semantic_change: bool, signed_at}` is a signed artifact; **a bump that changes any of exposure computation, enumeration membership, `semantic_option_digest`, counterparty derivation, `value_direction`, recoverability or the dispatch payload field set is semantic by definition** and cannot be declared non-semantic. `26 §11` v1.2 restates reproducibility as *"same inputs, same `policy_version`, same `constructor_version`, same verdict"*. Replay under a different semantic version is **refused**, not silently recomputed. |
+| **Invariant** | `I19` extended to constructors as a control-artifact class. New **I61**: every `AuthorizationRequest`, `AuthorizationDecision`, journal row and approval binding records a `constructor_version` resolving to a signed `ConstructorVersionRecord`; no approval resumes under a constructor whose `semantic_major` differs from the bound one. |
+| **Test** | `36 §2.4` VC-C4: replay a recorded decision under a bumped semantic version and assert refusal rather than a silently different result; replay under a non-semantic bump and assert the replay succeeds and reproduces the recorded verdict. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §2.1`, `26 §7`, `26 §11`, `26 §12`, `24 §3` K3, `24 §3` K4, `24 §3` K9, `30 §5.3`, `50 §2`, `36 §2` |
+
+---
+
+### SR-S1 — rolling-window forward exposure undefined
+
+| Field | Value |
+|---|---|
+| **Source attack** | STD-01 (`53 §2`), `54 §2.4` |
+| **Defect** | Four of `51 §2`'s nine windows are rolling 24h. A rolling window has no end to integrate to and no boundary at which to re-reserve, so `Standing(day) = $6.00` does not follow from the declared semantics and R2's pause mechanism has no trigger point. |
+| **Affected artifacts** | `51 §2`, `24 §3` K5, `26 §4`, `26 §7` step R, `26 §10.1` |
+| **Required change** | `boundary_kind ∈ {DISCRETE, ROLLING}` as a declared window column. `standing.required` grants may reference DISCRETE windows only; referencing a rolling window is a catalogue defect and denies. Redeclare `W_DAY_ADSPEND` as a calendar day on the company timezone, evaluated on the database clock. |
+| **Applied change** | `51 §2` v1.2 declares `boundary_kind` on every window. **All nine production windows are DISCRETE** — calendar day or calendar month, company timezone, database clock. `ROLLING` remains in the type with its method defined in `51 §2.1` (trailing-interval balance, continuous ageing) and is marked **`NOT_ADMISSIBLE_AT_MVP`** with a stated reason: a rolling balance cannot be expressed as a single `CHECK`-constrained `window_balance` row at a single commit point, which is `I3`'s enforcement mechanism (LIM-05). A calendar-boundary algorithm is therefore **not** reused for a rolling interval — no rolling interval remains. `26 §4` denies at catalogue validation on a `standing.required` grant referencing a ROLLING window. |
+| **Invariant** | `I3` v1.2 states that standing forward exposure is defined only against DISCRETE windows. `I23`'s test acquires a boundary to test at. |
+| **Test** | `36 §2.5` VC-S1: a rate grant referencing a ROLLING window must deny at catalogue validation; boundary re-reservation at a calendar-day boundary with expiry inside the window, asserting pause. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `51 §2`, `51 §2.1`, `24 §3` K5, `26 §4`, `26 §7`, `26 §10.1`, `50 §2` |
+
+---
+
+### SR-S2 — standing headroom release condition unspecified
+
+| Field | Value |
+|---|---|
+| **Source attack** | STD-02 (`53 §2`), `54 §4.2` Path B |
+| **Defect** | On a pause whose outcome is unknown, releasing forward exposure returns headroom while the platform continues spending — the v1.0 defect R2 exists to close, reached through the pause path — and a successor authorisation's `reconciler_match_rule` then absorbs the predecessor's charges so `I22` stays silent. |
+| **Affected artifacts** | `24 §3` K5, `26 §10.1`, `30 §5.1`, `35 §7`, `51 §3.2`, invariant registry |
+| **Required change** | `PAUSE_PENDING` in the status enum; forward exposure retained in `LIVE` and `PAUSE_PENDING`, released only on `REVOKED`; `REVOKED` requires a verification read showing zero incremental platform spend across a per-adapter `cessation_lag`; `I3` gains the retained term; `reconciler_match_rule` scoped to one `standing_authorization_id`. |
+| **Applied change** | `24 §3` K5 v1.2 declares the five-state machine `LIVE | PAUSE_PENDING | PAUSED | EXPIRED | REVOKED` with the full transition table in `24 §3.1`. **Forward exposure is retained in every non-`REVOKED` status** — this is stronger than `57`'s two-status retention and is recorded as a deliberate strengthening, not a substitution. `PAUSED` is a display state meaning *the vendor acknowledged the pause*; it is **not** a release state. `REVOKED` requires `I54`'s cessation verification. `cessation_lag` is an adapter characteristic with a provenance field. `reconciler_match_rule` is a bounded predicate scoped to a single `standing_authorization_id` (`51 §3.2`), so a successor cannot absorb a predecessor's charges. |
+| **Invariant** | `I3` extended (term 2 is now *all non-`REVOKED` standing forward exposure*). `I22` narrowed to a per-authorisation match. New **I54**: no `StandingAuthorization` transitions to `REVOKED` without a verification read showing zero incremental spend attributable to that `standing_authorization_id` across `cessation_lag`. |
+| **Test** | `36 §2.6` VC-S2a/b/c: pause dispatch → adapter timeout → assert forward exposure retained, status `PAUSE_PENDING`, second `campaign.budget.set` denied `WINDOW_EXHAUSTED`. Verification read showing continued spend → assert an `I22` incident **against the original authorisation**. `cessation_lag` measurement is an S3 obligation. |
+| **Third review** | **YES — Review Mechanism B** |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | `cessation_lag` for Google Ads and Meta is **`UNMEASURED`**. Vendor documentation does not state how long after a pause the platform's spend reporting settles (`58 §12` item 9). **Conservative default when `UNMEASURED`: no `REVOKED` transition is available at all.** Forward exposure is held until the last referenced window closes, at which point it lapses with the window. Commercial consequence stated in `51 §3.2` and `26 §10.5`: **pause-and-reauthorise within one window is not possible**, and until `cessation_lag` is measured, advertising is effectively a whole-window commitment. This is `58 §13` condition 3's trigger and it is a business-model finding if the measurement comes back long. |
+| **Sections changed** | `24 §3` K5, `24 §3.1` (new), `26 §7`, `26 §10.1`, `26 §10.5` (new), `30 §5.1`, `35 §7`, `51 §3.2`, `36 §2` |
+
+---
+
+### SR-S3 — expiry/revocation deadlock
+
+| Field | Value |
+|---|---|
+| **Source attack** | STD-03 (`53 §2`) |
+| **Defect** | `expires_at` mirrors grant expiry; the revocation effect requires a matching grant at step I; the grant has expired; `DENY: NO_GRANT`; the authorisation cannot pause and spend continues. `I23` is defeated by the mechanism enforcing it. And `24 §3` K4 accepts a kernel-originated request that `26 §7` has no branch for. |
+| **Affected artifacts** | `24 §3` K4, `24 §3` K5, `26 §4`, `26 §7`, `51 §3.2` |
+| **Required change** | A kernel-created standing revocation authority scoped to one class, one resource, one `standing_authorization_id`, zero monetary exposure, `expires_at = grant.expires_at + cessation_grace`. Plus an explicit `KERNEL_SERVICE` branch in `26 §7` naming exactly which steps it skips and which it must not. |
+| **Applied change** | `24 §3` K5 v1.2 declares `StandingRevocationAuthority` as kernel-created state, created atomically with the `StandingAuthorization` in the authorising transaction, and destroyed only when the authorisation reaches `REVOKED`. `26 §7.1` v1.2 is a new subsection specifying the `KERNEL_SERVICE` branch: **skipped** — step I (grant match), step L (evidence requirements), step N (autonomy ledger), step K (counterparty novelty, because the resource is fixed at creation); **never skipped** — step B (schema), C (catalogue), C2/C′ (constructor and canonicalisation), D (principal), E (categorical prohibitions), F (platform status/kill switch), G/H/H′/H″ (preconditions, grade, contradiction, delegation), M (per-action max, read from the revocation authority's own declared bound of zero monetary), R (reservation, which is a zero-amount reservation row and still a row), S (approval requirement, which is `NONE` for this authority by construction), T–V (idempotency), W (signed decision), X (audit write). The authority can authorise nothing else: its `resource_selector` is an equality on one `resource_ref` and its `action_class_selector` is a singleton. |
+| **Invariant** | `I23` becomes achievable. New **I55**: every `StandingAuthorization` in a non-`REVOKED` status has a live `StandingRevocationAuthority` whose `expires_at` exceeds the authorisation's own by at least `cessation_grace`. |
+| **Test** | `36 §2.7` VC-S3: expire the advertising grant with a live standing authorisation and assert the pause dispatches; assert the standing revocation authority cannot authorise any other class, any other resource, or any monetary amount; assert a `KERNEL_SERVICE` request that names a prohibited class still denies `PROHIBITED`. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `24 §3` K4, `24 §3` K5, `26 §4`, `26 §7`, `26 §7.1` (new), `29 §3`, `49 §3`, `51 §3.2` |
+
+---
+
+### SR-S4 — no overdelivery allowance; wrong month basis
+
+| Field | Value |
+|---|---|
+| **Source attack** | STD-04 (`53 §2`), STD-06 (`53 §2`), `54 §2.4` |
+| **Defect** | Documented platform behaviour delivers up to twice the daily budget on an individual day and caps monthly delivery at 30.4× the daily budget. The fixture reserves `30 × $6 = $180`, so one day of overdelivery makes the next boundary re-reservation fail and a healthy campaign pauses on day 2. Separately, `Standing(month)` used the 30-day rate period against a calendar-month window, understating by up to $6.00 in seven months of twelve. |
+| **Affected artifacts** | `51 §3.2`, `51 §4`, `24 §3` K5, `26 §10.1`, `26 §2.6`, `35 §7` |
+| **Required change** | `forward_exposure = rate × remaining_periods × (1 + overdelivery_allowance)` with the allowance declared per adapter from vendor documentation and cited. The month basis becomes the calendar window's actual day count, or the platform's own basis where larger. `STANDING_HEADROOM_SHORT` raised at the first *projected* shortfall. |
+| **Applied change** | `26 §10.1` v1.2 replaces the multiplicative form with the **exposure-remainder form**, which is strictly better against the constructed attack and which `51 §4.3` demonstrates:<br>`standing_cap(s, w) = s.rate.amount × periods_basis(w, adapter)`<br>`forward_exposure(s, w, t) = max(0, standing_cap(s, w) − realised_spend(s, w, t))`<br>where `periods_basis(W_DAY) = daily_overdelivery_multiplier` and `periods_basis(W_MONTH) = max(days_in_window(w), monthly_basis_multiplier)`. Google Ads: `daily_overdelivery_multiplier = 2.0`, `monthly_basis_multiplier = 30.4`, both `DOCUMENTED` with a cited source. **Under this form the day-1 overdelivery case does not pause**: after $12.00 realised on day 1 of a 31-day January, `realised(12.00) + forward(174.00) = 186.00 ≤ 186.00`. The month basis is the calendar window's actual day count or the platform basis, whichever is larger: 28→30.4, 29→30.4, 30→30.4, 31→31. `24 §3` K5 raises `STANDING_HEADROOM_SHORT` when *projected* realised at window end exceeds `standing_cap`, evaluated on every re-reservation, not at the boundary. |
+| **Invariant** | `I3` unchanged in form. `Standing(w)` now includes the allowance, so `MAL_total` rises and requires re-signature under `26 §10.3` — correct, because the allowance is authorised loss. |
+| **Test** | `36 §2.8` VC-S4a/b: simulate 2× day-1 delivery and assert day-2 re-reservation succeeds and no pause occurs; simulate sustained delivery to `standing_cap` and assert pause with `STANDING_HEADROOM_SHORT` raised at first projection, before the boundary. `51 §4.3` recomputes 28/29/30/31-day months. |
+| **Third review** | No |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | The 2.0 and 30.4 multipliers are `DOCUMENTED` for Google Ads and **not established for Meta**, whose published budget documentation does not state an equivalent bound. Meta is marked `UNMEASURED` / `IMPLEMENTATION_VALIDATION_REQUIRED` in `51 §3.2`, and until it is measured **no Meta rate grant is autonomy-eligible** — the conservative default. This does not affect the MVP, which declares one advertising adapter. |
+| **Sections changed** | `26 §2.6`, `26 §10.1`, `24 §3` K5, `35 §7`, `51 §3.2`, `51 §4`, `36 §2` |
+
+---
+
+### SR-A1 — `I17` not evaluable by its owner
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-01 (`53 §3`), `55 §3.1`, `55 §8` |
+| **Defect** | `I17` is owned by Audit and requires enumerating the control journal; `24 §3` K11's declared inputs contain no control-journal read, and R10 removed the replica deliberately. The audit plane can detect mid-range omission and **cannot detect tail truncation**: a push stopping at seq 900 of 1,000 leaves a gap-free, hash-consistent audit side whose `row_count` anchor agrees with itself. |
+| **Affected artifacts** | `24 §3` K11, `30 §5`, `30 §5.1`, `22 §3.1`, `36 §1`, `36 §13`, invariant registry |
+| **Required change** | A periodic control-plane attestation carried as a journal row occupying its own sequence value, pushed on the same path, at a cadence strictly shorter than the anchor interval. Restate `I17` as transport completeness; move the unqualified completeness claim to `I8`. Add `I17e`. |
+| **Applied change** | `30 §5.4` v1.2 is a new subsection specifying `JournalAttestation{company_id, max_journal_seq, row_count, head_hash, attested_at}` as `journal_row_kind = ATTESTATION`, allocated a real `journal_seq` from the same counter inside its own transaction, chained identically, pushed on the same replication path, at a declared cadence of **5 minutes** against an anchor interval of 60 minutes. `30 §5.5` v1.2 tabulates the six omission cases the mission requires — normal row omitted, attestation omitted, writer stopped entirely, last attestation stale, tail truncated, audit plane unavailable — each with its detector, its owner and its consequence. `30 §5`'s "Completeness" row is renamed **"Transport completeness"**. `I17`'s statement is restated as *gap-free and consistent with the latest received attestation*, and the unqualified claim is relocated to `I8` with its coverage limits attached at every citation. **No control-database read is introduced**, so R10's decision stands. |
+| **Invariant** | New **I17e**: attestation rows are continuous at the declared cadence, and the latest received attestation's `max_journal_seq` and `row_count` are consistent with the audit store's holdings. `I17` restated. `I8` carries the unqualified claim and its limits. |
+| **Test** | `36 §13.1` VC-A1a/b/c: truncate the push at seq 900 out of band and assert detection **from the audit plane alone with no control-database access**; suppress one attestation and assert it presents as a sequence gap; stop the writer entirely and assert `I17e` fires within `3 × cadence`. |
+| **Third review** | **YES — Review Mechanism A** |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | Transport completeness does **not** prove that no effect was dispatched without a journal row on either side. That property belongs to `I8`'s inverse sweep from the audit plane's own vendor reads, whose coverage limits are stated at every citation. `55 §3.2` is correct that a control plane omitting from both sides produces perfect agreement, and this remediation does not close it — it stops claiming to. |
+| **Sections changed** | `30 §5`, `30 §5.4` (new), `30 §5.5` (new), `24 §3` K11, `22 §3.1`, `36 §1`, `36 §13`, `35 §12.1`, `49 §3` |
+
+---
+
+### SR-A2 — degraded mode self-declared
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-02 (`53 §3`), AUD-06 (`53 §3`), `55 §3.3`, `52 §1` Path B |
+| **Defect** | The push, the `mirrored_at` column, the lag check and the degraded-mode flag are all control-plane state. From the audit side, provider outage and declining-to-push are the same observation, so the mode that relaxes the audit guarantee is entered on the word of the component it protects against — which also classifies each effect into the halt row governing it. |
+| **Affected artifacts** | `30 §5.1`, `30 §3` V7, `24 §3` K10, `24 §3` K11, `25 §13`, `22 §3.1`, `35 §12.1` |
+| **Required change** | Degraded mode entered only when the audit plane independently publishes `MIRROR_INPUT_STALL` from attestation continuity. Every effect dispatched under degradation tagged `DISPATCHED_UNMIRRORED`, and that tag set a mandatory input to `I8`'s next inverse sweep. `clock.source_record_ref` not null and RECORD-grade; never a model classification. |
+| **Applied change** | `30 §5.6` v1.2 is a new subsection specifying a **three-state mirror state machine** — `NORMAL`, `UNCORROBORATED_STALL`, `CORROBORATED_DEGRADED` — with the critical inversion: **the uncorroborated state is stricter, not looser.** A unilateral control-plane declaration buys the control plane a *more* restrictive dispatch table (clock-bearing COMPENSABLE suspends rather than dispatches); only two-sided corroboration unlocks the relaxation. A compromised control plane declaring degradation therefore harms itself. `30 §5.7` v1.2 gives the full **actor/signal table** — who may create, attest, change and consume every degraded-mode signal — as the mission requires. `DISPATCHED_UNMIRRORED` is a not-null tag on every effect dispatched outside `NORMAL`, and `I8`'s next inverse sweep takes the tag set as a mandatory input. `24 §3` K10 v1.2 declares `clock.source_record_ref` not-null with an enumerated `kind` and a `source_record_contract` in `30 §9.1`; a clock is created by a **deterministic detector over a retained RECORD**, never by a triage classification. |
+| **Invariant** | New **I17f** (two-sided): no effect carries `DISPATCHED_UNMIRRORED` without a concurrent audit-plane `MIRROR_INPUT_STALL` covering its dispatch time, **and** no audit-plane `MIRROR_INPUT_STALL` exists without a corresponding journaled control-plane declaration or an open `ATTESTATION_DIVERGENCE` incident. New **I56**: every statutory clock resolves to a RECORD-grade `source_record_ref`. |
+| **Test** | `36 §13.2` VC-A2a/b/c: a control plane that stops pushing while the mirror is reachable must **fail** to enter `CORROBORATED_DEGRADED`; a triage worker classifying every case as a refund request must create **zero** live clocks; a genuine two-sided provider outage must be shown to reach the owner-override path rather than deadlocking silently. |
+| **Third review** | **YES — Review Mechanism A, jointly with SR-A1** |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | If the audit plane is genuinely unavailable it cannot corroborate, so ACOS sits in `UNCORROBORATED_STALL` and clock-bearing compensable effects **suspend**, reintroducing the EM15/EM16 tension the split halt exists to manage. The escape is the owner override, now per recoverability class, time-boxed, count-capped, auto-expiring to halt, fully tagged, and requiring a distinct approver for a second override inside a declared interval (AUD-07's remediation, applied here because SR-A2 makes the override load-bearing). **A genuine two-sided outage costs an owner decision.** This is stated rather than resolved and is the third reviewer's question A3. |
+| **Sections changed** | `30 §3` V7, `30 §5.1`, `30 §5.6` (new), `30 §5.7` (new), `30 §9.1` (new), `24 §3` K10, `24 §3` K11, `25 §13`, `22 §3.1`, `35 §12.1`, `36 §13` |
+
+---
+
+### SR-A3 — row canonicalisation undefined
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-03 (`53 §3`), `55 §4` |
+| **Defect** | The chain is over *"canonicalised rows"* and the canonicalisation is undefined. Postgres `jsonb` does not preserve key order, duplicate-key handling or numeric representation, so two independent triggers over one logical row can produce different bytes — continuous false `I41` criticals — and two logically different rows can canonicalise identically. |
+| **Affected artifacts** | `30 §5`, `30 §5.1`, `50`, registry `I17d`, `I41` |
+| **Required change** | Define the canonical byte string: fixed field order, RFC 8785-style canonicalisation for structured fields, fixed numeric scale per column, UTC timestamps at fixed precision, explicit null encoding. **Transmit** the canonical byte string and hash the transmitted bytes on both sides. The specification becomes a control artifact. |
+| **Applied change** | `30 §5.3` v1.2 defines **`ACOS-JCS-1`** once, and only once, in the whole package: field order is the versioned journal-row column order; structured fields are RFC 8785 (JCS); numerics are emitted as decimal strings at a per-column declared scale with no exponent and no trailing-zero normalisation, so `25.0` and `25.00` hash **differently**; timestamps are RFC 3339 UTC with exactly six fractional digits; null is a single `0x00` sentinel distinct from the empty string; text is UTF-8 NFC; every field is length-prefixed with a four-byte big-endian length so concatenation is unambiguous. **The canonical byte string is what is transmitted**, and both sides hash the transmitted bytes. Re-serialising from `jsonb` on either side is prohibited and is a CI-checked code rule. `50 §2` gains **class 20 — journal canonicalisation specification** (owner, second factor; halt scope: all effects) because changing it reinterprets every historical hash. |
+| **Invariant** | `I41` becomes achievable. `I17d` unchanged. |
+| **Test** | `36 §13.3` VC-A3a/b: round-trip a row containing a structured field with keys inserted in two different orders and assert an identical `row_hash` on two instances; assert two rows differing only in numeric scale produce **different** hashes; assert a null and an empty string produce different hashes. `58 §12` item 3 records that the `jsonb` question is empirical and must be run across two real instances. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `30 §5`, `30 §5.3` (new), `50 §2`, `36 §13`, `33 §6` |
+
+---
+
+### SR-A4 — gap-free sequencing mechanism unstated
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-04 (`53 §3`), `55 §2` |
+| **Defect** | Postgres sequences are non-transactional and gap on rollback, so they cannot deliver gap-freedom. The only correct implementations impose a company-scoped serialisation point on the effect path that no document states, and they introduce a lock-ordering requirement against the window balance row. |
+| **Affected artifacts** | `30 §5.1`, `33` scale envelope, `25 §7`, registry `I17` |
+| **Required change** | Specify `journal_counter(company_id, next_seq)` incremented inside the authorising transaction. Declare the lock order: window balance row, then journal counter. Record the per-company serialisation and its throughput consequence. State that `journal_seq` is not an input to the effect idempotency key. |
+| **Applied change** | `30 §5.2` v1.2 specifies the counter row, the `SELECT ... FOR UPDATE` acquisition, and the **declared lock order: `window_balance` rows first, in ascending `window_id` order, then `journal_counter`.** Ascending `window_id` is added because an effect reserves against *every* referenced window and two effects touching two windows in opposite orders deadlock independently of the counter. `33 §8` v1.2 records the per-company serialisation point, its DoS surface on the effect path, and the throughput envelope. `25 §7` v1.2 states explicitly that `journal_seq` is **not** an input to the idempotency key, so a serialisation-failure retry regenerates the same key. |
+| **Invariant** | `I17` unchanged in content; its precondition is now specified and testable. |
+| **Test** | `36 §13.4` VC-A4a/b/c: roll back an authorising transaction and assert no gap; run two concurrent authorisations for one company and assert adjacent sequence values; attempt reversed acquisition order across two code paths and assert no deadlock. `58 §12` item 1 retains this as an implementation-validation obligation. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `30 §5.1`, `30 §5.2` (new), `33 §8`, `25 §7`, `36 §13`, `37 S1` |
+
+---
+
+### SR-A5 — re-push duplicates poison the chain and anchor
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-05 (`53 §3`), `55 §2` |
+| **Defect** | A crash between the audit acknowledgement and the `mirrored_at` update causes a re-push. Audit-side uniqueness is unspecified, so seq *N* is inserted twice, `I17`'s "exactly one audit row" fails, dispatch halts by class, and the `row_count` anchor is poisoned. **An ordinary crash produces a tamper signature.** |
+| **Affected artifacts** | `30 §5.1`, registry `I17`, `I17b`, `I41` |
+| **Required change** | `UNIQUE (company_id, journal_seq)` with `INSERT ... ON CONFLICT DO NOTHING`; the conflict path compares stored to re-pushed `row_hash`; same hash is a benign duplicate, different hash is tampering and a critical incident. `row_count` becomes `count(DISTINCT journal_seq)`. `mirrored_at` is advisory. |
+| **Applied change** | `30 §5.2` v1.2 declares the constraint, the conflict path and the two outcomes with distinct incident types: `AUDIT_PUSH_DUPLICATE` (INFO, counted, no halt) and `AUDIT_SEQUENCE_COLLISION` (CRITICAL, halt by recoverability class, security path). `row_count` is `count(DISTINCT journal_seq)` everywhere it appears, including in `JournalAttestation` and `I17b`'s anchor tuple. `mirrored_at` is explicitly advisory and is **never** a correctness input to any invariant. |
+| **Invariant** | `I17`, `I17b` become robust to retry. `I17`'s on-violation text distinguishes the two outcomes. |
+| **Test** | `36 §13.5` VC-A5a/b: kill at the ack boundary, retry, and assert no incident and no halt; push a different row under an existing sequence value and assert `AUDIT_SEQUENCE_COLLISION` at CRITICAL. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `30 §5.1`, `30 §5.2` (new), `24 §3` K11, `36 §13`, `35 §12.1` |
+
+---
+
+### SR-A6 — split-halt rows conflict
+
+| Field | Value |
+|---|---|
+| **Source attack** | AUD-10 (`53 §3`), `55 §6.2` |
+| **Defect** | A $30 refund inside a live FTC clock, above the per-action approval floor, matches *"COMPENSABLE inside a live statutory clock — dispatch"* and *"anything above the per-action approval floor — halt"*. No precedence exists in `30 §5.1`, `24 §3` K11, `36 §6`, `22 §3.1` or `35 §12.1`, and `35 §12.1` walks exactly this case assuming the first row wins. **AUDA-01's signature reproduced inside its own remediation.** |
+| **Affected artifacts** | `30 §5.1`, `24 §3` K11, `36 §6`, `22 §3.1`, `35 §12.1` |
+| **Required change** | An ordered first-match list, plus the rule that an effect carrying a recorded approval is evaluated at row 3 or 5, not row 2. Rewrite `35 §12.1` to walk a floor-exceeding, clock-bearing refund. |
+| **Applied change** | `30 §5.1` v1.2 item 4 is a single **ordered, first-match** precedence list with an explicit "exactly one row matches; evaluation stops at the first match" statement: (1) IRRECOVERABLE → halt; (2) above the approval floor **and not clock-bearing** → halt; (3) clock-bearing, any class except IRRECOVERABLE → dispatch, tagged `DISPATCHED_UNMIRRORED`; (4) COMPENSABLE discretionary → suspend; (5) REVERSIBLE → dispatch. **One authoritative precedence order exists and is stated once**; `24 §3` K11, `36 §6` and `22 §3.1` now cite `30 §5.1` rather than restating the table. The approval rule is stated: an effect carrying a recorded approval is evaluated at row 3 or row 5, never row 2, because the approval floor's purpose is satisfied. `35 §12.1` is rewritten to walk a **$30 floor-exceeding, clock-bearing** refund. Rows 3 and 5 apply only in `CORROBORATED_DEGRADED`; in `UNCORROBORATED_STALL` row 3 degrades to *suspend* per SR-A2. |
+| **Invariant** | No new invariant; the table becomes deterministic. |
+| **Test** | `36 §13.6` VC-A6: one fixture per row, **including one effect matching rows 2 and 3 simultaneously**, asserting the declared precedence; plus an approval-bearing effect asserting row 3. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `30 §5.1`, `24 §3` K11, `36 §6`, `22 §3.1`, `35 §12.1` |
+
+---
+
+### SR-L1 — `min()` over an absent cap
+
+| Field | Value |
+|---|---|
+| **Source attack** | LIM-01 (`53 §4`), `54 §2.3` |
+| **Defect** | Every term of `MAL_monetary` takes a `min` against an absent operand, because no window in `51 §2` declares a monetary cap. An independent implementation returns $300.00, $0.00 or undefined depending on a convention stated nowhere. |
+| **Affected artifacts** | `26 §10.1`, `51 §2`, registry `I7` |
+| **Required change** | Type the field: `window.max_monetary : Money | UNBOUNDED`, with `min(UNBOUNDED, x) = x` stated explicitly. |
+| **Applied change** | `26 §10.1` v1.2 types the field and states the rule. **The column is not nullable.** Three values are distinguishable and their behaviours are declared: `UNBOUNDED` is a sentinel meaning no monetary ceiling on this window and `min(UNBOUNDED, x) = x`; `0.00` means the window admits no monetary exposure at all and every reservation against it denies; `null` **is a schema violation** and is rejected at catalogue validation. There is no inferable-from-the-printed-answer path left. Resolved in practice by SR-L2, which gives every window a value. |
+| **Invariant** | `I7` becomes well-defined. |
+| **Test** | `36 §2.9` VC-L1: an `I7` fixture case where the **window cap binds below** `per_action × count` (fixture F2, `51 §7`), so the `min` is exercised in both directions; plus a case where `max_monetary = UNBOUNDED`; plus a catalogue-validation case asserting `null` is rejected. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §10.1`, `51 §2`, `51 §7` (new), `24 §3` K5, `36 §2` |
+
+---
+
+### SR-L2 — window ceilings undeclared
+
+| Field | Value |
+|---|---|
+| **Source attack** | LIM-02 (`53 §4`), LIM-05, STD-07, LIM-07 |
+| **Defect** | `I3` reads `window ceiling` and no artifact declares one. Ceiling-as-sum-over-grants makes `I3` vacuous; independently declared ceiling makes `MAL_monetary` over-count when grants share a window; and `51`'s fixture cannot distinguish them because six of nine windows have one referencing grant. |
+| **Affected artifacts** | `51 §2`, `26 §4`, `26 §10.1`, `24 §3` K5, registry `I3`, `I7` |
+| **Required change** | Windows declare `max_monetary`, `max_count`, `max_irrecoverable_units`. **Grants may only narrow, never widen.** `MAL_monetary(w)` becomes `min(window.max_monetary, Σ grant-derived terms)`. Resolve the heterogeneous MIE count units. |
+| **Applied change** | `51 §2` v1.2 declares all three ceilings on all nine windows plus the two override windows. `26 §4` v1.2 states the narrowing rule precisely, because the imprecision is what made LIM-02 ambiguous: **each individual grant's derived term must be ≤ the window's ceiling (a grant may only narrow); the *sum* over grants referencing a window may exceed the ceiling, and the ceiling binds.** That is the distinction between the two repairs LIM-02 identified, and it selects the second — the window is the binding object and `I3` is not vacuous. `26 §10.1` v1.2: `MAL_monetary(w) = min(window.max_monetary, Σ_g min(window.max_monetary, g.per_action_max.monetary × g.window(w).max_count))`. `24 §3` K5 v1.2 declares the enforcement mechanism `window_balance(company_id, window_id, reserved, standing, presumed_settled, realised, ceiling_monetary, ceiling_count, ceiling_irrecoverable)` with a `CHECK` taken `FOR UPDATE`, which replaces the registry's incorrect "exclusion constraint" claim (LIM-05, applied here because `I3` is otherwise unimplementable). `W_DAY_MIE`/`W_MONTH_MIE`'s heterogeneous counts are resolved by **declared per-class sub-ceilings within the named window** (`max_count_by_class{}`), not by leaving it implicit. |
+| **Invariant** | `I3` becomes evaluable and its enforcement column is corrected to the mechanism that can express a sum bound. `I7` gains the window cap as a term. |
+| **Test** | `36 §2.10` VC-L2: fixture F2's two grants of different classes on one window with a binding window cap — assert the second denies `WINDOW_EXHAUSTED` before its own grant count is reached, and assert `MAL_monetary` displays the **window cap**, not the grant sum. Plus F2's two same-class grants on one window (STD-07) and two standing authorisations on one window. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §4`, `26 §10.1`, `26 §10.3`, `24 §3` K5, `51 §2`, `51 §7` (new), `36 §2`, `50 §2` |
+
+---
+
+### SR-L3 — order-driven cost excluded and undeclared
+
+| Field | Value |
+|---|---|
+| **Source attack** | LIM-03 (`53 §4`), `54 §4.3`, OOS-02 |
+| **Defect** | Order-driven irrecoverable cost is excluded from `MAL_total` by `I30`, absent from **both** six-item exclusion lists, and its three governing controls have no declared values — in the class `33 §9` says dominates POD by volume. Order of magnitude from the fixture's own numbers: `200 × $35 = $7,000` against a displayed $600. |
+| **Affected artifacts** | `51 §3.3`, `51 §6`, `26 §5`, `26 §10.4`, `30 §3` V2, registry `I30` |
+| **Required change** | Declare the per-order fulfilment rate limit, the template whitelist and the fulfilment-to-settled-order ratio threshold with its evaluation window. Add a fifth displayed quantity, not folded in. Add order-driven cost as a seventh exclusion with its magnitude stated. State that the ratio's denominator is processor-settled and cite `I27`. |
+| **Applied change** | `51 §3.4` v1.2 declares: **per-order fulfilment rate limit = 1**, a second fulfilment of the same order requiring TIER_2 approval; the **template whitelist** as a named control artifact (`50 §2` class 7) with the transactional order-state template set enumerated; the **fulfilment-to-settled-order ratio threshold = 1.05** over a trailing seven-calendar-day evaluation window on the DB clock, with `min_denominator = 20` below which the check returns `INSUFFICIENT_DATA`; and a **duplicate-fulfilment-attempt count > 0 per day** as a second anomaly trigger that does not depend on the denominator. The evaluation window is explicitly a **metric** window, not an exposure window, so `boundary_kind` does not apply to it. `OrderDriven_cost(w) = Σ order-driven fulfilments in w × unit_cost_p95(class)` is a **fifth displayed quantity** shown adjacent to `MAL_total` with its own utilisation and **not folded in** — it is COGS against revenue, not authorised loss. It is added to `26 §10.4` and `51 §6` as a **seventh exclusion** with its magnitude stated. `51 §3.4` states that the denominator is **processor-settled orders** and cites `I27`, so the dependency on R6 is explicit rather than inherited. |
+| **Invariant** | `I30` unchanged. New **I57**: the fulfilment-to-settled-order ratio is below its declared threshold, computed with a processor-settled denominator. |
+| **Test** | `36 §2.11` VC-L3a/b: attempt a second fulfilment of one order and assert refusal; fabricate orders through a compromised commerce adapter and assert the ratio detects them **because the denominator is settlement-derived**; assert `INSUFFICIENT_DATA` below `min_denominator` and that the per-order limit still holds there. |
+| **Third review** | No |
+| **Disposition** | **APPLIED WITH EXPLICIT RESIDUAL** |
+| **Residual** | Two, both stated in `51 §3.4`. (a) **Below `min_denominator = 20` settled orders the ratio control is inert**, and the per-order limit is the only control. At Stage 2 volumes this is the ordinary condition, not the exception. (b) **`I57`'s integrity is inherited from `I27`**, which is R6 and out of this review's scope (OOS-02). If R6's processor-settlement corroboration is not implemented as specified, SR-L3 is a loss channel rather than a disclosure defect. Recorded as a named dependency, not resolved. `unit_cost` for order-driven fulfilment is `NOT_DECLARABLE_UNTIL_BUSINESS_MODEL_SELECTED` (Phase 1 left the model open); the displayed quantity computes from actual fulfilment cost records at runtime. |
+| **Sections changed** | `26 §5`, `26 §10.1`, `26 §10.4`, `30 §3` V2, `51 §3.4`, `51 §4`, `51 §6`, `36 §2` |
+
+---
+
+### SR-L4 — headroom laundering via the `I32` override
+
+| Field | Value |
+|---|---|
+| **Source attack** | LIM-04 (`53 §4`), `52 §1` Path A, `54 §4.1` |
+| **Defect** | Ten unresolved refund reservations trigger `I32`; the owner exercises the override, framed in `25 §12` as an availability remedy; `I3`'s terms lose the exposure because released reservations are not open and unresolved spend is not realised; the window refills; `MAL_monetary` never changes so `26 §10`'s re-signature never fires. Realisable loss is `10 × $25 × k`. |
+| **Affected artifacts** | `25 §12`, `26 §10`, `30 §10`, `35 §4`, `24 §3` K5, registry `I3`, `I32` |
+| **Required change** | `I3` gains a `PRESUMED_SETTLED` term persisting until settlement resolves it. Headroom beyond that comes only from a separate named `W_*_OVERRIDE` window entering `MAL_total` and requiring owner re-signature. The override bundle displays the `MAL_total` delta. |
+| **Applied change** | `24 §3` K5 v1.2 declares `PRESUMED_SETTLED` as a reservation state, not a release: the reservation row's **workflow hold** is released (the operational blockage the owner is resolving) while its `presumed_exposure` continues to occupy `I3`'s third term until the settlement reconciler resolves it — `MATCHED` converts it to realised, `FAILED` releases it, and an unresolved item stays counted indefinitely. **Releasing the reservation does not release the exposure.** `51 §2` v1.2 declares `W_MONTH_REFUND_OVERRIDE` and `W_MONTH_CREDIT_OVERRIDE` with `max_monetary = $0.00` at Stage 2: the windows exist in the schema at zero, and **raising one is an explicit authority-quantity change that enters `MAL_total` and triggers `26 §10.3`'s re-signature.** `25 §12` v1.2 restates the `I32` override as *a liquidity remedy that does not create headroom*, and `30 §10` item 3's MAL-delta display is made mandatory on the override bundle — the path that bypassed it. **No liquidity override can masquerade as a loss-limit override**, because the liquidity action changes no ceiling and the ceiling action is a signed window change. |
+| **Invariant** | `I3` extended to four terms: `Σ open reservations + Σ non-REVOKED standing forward exposure + Σ presumed exposure of PRESUMED_SETTLED effects + realised spend ≤ window ceiling`. `I32`'s override is reclassified: it resolves workflow blockage and never increases the signed ceiling. |
+| **Test** | `36 §2.12` VC-L4: execute `52 §1` Path A end to end and assert the second batch of ten refunds denies `WINDOW_EXHAUSTED` unless a signed override window exists; assert the override bundle displays a non-zero `MAL_total` delta; assert `k` iterations produce no headroom growth. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `24 §3` K5, `25 §12`, `26 §10.1`, `26 §10.3`, `30 §10`, `35 §4`, `51 §2`, `51 §4`, `36 §2` |
+
+---
+
+### SR-R1 — reservation vs OWNER approval lifetime
+
+| Field | Value |
+|---|---|
+| **Source attack** | RES-01 (`53 §5`), RES-05, RES-06, RES-09, `56 §1.2`–`§1.4` |
+| **Defect** | `26 §12` gives OWNER approvals no expiry; `24 §3` K5 reaps reservations. The reservation is guaranteed to be reaped before an OWNER approval arrives, and R′ covers *insufficient*, not *absent*. |
+| **Affected artifacts** | `26 §12`, `26 §7`, `24 §3` K5, `24 §3` K9, `25 §12` |
+| **Required change** | Reservation TTL derives from the approval tier's SLA; OWNER-tier reservations exempt from reaping and attributed to `I32`. R′ gains an explicit `RESERVATION_ABSENT` denial. A bounded next state after any verify-mode denial: `RemedyObligation` plus an auto-enqueued fresh proposal at the same tier. Semantic comparison on constructor bump. |
+| **Applied change** | `26 §12` v1.2 declares `reservation_ttl = approval_tier.sla + reaper_grace` — TIER_1 24h + 6h, TIER_2 48h + 6h — and **OWNER-tier reservations are exempt from reaping**, with their held exposure attributed to `I32`'s starvation metric so the cost of an unattended approval is visible rather than silent. `24 §3` K9 v1.2 declares the explicit **Approval state machine** the mission requires: `PENDING | APPROVED | RESUMING | CONSUMED | DENIED | EXPIRED | SUPERSEDED`, with the legal transitions tabulated and a unique partial constraint on `(approval_id)` in `RESUMING`, so a second concurrent resume cannot start — closing the gap that `I42` only caught at step T, after R′ and after the state transition. `26 §7` step R′ v1.2: an absent, released or expired `reservation_id` denies **`RESERVATION_ABSENT`** and emits a `RemedyObligation` (see SR-R1's Part 13 companion below). On resume under a newer constructor, comparison is **semantic**: unchanged `total_exposure` plus a payload differing only in fields the `ConstructorVersionRecord` declares non-semantic resumes; anything else denies `CONSTRUCTOR_SEMANTIC_CHANGE` and re-proposes. |
+| **Invariant** | New **I58**: no denied verify-mode resume for a class carrying an unmet obligation exists without a linked `RemedyObligation`. New **I60**: every `Approval` transition is in the declared transition set, and no `Approval` has more than one `RESUMING` entry. |
+| **Test** | `36 §2.13` VC-R1a/b/c: approve after the TIER_1 reservation TTL and assert `RESERVATION_ABSENT` plus an obligation record; deploy a constructor bump mid-queue and assert semantically-equivalent approvals resume while others re-propose; attempt two concurrent resumes on one `(approval_id, key)` and assert the second is refused **before** R′. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `24 §3` K5, `24 §3` K9, `25 §12`, `26 §7`, `26 §12`, `36 §2` |
+
+---
+
+### SR-R1 companion — obligations after safe denial (`RemedyObligation`)
+
+Recorded as part of SR-R1 rather than as a twenty-third finding, because `57 §5` specifies it inside SR-R1's change list. **Not a merge**: SR-R1's disposition above covers the lifetime repair, and this row covers the bounded next state, and both are required for SR-R1 to be APPLIED.
+
+| Field | Value |
+|---|---|
+| **Defect** | A safe denial leaves an unresolved customer or statutory obligation with no bounded next state (RES-05). |
+| **Applied change** | `26 §7`'s DR1 branch emits `RemedyObligation{id, case_ref, clock_ref, denied_authorisation_ref, original_approval_ref, reason, created_at, resolved_at}` and **auto-enqueues a fresh proposal at the same approval tier**, linked to the original approval so the owner sees one thread rather than two unrelated queue items. Emitted when: recomputed exposure exceeded the reservation; the reservation was absent; the constructor's semantic version changed; or any other verify-mode condition correctly blocks execution while a statutory or customer obligation remains open. Lineage — `intent_hash`, original `authorisation_ref`, original `idempotency_key`, `constructor_version` — is preserved on the obligation. **A valid obligation is never stranded because the safety mechanism correctly refused the old effect.** |
+| **Invariant** | `I58` |
+| **Test** | `36 §2.13` VC-R1d: deny a resume on a class inside a live FTC clock and assert both the obligation record and the linked fresh proposal exist within the same transaction as the denial. |
+| **Disposition** | **APPLIED** |
+
+---
+
+### SR-R2 — hand proof incomplete
+
+| Field | Value |
+|---|---|
+| **Source attack** | RES-02 (`53 §5`), `56 §3.1`, `56 §3.3` |
+| **Defect** | `26 §11.2` covers eleven of nineteen authority-bearing classes and omits `goodwill.credit.issue` and `order.address.edit`, both granted in `51 §3`, plus `campaign.pause`, `webhook.subscription.*`, reconciler resolution, `entitlement.issue/revoke` and `supplier.relationship.create`. It is the only proof of P4 until symcc returns. |
+| **Affected artifacts** | `26 §11`, `26 §11.2`, `37 §7`, `36 §3` |
+| **Required change** | Complete the table over all authority-bearing classes with four columns: `value_direction`, reachable `counterparty.novelty`, reachable `customer_novelty`, and P4/P4a/P6/P7 status. **Include P6 reachability.** Any class whose direction is not expressible is a finding, not a blank. |
+| **Applied change** | `26 §11.2` v1.2 is a complete table over the **twenty-two** authority-bearing classes in the v1.2 catalogue (nineteen from `56 §3.1` plus `price.change`, `social.post` and `platform.message.send`, which `26 §5` assigns recoverability to and which therefore carry authority), with six columns: `value_direction`, reachable `counterparty.novelty`, reachable `customer_novelty`, P4, P4a/P7, and **P6 reachability**. Five classes are recorded as **EXCLUDED FROM AUTONOMOUS MVP EXECUTION** rather than squeezed into the taxonomy — split-tender refunds, cross-currency monetary classes, `email.campaign.send`, chargeback acceptance and any class with no registered constructor — each with the reason and the disqualifier. `26 §11.3` v1.2 works the difficult examples the mission names: goodwill/store credit, gift-card value, split tender, marketplace settlement, third-party beneficiary, subscription credit, affiliate payout, chargeback acceptance. |
+| **Invariant** | None new; P4's interim evidence becomes complete. A CI check asserts one row per catalogue class, so a new class cannot be added without a row — the generate-and-diff discipline `I14` applies to capability declarations, applied here. |
+| **Test** | `36 §3.2` VC-R2: the table is the artifact; the CI check is the test. Plus a construction test per class asserting the computed `counterparty.id` and `novelty` against a hand-authored fixture **including the stale-allowlist case** — the test `56 §3.2` says is named nowhere. |
+| **Third review** | No, provided the completed table contains no class whose direction requires an extension beyond SR-R3's six values. **Verified: it does not.** |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §5`, `26 §11`, `26 §11.2`, `26 §11.3` (new), `36 §3`, `37 §7`, `51 §3` |
+
+---
+
+### SR-R3 — `settlement_direction` incomplete
+
+| Field | Value |
+|---|---|
+| **Source attack** | RES-03 (`53 §5`), RES-07, RES-10, CAN-07, `56 §2.1` |
+| **Defect** | `goodwill.credit.issue` — a monetary class entering `MAL_monetary`, granted in the fixture — is neither outbound to a counterparty nor inbound to the original instrument. The same gap covers the gift-card portion of a split-tender refund, a remedy to a gift recipient, and goods redirection. |
+| **Affected artifacts** | `26 §2.1`, `26 §8`, `26 §11`, `24 §3` K4, `50 §2` class 3, `51 §3.1` |
+| **Required change** | Rename `settlement_direction` to `value_direction` and extend to six values. Restate P4 as *"no policy path permits a NOVEL destination for any class whose `value_direction` is outbound"*. `INTERNAL_LIABILITY` governed by caps plus a redemption bound, no novelty test. Make refund `instrument` an enumerated dimension. |
+| **Applied change** | `value_direction` replaces `settlement_direction` throughout, with six values: `NONE`, `INBOUND_ORIGINAL_INSTRUMENT`, `OUTBOUND_TO_COUNTERPARTY`, `INTERNAL_LIABILITY`, `OUTBOUND_TO_THIRD_PARTY_BENEFICIARY`, `OUTBOUND_GOODS_TO_ADDRESS`. P4 v1.2: *"For every action class whose `value_direction` is outbound — `OUTBOUND_TO_COUNTERPARTY`, `OUTBOUND_TO_THIRD_PARTY_BENEFICIARY` or `OUTBOUND_GOODS_TO_ADDRESS` — no policy path permits a NOVEL destination."* One property, both BEC shapes, money and goods. `INTERNAL_LIABILITY` is governed by per-action and window caps **plus a declared redemption bound** (`51 §3.1`: outstanding store-credit liability ≤ `$200.00`, entering `MAL_monetary` as its own window `W_LIABILITY_OUTSTANDING`) and carries no novelty test because there is no external destination. Refund `instrument` becomes an **enumerated dimension**: the refund enumeration is two-dimensional over `(line, parent_transaction)` with SR-C3's `option_id`, so `26 §8`'s `instrument == "original"` tests an enumerated property rather than a constructor assertion, and split-tender orders become *expressible* — and are nonetheless **excluded from autonomous MVP execution** per `58 §11`. `26 §11.4` v1.2 adds the per-adapter enforceability table RES-10 requires: for each monetary class and each adapter, is the destination processor-derived (structural) or payload-selectable (policy-only)? |
+| **Invariant** | P4 restated; P4a unchanged in content, with chargeback acceptance removed from its enumeration because no governed class exists (LIM-08). New **I59**: no class in the catalogue has a null `value_direction`. |
+| **Test** | `36 §3.3` VC-R3a/b/c: assert every catalogue class has a non-null direction; assert a split-tender refund enumerates per `(line, parent_transaction)` and then denies `NOT_CANONICALISABLE` at MVP; assert a gift-card destination held by a third party is classified `OUTBOUND_TO_THIRD_PARTY_BENEFICIARY` and that NOVEL denies. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `26 §2.1`, `26 §5`, `26 §8`, `26 §11`, `26 §11.2`, `26 §11.3` (new), `26 §11.4` (new), `24 §3` K4, `50 §2`, `51 §3.1` |
+
+---
+
+### SR-R4 — R9's central rule has no invariant
+
+| Field | Value |
+|---|---|
+| **Source attack** | RES-04 (`53 §5`), `54 §5` |
+| **Defect** | `I31` states *"no `Reservation` is created for an `AuthorizationDecision` that already holds one"* and is cited in four places for *"a recomputed exposure exceeding the held reservation denies"*. A unique constraint prevents a second row, not an `UPDATE` that raises the amount, and it says nothing about the deny rule. **The decision the brief calls the central choice among three readings is enforced by no invariant.** |
+| **Affected artifacts** | `26 §7`, `26 §12`, `25 §5`, `25 §12`, registry `I31`, consistency-pass method |
+| **Required change** | New `I51`. Enforcement RUNTIME at R′ plus a DB trigger forbidding any `UPDATE` that increases `reservation.amount`. Correct the four citations. **And a method change**: for every citation, the citing sentence must be *entailed* by the registry statement, not merely resolve to a defined identifier. |
+| **Applied change** | New **I51**: *"No effect is dispatched whose recomputed exposure exceeds its held reservation, and verify mode never increases a reservation amount."* Enforcement: `RUNTIME` at step R′ + `DB` trigger `reservation_no_increase` refusing any `UPDATE` where `NEW.amount > OLD.amount`. The four citations in `26 §7`, `26 §12`, `25 §5` and `25 §12` now cite `I51`; `I31` is cited only for the no-second-row property. The consistency-pass method gains **check C5b — entailment**: for every citation, the citing sentence must be entailed by the registry statement. C5b was run over the complete v1.2 package and its output is in `analysis/v1.2-consistency-audit.md`; it found and corrected four further drifted citations beyond the four `57` names. |
+| **Invariant** | New `I51`. `I31` narrowed in citation, unchanged in content. |
+| **Test** | `36 §2.14` VC-R4a/b: attempt a top-up `UPDATE` and assert the trigger refuses; assert a resume with a larger recomputed exposure denies and that the denial is **attributed to `I51`** in the journal row. |
+| **Third review** | No |
+| **Disposition** | **APPLIED** |
+| **Sections changed** | `25 §5`, `25 §12`, `26 §7`, `26 §12`, invariant registry, `analysis/v1.2-consistency-audit.md` |
+
+---
+
+## 3. Cross-reference: attack id → finding id → disposition
+
+| Attack | Finding | Group | Disposition | 3rd review |
+|---|---|---|---|---|
+| CAN-01 | SR-C1 | R1 | APPLIED WITH EXPLICIT RESIDUAL | No |
+| CAN-02 | SR-C2 | R1 | APPLIED | No |
+| CAN-03 | SR-C3 | R1 | APPLIED | No |
+| CAN-04 | SR-C4 | R1 | APPLIED | No |
+| STD-01 | SR-S1 | R2 | APPLIED | No |
+| STD-02 | SR-S2 | R2 | APPLIED WITH EXPLICIT RESIDUAL | **YES (B)** |
+| STD-03 | SR-S3 | R2 | APPLIED | No |
+| STD-04 / STD-06 | SR-S4 | R2 | APPLIED WITH EXPLICIT RESIDUAL | No |
+| AUD-01 | SR-A1 | R3 | APPLIED WITH EXPLICIT RESIDUAL | **YES (A)** |
+| AUD-02 / AUD-06 | SR-A2 | R3 | APPLIED WITH EXPLICIT RESIDUAL | **YES (A)** |
+| AUD-03 | SR-A3 | R3 | APPLIED | No |
+| AUD-04 | SR-A4 | R3 | APPLIED | No |
+| AUD-05 | SR-A5 | R3 | APPLIED | No |
+| AUD-10 | SR-A6 | R3 | APPLIED | No |
+| LIM-01 | SR-L1 | R8 | APPLIED | No |
+| LIM-02 | SR-L2 | R8 | APPLIED | No |
+| LIM-03 | SR-L3 | R8 | APPLIED WITH EXPLICIT RESIDUAL | No |
+| LIM-04 | SR-L4 | R8 | APPLIED | No |
+| RES-01 / RES-05 / RES-06 / RES-09 | SR-R1 | R9 | APPLIED | No |
+| RES-02 | SR-R2 | R9 | APPLIED | No |
+| RES-03 / RES-07 / RES-10 | SR-R3 | R9 | APPLIED | No |
+| RES-04 | SR-R4 | R9 | APPLIED | No |
+
+## 3.1 MATERIAL and lower findings closed as a consequence
+
+Recorded because a ledger that claims only what it was asked to fix understates the package's state, and because `52 §6`'s reconsideration trigger cares about *how* a finding was closed.
+
+| Finding | Severity | Closed by | Note |
+|---|---|---|---|
+| CAN-05 | MATERIAL | SR-C2's quota + `DENY: SELECTOR` category | Enumeration probing is now rate-limited and the denial category no longer distinguishes out-of-range from downstream |
+| CAN-08 | MATERIAL | SR-C1's declared per-class tolerance | Two tolerance kinds, `EXACT` and `BAND(basis)`; `I12` applies to widening |
+| CAN-10 | WORDING + MATERIAL residual | `24 §3` K4 reworded; `precondition_token` added to `DispatchPayload` where the vendor supports conditional writes, recorded per class where it does not | |
+| LIM-05 | MATERIAL | SR-L2's `window_balance` mechanism | `I3`'s enforcement column corrected; the "12 are database-enforced" headline recomputed |
+| LIM-06 | MATERIAL | SR-C1's tolerance band + `MIE_cost` p50/p95 | `MAL_total` displayed against the p95 basis |
+| LIM-08 | MATERIAL | SR-R2/SR-R3 | Chargeback acceptance removed from P4a; chargeback exposure added to the exclusion list with the VAMP count of 5 stated |
+| LIM-09 | MINOR | `26 §12` restated | Bound is `min(count_headroom, floor(monetary_headroom / per_action_max))` per class per window; the refund bound is 10, not 24 |
+| LIM-10 | WORDING | `30 §3` V2 | `Total realisable cash exposure = MAL_total + cost ceilings` displayed as a fourth line |
+| STD-05 | MATERIAL | SR-S2's scoped `reconciler_match_rule` | Bounded predicate declared; independently authored crafted-charge case added to the fixture with authorship recorded |
+| STD-07 | MATERIAL | SR-L2's window ceiling | Standing multiplicity is now an arithmetic consequence; fixture F2 exercises it |
+| LIM-07 | MATERIAL | `51 §7` fixture F2 | Every degenerate composition is now exercised |
+| AUD-07 | MATERIAL | SR-A2 (the override became load-bearing) | Per-class, time-boxed, count-capped, auto-expiring, tagged, distinct second approver |
+| AUD-09 | WORDING | SR-A1 | "Transport completeness"; unqualified claim relocated to `I8` |
+| RES-08 | MATERIAL | `24 §3` K5 + `26 §8` | `OutOfBandAction{vendor, operation, resource_ref, attested_at, owner_signature}` as a positive record `I8` matches — narrow, single-use, expiring. **Not** an exclusion rule |
+| RES-09 | MINOR | SR-R1's Approval state machine + `I60` | |
+| CAN-06 / CAN-07 | MATERIAL | `58 §11`'s two new disqualifiers, carried forward | Cross-currency and split-tender classes are non-autonomous at MVP |
+
+**Not closed, carried forward as named:** CAN-09 (C′'s per-class external state dependencies — enumerated in `48 §4` v1.2, `23 §5.2` restated), CAN-11, CAN-12, AUD-08 (anchoring medium named as candidates in `30 §5.8`, selection deferred to S6), AUD-11, STD-08, OOS-01, OOS-02, OOS-03.
+
+---
+
+## 4. `57 §7` compliance check — did any remediation weaken an invariant?
+
+`57 §7` and `58 §13` condition 1 make this the reconsideration trigger for the whole verdict. Checked item by item, in the four places `57` names specifically.
+
+| `57 §7` prohibition | v1.2 state | Verdict |
+|---|---|---|
+| *"`I18` must not be relaxed to a tolerance that admits omitted cost components"* | `I18b` is an **exact equality** — `reservation.amount == exposure.total_exposure` — with no tolerance at all. The tolerance is on `I18d`, the **settlement** leg, where it is per-class, declared, and `EXACT` for every class whose settled cost is fully determined pre-dispatch. An omitted cost component fails `I18b` at construction, before any tolerance is reached. `I12` forbids widening a band within 30 days of a discrepancy it would resolve. | **Not weakened** |
+| *"`I17` must not be restated as one-sided and called complete"* | `I17` is restated as **transport completeness** and explicitly labelled as such in `30 §5`, the registry, `36 §1` and `22 §3.1`. The unqualified claim is relocated to `I8` with its coverage limits attached at every citation. The restatement is a **narrowing of the claim to what the mechanism establishes**, plus a **new mechanism** (`I17e`'s attestation) that closes tail truncation. | **Not weakened** |
+| *"`I3` must not drop the `PRESUMED_SETTLED` term because it is inconvenient"* | `I3` v1.2 has four terms including `PRESUMED_SETTLED`, and the term persists until settlement resolves it. The headroom the owner needs comes from a signed override window that enters `MAL_total`. | **Not weakened — term added** |
+| *"P4 must not be narrowed further to make the hand proof shorter"* | P4 is **broadened**, from one outbound direction to three, covering goods as well as money. The hand proof grew from eleven rows to twenty-two plus five explicit exclusions, and gained a P6 reachability column it did not have. | **Not weakened — broadened** |
+
+**Additional self-check, because the pattern `52 §3` names is a missing quantity rather than a weakened invariant.** Every quantity in `52 §3`'s table of nine now has a declared home:
+
+| `52 §3` missing quantity | Declared in v1.2 |
+|---|---|
+| Window monetary ceilings | `51 §2` — all eleven windows, `Money | UNBOUNDED`, not nullable |
+| `min(absent, x)` convention | `26 §10.1` — typed rule; `null` is a schema violation |
+| Per-class `I18` settlement tolerance | `51 §5.1` — `EXACT` or `BAND(basis)` per class, in the action catalogue |
+| Order-driven per-order rate limit | `51 §3.4` — 1, second fulfilment requires TIER_2 |
+| Order-driven ratio anomaly threshold | `51 §3.4` — 1.05 over trailing 7 days, `min_denominator = 20` |
+| Standing headroom release condition | `24 §3.1` — `REVOKED` only, after `I54`'s cessation verification |
+| Overdelivery allowance in forward exposure | `51 §3.2` — `daily_overdelivery_multiplier = 2.0`, `monthly_basis_multiplier = 30.4`, both DOCUMENTED and cited |
+| `reconciler_match_rule` specificity | `51 §3.2` — bounded predicate scoped to one `standing_authorization_id` |
+| Journal row canonicalisation | `30 §5.3` — `ACOS-JCS-1`, defined once, control artifact class 20 |
+
+---
+
+## 5. Ledger verdict
+
+**Twenty-two of twenty-two BLOCKING findings are `APPLIED` or `APPLIED WITH EXPLICIT RESIDUAL`. Zero remain `NOT APPLIED — BLOCKING`.**
+
+Every residual is a quantity that architecture reasoning cannot settle, each carrying an `IMPLEMENTATION_VALIDATION_REQUIRED` marker, a conservative default that fails closed, and a named slice in `58 §12` at which it is measured. No residual is a deferred decision dressed as an unknown.
+
+**This ledger authorises nothing.** `58`'s implementation gate remains closed; see `phase2-v1.2-changelog.md §9`.

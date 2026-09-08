@@ -34,6 +34,8 @@ the whole cross-product with a discriminating control.
 | Worktree clean at start | yes |
 | Baseline `npm run verify` | exit 0 |
 | Baseline files / tests / passed / failed / skipped | 86 / 1204 / 1204 / 0 / 0 |
+| Final commit | `ea7f60e02c3a6aff9a509616838710525126a147` |
+| Worktree clean at end | yes |
 
 ---
 

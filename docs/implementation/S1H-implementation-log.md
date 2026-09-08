@@ -17,6 +17,8 @@ walked into and out of.
 | Baseline test files | 86 |
 | Baseline tests | 1204 |
 | Baseline passed / failed / skipped | 1204 / 0 / 0 |
+| Final commit | `ea7f60e` |
+| Final files / tests / passed / failed / skipped | 104 / 1544 / 1544 / 0 / 0 |
 
 Two PostgreSQL instances were already up from the S1G run (`acos-s1a-control` on 55432,
 `acos-s1a-audit` on 55433), and both migration sets were re-applied from empty before any

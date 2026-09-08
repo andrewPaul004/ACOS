@@ -30,7 +30,34 @@ import {
 import type {
   PreReservationLineage,
   PreReservationOutcome,
+  PreReservationQualified,
 } from './preReservationResult.js';
+import {
+  commitLocalAuthorisation,
+  type LocalAuthorisationOptions,
+  type LocalAuthorisationRequestFacts,
+} from '../authorisation/localAuthorisation.js';
+import type { LocalAuthorisationOutcome } from '../authorisation/localAuthorisationResult.js';
+
+/**
+ * S1F's sealed continuation.
+ *
+ * `26 §7` step T mints the idempotency key from the DISPATCH PAYLOAD, and `24 §3` K4's
+ * effect row records the ADAPTER — both of which live on the payload the accepted S1E
+ * boundary deliberately withholds. So the two fields have to reach the local authorisation
+ * transaction without becoming part of any public result type.
+ *
+ * A module-scoped `WeakMap` keyed by the frozen `PreReservationQualified` is how. It is not
+ * exported, there is no accessor for it, and the only reader is
+ * `authoriseLocallyUnderLease` below. A caller holding an S1E result therefore holds
+ * exactly what S1E's accepted type says it holds — no adapter, no idempotency key and no
+ * payload — and `tests/type-negative/prereservation-as-dispatchable.ts` continues to hold
+ * unchanged.
+ *
+ * `WeakMap` rather than a field on the pipeline: the pipeline is reentrant, and a field
+ * would let one concurrent proposal's continuation be consumed by another's commit.
+ */
+const SEALED_CONTINUATIONS = new WeakMap<PreReservationQualified, LocalAuthorisationRequestFacts>();
 
 /**
  * `26 §7`'s pre-reservation sequence, end to end, under one held entity execution lease.
@@ -348,7 +375,7 @@ export class PreReservationAuthorityPipeline {
       // held it at the start".
       lease.assertHeld();
 
-      return Object.freeze({
+      const qualified: PreReservationQualified = Object.freeze({
         outcome: 'PRE_RESERVATION_PASS' as const,
         request,
         dispatchPayloadHash: request.dispatchPayloadHash,
@@ -357,6 +384,43 @@ export class PreReservationAuthorityPipeline {
         gateClass: autonomy.gateClass,
         lineage: withSteps(lineage, evaluated),
       });
+      // S1F. The sealed continuation, stored where only this module can reach it.
+      // See the SEALED_CONTINUATIONS header note.
+      SEALED_CONTINUATIONS.set(qualified, {
+        companyId: session.companyId,
+        sessionId: session.sessionId,
+        taskId: spec.taskId,
+        principalId: principal.resolved.id,
+        authorisationRef: supplied.authorisationRef,
+        actionClass,
+        resourceRef: request.resourceRef,
+        resourceId: request.resource.resourceId,
+        dispatchPayloadHash: request.dispatchPayloadHash,
+        intentHash: request.intentHash,
+        contextDigest: request.contextDigest,
+        constructorVersion: request.constructorVersion,
+        policyVersion: lineage.policyVersion,
+        exposure: {
+          vendorAmount: request.exposure.vendorAmount,
+          totalExposure: request.exposure.totalExposure,
+          forwardIntegral: request.exposure.forwardIntegral,
+        },
+        recoverability: catalogueEntry.recoverability,
+        valueDirection: catalogueEntry.valueDirection,
+        adapter: catalogueEntry.adapter,
+        idempotencyKey: effect.dispatchPayload.idempotencyKey,
+        windowRefs: authority.windowRefs,
+        approvalRequirement: authority.approvalRequirement,
+        autonomyLevel: autonomy.level,
+        gateClass: autonomy.gateClass,
+        // `51 §2` declares `W_DAY_REFUND.max_count = 2` and `W_MONTH_REFUND.max_count =
+        // 10`, and what those ceilings count is EFFECTS: one authorised refund is one
+        // unit against `I3`'s count ledger. A rate class is entered through
+        // `commitLocalAuthorisation` directly (see the S1F contract) and supplies its own
+        // figure, matching accepted VC-S7.
+        countUnits: 1n,
+      });
+      return qualified;
     } catch (error) {
       if (error instanceof AuthorityDenied) {
         return Object.freeze({
@@ -387,6 +451,73 @@ export class PreReservationAuthorityPipeline {
       // authority substrate was broken.
       throw error;
     }
+  }
+
+  /**
+   * `26 §7` D through W, end to end, under ONE continuously held entity execution lease.
+   *
+   * =================================================================================
+   * WHAT THIS ADDS OVER `evaluateUnderLease`, AND WHAT IT DOES NOT CHANGE
+   *
+   * `evaluateUnderLease` is UNTOUCHED and still stops at the edge into step R. This method
+   * calls it, and on `PRE_RESERVATION_PASS` continues into the local authorisation
+   * transaction on the SAME lease and the SAME connection.
+   *
+   * It re-evaluates no gate, re-resolves no grant, recomputes no exposure and re-reads no
+   * principal. `26 §7` is one ordered sequence and a second evaluation of any part of it
+   * would be a second place able to reach a different answer — which is exactly the shape
+   * `26 §2.1` property 2 exists to forbid. The economics that reach step R are the FROZEN
+   * ones the accepted S1E result carries.
+   *
+   * =================================================================================
+   * THE LEASE IS NOT RE-ACQUIRED
+   *
+   * `lease.client` is the connection holding the session-scoped advisory lock. The
+   * transaction runs on it, so the lock is held for the whole transaction by construction,
+   * and `commitLocalAuthorisation` asserts it at entry, after the isolation check and again
+   * after `COMMIT`. There is no release, no reacquire, no second session and no boolean
+   * standing in for the lock.
+   *
+   * `VC-C3` is therefore PARTIAL after S1F: the propose -> local-authorisation span is
+   * proven continuous; execute/dispatch remains unimplemented, so the full
+   * propose -> authorise -> execute span is not.
+   * =================================================================================
+   */
+  async authoriseLocallyUnderLease(
+    lease: HeldEntityLease,
+    session: RuntimeSessionRef,
+    intent: ProposedIntent,
+    spec: TaskContextSpec,
+    supplied: KernelNonAuthorityContext,
+    /**
+     * `lineage` is DELIBERATELY NOT a member. On this path the lineage is the ACCEPTED S1E
+     * result's own — the policy version the Cedar engine reported, the constructor version
+     * the signed record resolved to, the determining policies and the gate trace — and a
+     * caller able to supply one could put a different policy version on the journal row
+     * than the one that actually decided step M.
+     */
+    commit: Omit<LocalAuthorisationOptions, 'lineage'>,
+    barrier?: () => Promise<void>,
+  ): Promise<LocalAuthorisationOutcome> {
+    const outcome = await this.evaluateUnderLease(lease, session, intent, spec, supplied, barrier);
+    if (outcome.outcome !== 'PRE_RESERVATION_PASS') {
+      // A pre-R denial or a step-N approval requirement is returned VERBATIM. S1F does not
+      // re-code an S1E outcome and does not attach a local step to one: a proposal denied
+      // at step H′ produces the record the accepted S1E suite asserts, unchanged.
+      return outcome;
+    }
+    const facts = SEALED_CONTINUATIONS.get(outcome);
+    if (facts === undefined) {
+      // Unreachable: the PASS branch sets it. Asserted rather than assumed, because the
+      // alternative — silently proceeding without the frozen facts — would mean the
+      // transaction reserved against something other than what the gates evaluated.
+      throw new Error('the sealed pre-reservation continuation is missing');
+    }
+    return commitLocalAuthorisation(
+      lease,
+      { kind: 'ORDINARY', facts },
+      { ...commit, lineage: outcome.lineage },
+    );
   }
 
   /**

@@ -101,7 +101,7 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and fourteen negative files', () => {
+  it('the fixture directory contains a positive control and fifteen negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       // S1E. WIDENED BY EXACTLY TWO, and every existing entry is untouched.
@@ -123,6 +123,20 @@ describe('the harness discriminates', () => {
       'destination-into-option.ts',
       'fifth-field-request.ts',
       'intent-as-context.ts',
+      // S1F. WIDENED BY EXACTLY ONE, and every existing entry is untouched.
+      //
+      // The new fixture is the compile-time half of S1F's terminal boundary: a COMMITTED
+      // local authorisation — a real reservation, a signed decision and a journal row — is
+      // still not a dispatchable one. It is the harder case than S1E's, where the result
+      // carried no authority at all. It lives in this directory because there is one
+      // type-negative tsconfig project and a second one would duplicate the harness; its
+      // EXPECTED DIAGNOSTICS are owned by `tests/authority/authority-type-boundary.test.ts`,
+      // not by this file, so this list is the only line S1F changes here.
+      //
+      // The harness's discriminating properties are unaffected: the positive control still
+      // compiles clean, and "no diagnostic appears on an unmarked line" now covers the new
+      // file as well.
+      'local-authorisation-as-dispatchable.ts',
       'model-amount-into-exposure.ts',
       // S1D. WIDENED BY EXACTLY THREE, and every existing entry is untouched.
       //

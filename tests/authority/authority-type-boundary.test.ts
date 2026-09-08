@@ -172,3 +172,78 @@ describe('an S1E pass is structurally non-dispatchable', () => {
     expect(restamp!.message).toContain('"AUTHORISED"');
   });
 });
+
+describe('a COMMITTED local authorisation is structurally non-dispatchable — S1F', () => {
+  const FILE = 'local-authorisation-as-dispatchable.ts';
+
+  /**
+   * S1E's boundary was easy: the result carried no authorisation and no reservation, so
+   * there was nothing to dispatch. S1F's is the case that matters — there IS a committed
+   * authorisation, a signed decision, a real reservation and a journal row — and the type
+   * must still refuse to be read as permission to reach a vendor.
+   *
+   * The fixture is added to the SAME project as the S1E and S1B fixtures, deliberately.
+   * A second project would duplicate the harness, and the positive control above is what
+   * catches a fixture that broke the project's imports.
+   */
+  it('every marked line produced exactly the marked diagnostic', () => {
+    const actual = diagnosticsIn(FILE);
+    const marked = markersIn(FILE);
+    expect(marked.length, 'the fixture carries no markers').toBe(8);
+    for (const marker of marked) {
+      const hit = actual.find((d) => d.line === marker.line);
+      expect(hit, `no diagnostic on ${FILE}:${marker.line}`).toBeDefined();
+      expect(hit!.code, `${FILE}:${marker.line}`).toBe(marker.code);
+    }
+  });
+
+  it('the committed result is missing the payload a dispatch would need', () => {
+    const actual = diagnosticsIn(FILE);
+    const missing = actual.find((d) => d.code === 'TS2741');
+    expect(missing).toBeDefined();
+    expect(missing!.message).toContain('dispatchPayload');
+    expect(missing!.message).toContain('LocalAuthorisationCommitted');
+  });
+
+  it('and it carries none of the four vendor-facing fields, each named individually', () => {
+    // Named one by one, so a future result type that acquired ANY of them fails here rather
+    // than in a review.
+    const actual = diagnosticsIn(FILE);
+    for (const field of ['dispatchPayload', 'idempotencyKey', 'adapter', 'monetaryEffect']) {
+      const hit = actual.find(
+        (d) => d.code === 'TS2339' && d.message.includes(`Property '${field}' does not exist`),
+      );
+      expect(hit, `the S1F terminal exposes ${field}`).toBeDefined();
+    }
+  });
+
+  it('the local status is a literal type and cannot be restamped as DISPATCHED', () => {
+    const actual = diagnosticsIn(FILE);
+    const restamp = actual.find(
+      (d) => d.code === 'TS2322' && d.message.includes('"DISPATCHED"'),
+    );
+    expect(restamp).toBeDefined();
+    expect(restamp!.message).toContain('"AUTHORISED"');
+  });
+
+  it('a PENDING approval cannot be read as a PERMIT', () => {
+    // `26 §12`: "Never auto-approve on timeout" — and never read a held tier as a permit.
+    const actual = diagnosticsIn(FILE);
+    const pending = actual.find(
+      (d) => d.code === 'TS2322' && d.message.includes('"REQUIRE_APPROVAL"'),
+    );
+    expect(pending).toBeDefined();
+    expect(pending!.message).toContain('"PERMIT"');
+  });
+
+  it('step V mints no new authority — the duplicate outcome has no reservation', () => {
+    const actual = diagnosticsIn(FILE);
+    const duplicate = actual.find(
+      (d) =>
+        d.code === 'TS2339' &&
+        d.message.includes("Property 'reservationId' does not exist") &&
+        d.message.includes('LocalAuthorisationDuplicate'),
+    );
+    expect(duplicate).toBeDefined();
+  });
+});

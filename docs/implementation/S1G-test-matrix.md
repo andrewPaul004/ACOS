@@ -1,42 +1,127 @@
 # S1G — Test matrix
 
-**115 tests across 8 new files. Every one of them uses BOTH PostgreSQL instances.**
+**147 tests across 10 files. Every one of them uses BOTH PostgreSQL instances.**
 
-`npm run verify`: **84 files, 1171 tests, 1171 passed, 0 failed, 0 skipped.**
-Baseline `395a13b`: 76 files, 1052 tests. Delta: +8 files, +119 tests (115 new, +4 net in
-one modified accepted file — see `S1G-owner-clarifications.md` S1G-C2, S1G-C3).
+`npm run verify`: **86 files, 1204 tests, 1204 passed, 0 failed, 0 skipped**, exit 0.
+S1F baseline `395a13b`: 76 files, 1052 tests. PARTIAL candidate `f79c664`: 84 files,
+1171 tests.
+
+**The owner-resolution pass added +2 files and +33 tests**, all of them for architecture
+package issue **v1.3.2, erratum JCS-01** and for `S1G-C4`:
+
+| Where | Delta | Why |
+|---|---|---|
+| `§1` `VC-A3` | 22 → **35** | `§8`'s full NULL / EMPTY / BYTES / TEXT / NUMERIC / JSON / length-boundary matrix, judged against all three implementations |
+| `§1a` old-spec vulnerable control | **+9**, new file | `§9`'s mandatory regression proof: v1.2's withdrawn NULL sentinel still collides, and the current rule does not |
+| `§8a` arrival-order chain | **+10**, new file | `S1G-C4` / `§13`'s six required proofs, plus the defective arrival-order evaluator as a control |
+| `tests/canonicalisation/canonical-bytes.test.ts` | **+1** | no payload — including a one-byte `0x00` — can imitate the reserved NULL word, asserted against the TypeScript implementation |
+
+Four existing test files had a **rule transcription** corrected rather than an assertion
+changed; `S1G-implementation-log.md §9.3` lists all four and states which rows change hash.
+**No expected hash was read out of production output, and the repository holds no hard-coded
+digest anywhere.**
 
 ---
 
-## 1. `VC-A3` — cross-implementation `ACOS-JCS-1` (22)
+## 1. `VC-A3` — cross-implementation `ACOS-JCS-1` (35)
 
 `tests/integration/audit/vc-a3-cross-implementation.test.ts`
 
 Three implementations, and **the oracle is neither production one**:
 `tests/support/jcs1Oracle.ts`, hand-written from `30 §5.3`, importing nothing from `src/`.
 
+**Extended by the owner-resolution pass** for architecture package issue **v1.3.2, erratum
+JCS-01**: a field-level NULL is the reserved 4-byte word `FF FF FF FF` with no payload, and a
+non-null field is `uint32_be(payload_length) || payload` with
+`0 <= payload_length <= 0xFFFFFFFE`. Two helpers were added so the NULL rule can be exercised
+for a **single `bytea` field directly**, through each production implementation's own
+primitives, rather than only through a declared row kind — which is what made S1G-C1's defect
+invisible from the row kinds alone.
+
+### The whole row, and `36 §2`'s original hazard list
+
 | Case | Assertion |
 |---|---|
 | whole `EFFECT_AUTHORISATION` row | control bytes = oracle; audit bytes = oracle; agreement follows |
 | whole `JOURNAL_ATTESTATION` row | same, for the second row kind |
 | row hash | `sha256` over the transmitted bytes = oracle hash |
-| field count | 23 framed fields in each implementation and in the oracle |
+| field count | 23 framed fields in each implementation and in the oracle. **The walker now handles the reserved word**, which consumes no payload — a walker that treated it as a length would demand 4GB of payload and fall off the end |
 | money scale | one cent moves the bytes; scale > 2 refused by the oracle; `25.0`/`25.00` are one stored value at the declared scale |
 | timestamps | exactly six fractional digits, UTC, `Z`; an offset-expressed instant normalises identically on both servers |
-| null vs empty string | one-byte sentinel vs zero-length; framed `00000001 00` vs `00000000` |
-| null money vs `0.00` | distinct on both servers |
-| NFC | `café` and `café` hash identically on both servers |
+| **NULL vs empty string** | **the reserved word `ffffffff` versus the zero-length value `00000000`**, in all three implementations, and distinct in the whole row |
+| **NULL money vs `0.00`** | the reserved word versus a real payload, distinct on both servers |
+| NFC | the composed and decomposed forms, built from code units and asserted distinct as source values, hash identically on both servers |
 | framing | `ab`+`c` ≠ `abc` ≠ `a`+`bc`; a moved field boundary changes the bytes on both |
 | declared order | the first framed field is the ROW-KIND DOMAIN TAG, which is not a column of either table |
 | row-kind separation | the two kinds cannot collide |
-| **JSON literal null vs SQL NULL** | `null` (4 bytes) vs sentinel (1 byte). **Resolved by `30 §5.3` as written** |
-| **absent field vs JSON null** | `undefined` is the sentinel; `{a:null}` ≠ `{}` |
-| **no JSON column exists** | asserted against BOTH schemas, so a later migration cannot introduce one silently |
-| **one-byte `0x00` bytea** | **REFUSED by all three.** S1G-C1 — the ambiguity is recorded, not resolved |
-| empty bytes vs null bytes | zero-length vs sentinel, distinct |
 | **vulnerable receiver** | a divergent money rule produces different bytes AND production answers `AUDIT_CANONICAL_MISMATCH` |
 | independence | the audit migration calls no `acos_jcs1_`; the control functions do not exist on the audit server, and vice versa; the oracle imports no `src/` |
 
+### `§8`'s NULL / EMPTY / BYTES matrix — cases A–G
+
+| Case | Framed bytes | Judged by |
+|---|---|---|
+| **A** SQL NULL | `FF FF FF FF` | oracle, control, audit |
+| **B** empty text | `00 00 00 00` | oracle, control, audit |
+| **C** empty bytes | `00 00 00 00` | oracle, control, audit |
+| **D** bytes `00` | `00 00 00 01 00` | oracle, control, audit |
+| **E** bytes `0000` | `00 00 00 02 00 00` | oracle, control, audit |
+| **F** bytes `FF` | `00 00 00 01 FF` | oracle, control, audit |
+| **G** arbitrary binary with an embedded zero | `00 00 00 06 DE 00 AD 00 BE EF` | oracle, control, audit |
+
+| Case | Assertion |
+|---|---|
+| pairwise distinction | the six `bytea` cases yield **six distinct encodings in each of the three implementations**, and the three produce the identical list |
+| **THE DEMONSTRATED COLLISION IS CLOSED** | SQL NULL ≠ `bytea` `'\x00'`, in the oracle, in the control database and in the audit database, each separately — **and the v1.3.1 refusal is asserted GONE**, because a specification gap papered over by a fail-closed guard is still a gap |
+| the reserved word is unreachable from a payload | no case's length word is `FF FF FF FF`, and a payload that IS four `0xFF` bytes frames as `00 00 00 04 FF FF FF FF` — the nearest possible near-miss |
+| the row kinds' only `bytea` values | a 32-byte digest and NULL, through all three |
+
+### `§8`'s TEXT, NUMERIC and LENGTH-BOUNDARY legs
+
+| Case | Assertion |
+|---|---|
+| empty string, `"0"`, NULL | three distinct text encodings, in all three implementations |
+| **U+0000 still REJECTED** | S1B-C8 is retained and unrelaxed — asserted in the oracle and on the audit server, so the erratum cannot be read as having quietly relaxed it |
+| NFC-equivalent text | both forms frame identically in all three |
+| numeric | NULL, `0.00`, `-1.00`, `1.00`, `25.00`, `25.01` — **six distinct encodings**, in all three |
+| numeric aliasing | `25.0` and `25.00` are one stored value at the declared scale and frame identically; scale 3 is refused |
+| **length word at `0`** | `00 00 00 00` |
+| **length word at an ordinary length** | `00 00 00 07` |
+| **length word at `0xFFFFFFFE`** | `FF FF FF FE` — the maximum representable payload length |
+| **length word at `0xFFFFFFFF`** | **REFUSED** — reserved for NULL; refused above it too, and for a negative length. Tested against the framing **primitive**, so no multi-gigabyte fixture is allocated |
+| the SQL bound is the SPECIFICATION's | both migrations' code declares `4294967294` and `JCS1_FIELD_TOO_LONG`. The bound is unreachable on PostgreSQL, and an implementation satisfying a normative bound only by accident of its platform has not satisfied it |
+
+### `§8`'s JSON leg, and `S1F-C7`'s carried-forward question
+
+| Case | Assertion |
+|---|---|
+| **JSON literal `null` vs SQL NULL** | `00 00 00 04 6E 75 6C 6C` — an **ordinary non-null field** — versus the reserved word. Distinct **by construction** rather than by a difference in payload length, which is what the old rule relied on |
+| **absent field vs JSON `null`** | an absent optional member is a field-level NULL and frames as the reserved word; `{a:null}` ≠ `{}` |
+| **SQL NULL, JSON `null`, `{}`, `[]`, `""`, `0`** | **six distinct encodings**; an empty JSON string is a two-byte payload and not an empty field |
+| **no JSON column exists** | asserted against BOTH schemas, so a later migration cannot introduce one silently. There is no production JSON canonicaliser in either database, so this leg is settled by the oracle alone and that limit is stated rather than elided |
+
+---
+
+## 1a. The OLD-SPEC vulnerable control — `§9` (9)
+
+`tests/negative-controls/unsafe-old-null-sentinel.ts` — TEST-ONLY, imports **nothing**
+`tests/negative-controls/old-null-sentinel-collision.test.ts`
+
+**The regression proof for erratum JCS-01.** `36 §2`'s VC-A3 case, as v1.3.2 issues it,
+requires that a seeded implementation restoring v1.2's one-byte `0x00` NULL sentinel **must
+fail** the case.
+
+| Case | Assertion |
+|---|---|
+| **the withdrawn rule COLLIDES** | SQL NULL and `bytea` `'\x00'` both frame to `00 00 00 01 00`. If they did not, the seeded module would have drifted off v1.2's rule and the proof would prove nothing |
+| whole-row indistinguishability | a row carrying a NULL and a row carrying the one-byte value are the **same bytes** under the old rule |
+| text was accidentally safe | a one-character NUL string imitates the old sentinel too, and could not arise: S1B-C8 plus PostgreSQL `text`. The current text rule still refuses it |
+| the ORACLE separates them | `ffffffff` versus `0000000100` |
+| the CONTROL database separates them | the same, from its own primitives |
+| the AUDIT database separates them | the same, from its own primitives |
+| **the test DISCRIMINATES** | the old NULL bytes are exactly the **new one-byte-value** bytes, and both production implementations agree with the new NULL value and not the old one |
+| quarantine | nothing under `src/` names `unsafe-old-null-sentinel`, `unsafeOld` or `OLD_NULL_SENTINEL`, asserted by scanning every file under `src/` |
+| whole row, corrected | the two rows that were identical under the old rule are distinct under the new one, in all three implementations |
 ---
 
 ## 2. Ingestion and independent re-chaining (12)
@@ -227,6 +312,29 @@ proof.**
 | **no vendor credential, no outbound call** | no `https://`, `fetch(`, `axios`, `node:http` anywhere under `src/audit/` — `I8` is OPEN |
 | cadence by transcription | `cadence × k = bound`; the audit module does not import the replication module |
 | **RUNTIME proof** | the evaluator is run **with the control database closed** and still detects both the gap and the attestation inconsistency |
+
+---
+
+## 8a. The arrival-order chain is SUPPLEMENTAL — `S1G-C4`, `§13` (10)
+
+`tests/integration/audit/arrival-chain-vs-control-completeness.test.ts`
+
+Added by the owner-resolution pass. `chain_seq` is accepted as an **additional, audit-local
+append chain** and must not replace or redefine the transported control-journal semantics.
+`§13`'s six required proofs are the first six rows.
+
+| # | Case | Assertion |
+|---|---|---|
+| 1 | receive `journal_seq` 1, 2, 3 in order | `chain_seq` = 1, 2, 3, and the agreement is asserted to be a **coincidence of in-order delivery**, not a property. No gaps reported |
+| 2 | a benign retry of 2 **after** 3 | `AUDIT_PUSH_DUPLICATE`; **no fourth arrival link**, and 2 keeps its original `chain_seq`. A retry is not an arrival |
+| 3 | 1 then 3, with 2 missing | the row is HELD, not refused, and the arrival chain closes over the gap with two contiguous linked entries |
+| 4 | **3 before 2** | holdings read 1, 2, 3 by `journal_seq`; the arrival chain records `1, 3, 2` and links in arrival order; the CONTROL chain still verifies row by row against each row's structured `prev_hash` |
+| 5 | the arrival chain **cannot** make a missing `journal_seq` look complete | holdings 1 and 3 give a **perfect** arrival chain, and the evaluator still reports the gap at 2 |
+| 5 | **THE DEFECTIVE EVALUATOR** | a reading based on arrival order is written in the test and reports **nothing missing** on the same fixture, so the two disagree — the discrimination this disposition needed |
+| 5 | by source | `transportCompleteness.ts` never names `chain_seq`, `audit_prev_hash` or `audit_row_hash`, and does name `journal_seq`, `attested_max_journal_seq` and `claimed_row_hash` |
+| 6 | the attestation is compared against the CONTROL head | a truncated tail is caught with the arrival chain intact; `ATTESTATION_INCONSISTENT`'s detail names control-journal quantities and contains no `chain` |
+| 6 | the attested head hash | equals the CONTROL row hash at the attested control sequence, and is asserted **not** to be the arrival-chain head. A complete prefix produces no finding |
+| 6 | `row_count` is `count(DISTINCT journal_seq)` | an extra arrival of a sequence already held neither fills a gap nor slanders an honest attester — both directions asserted |
 
 ---
 

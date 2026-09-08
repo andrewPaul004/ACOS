@@ -3,12 +3,40 @@
 Every point below needs an owner disposition. Each states what was found, what was done,
 and what the alternative would have cost.
 
+> **OWNER RESOLUTION — RECORDED.** All eight items have been dispositioned by the owner.
+> The dispositions, the evidence each was checked against, the architecture erratum
+> `S1G-C1` required and the implementation corrections that erratum forced are in
+> [`S1G-owner-resolution.md`](./S1G-owner-resolution.md).
+>
+> **`S1G-C1` resolved to DEFECT** — a defect in the architecture, not in the candidate.
+> It is corrected normatively by **architecture package issue v1.3.2, erratum JCS-01**
+> (`docs/architecture/v1.3.2/phase2-v1.3.2-errata.md`), which reframes a field-level NULL
+> as the reserved 32-bit length word `0xFFFFFFFF` carrying no payload. **`docs/architecture/v1.3.1/`
+> is not modified**; `v1.3.2` is a new immutable package directory. No other item resolved
+> to DEFECT and none to OWNER DECISION STILL REQUIRED.
+>
+> **This document is retained as written.** It records what S1G found and what S1G chose
+> NOT to invent, which is the reason the defect reached an owner decision rather than being
+> resolved silently in code.
+
 ---
 
 ## S1G-C1 — `ACOS-JCS-1` has a real, unresolved ambiguity over `bytea`, and it was NOT invented away
 
 **Requested disposition: `ARCHITECTURE AMBIGUITY — VC-A3 GENERIC `bytes` LEG REPORTED
 PARTIAL`.**
+
+**OWNER DISPOSITION: `DEFECT` — and it is a defect in the ARCHITECTURE.** The collision below
+is a real normative injectivity failure in control artifact class 20, not an ambiguity to be
+worked around. Rejecting the byte value `0x00` forever was **not** the selected remedy.
+**Architecture package issue v1.3.2, erratum JCS-01** reframes a field-level NULL as the
+reserved 4-byte big-endian word `0xFFFFFFFF` carrying **no payload**, with non-null fields as
+`uint32_be(payload_length) || payload` and `0 <= payload_length <= 0xFFFFFFFE`. Every
+existing non-null payload encoding is unchanged byte for byte; only NULL framing moved, so
+only NULL-bearing rows change hash. **All three implementations and the oracle were corrected,
+the refusals recorded below were removed because the ambiguity they guarded no longer exists,
+and `VC-A3`'s generic `bytes` leg is now CLOSED.** Class 20's `content_hash` moves and a fresh
+class-20 owner signature is owed before deployment. `S1G-owner-resolution.md §1`.
 
 **What `30 §5.3` says.** The nulls rule is generic and has no type qualifier:
 
@@ -64,6 +92,14 @@ against the specification rather than against this code.
 
 **Requested disposition: `SLICE BOUNDARY MOVED — EXPECTED`.**
 
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED`.** Accepted on the stated condition
+and only on it: the supersession is **strictly additive in security meaning**. Verified — one
+accepted test file changed in the whole slice, no assertion deleted, no external-dispatch,
+outbox or adapter assertion removed, local COMMIT still independent of the audit plane, the
+original atomicity assertions byte-identical and still executing, and the only narrowing is a
+two-directory exemption for three named patterns. Exact old-to-new mapping in
+`S1G-owner-resolution.md §2`. No production change.
+
 `tests/integration/authority/local-authorisation-boundary.test.ts` asserted, as S1F wrote
 it:
 
@@ -89,6 +125,10 @@ local transaction contain no audit-plane code — is asserted verbatim and more 
 
 **Requested disposition: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.**
 
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** Both accepted assertions are
+unchanged and still pass; only the title moved. `S1G-owner-resolution.md §3`. No production
+change.
+
 The accepted test read *"step X … is in NEITHER table, because it is not implemented"*. Its
 two assertions were:
 
@@ -112,6 +152,19 @@ is still unbuilt.
 ## S1G-C4 — `chain_seq` is the audit store's ARRIVAL counter, distinct from `journal_seq`
 
 **Requested disposition: `OWNER CLARIFICATION — CONFIRM READING`.**
+
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED` — SUPPLEMENTAL ONLY.** `chain_seq` is
+accepted as an **additional, audit-local append chain** protecting the immutability and order
+of what the audit database actually received. It does **not** replace or redefine the
+transported control-journal semantics: the control `journal_seq`, the independently
+reconstructed `ACOS-JCS-1` representation, the independently verified control `prev_hash` and
+`row_hash`, and `JournalAttestation`'s declared control head remain authoritative. **Verified
+NOT a defect** — `transportCompleteness.ts` never names `chain_seq`, `audit_prev_hash` or
+`audit_row_hash`, now asserted from the source. **Ten tests added** covering in-order
+receipt, a benign retry of 2 after 3, 1-then-3 with 2 missing, 3 before 2, that the arrival
+chain cannot make a missing `journal_seq` look complete (with the defective evaluator written
+as a control), and that the attestation comparison is against control-journal semantics.
+`S1G-owner-resolution.md §4`. No production change.
 
 `I17b` anchors `{head_hash, chain_seq, count(DISTINCT journal_seq)}` — **three** quantities,
 with `chain_seq` named separately from the distinct-sequence count. `I17d` names
@@ -137,6 +190,11 @@ the audit chain adds is tamper-evidence over the store's own holdings, which is 
 
 **Requested disposition: `SCOPE — CONFIRM SPLIT`.**
 
+**OWNER DISPOSITION: `DEFERRED PRODUCTION RESIDUAL`.** The split is confirmed: `37` S1's
+*"insert-only grant under quota"* is built in full and the registry's SCHEDULED leg is S6's.
+**`I17c` remains PARTIAL and is not upgraded**, and it does not improve because S1G becomes
+PASS. `S1G-owner-resolution.md §5`. No production change.
+
 Two artifacts disagree about where `I17c` lands, and both are satisfied by building half:
 
 * `37` **S1** Build, verbatim: *"Separate audit Postgres on a separate account with
@@ -157,6 +215,12 @@ saturation producing an `AUDIT_QUOTA_SATURATED` incident rather than a mode chan
 
 **Requested disposition: `IMPLEMENTATION DETAIL — STRICTER THAN REQUIRED`.**
 
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** Accepted as implemented,
+including the third role. It is stricter than the architecture requires and strictly in the
+safe direction: a compromised evaluator cannot manufacture the holdings it then certifies.
+Collapsing the evaluator into the owner remains a grant change and nothing else, recorded so
+the choice stays visible. `S1G-owner-resolution.md §6`. No production change.
+
 `30 §5` names the control plane's grant ("INSERT and nothing else") and requires the hash
 functions to run "under roles the writing principal cannot execute as" (`I17d`). It does not
 enumerate the audit plane's own roles.
@@ -175,6 +239,13 @@ prefers the evaluator and the owner to be one principal, the change is a grant.
 ## S1G-C7 — the audit store verifies the transmitted bytes AND its own reconstruction
 
 **Requested disposition: `OWNER CLARIFICATION — CONFIRM READING`.**
+
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED`.** The reading is confirmed: the audit
+store chains over the transmitted bytes AND reconstructs from its own structured columns AND
+requires the two equal, refusing the row otherwise. Strictly stronger than either requirement
+alone, and unaffected by the v1.3.2 correction — JCS-01 changed what a NULL field's canonical
+bytes ARE, not which bytes are hashed, who computes them, or that the two must be equal.
+`S1G-owner-resolution.md §7`. No production change.
 
 Two requirements pull in different directions and S1G satisfies both:
 
@@ -199,6 +270,16 @@ next `VC-A3` run, and `§5.3`'s hazard cannot be reintroduced because it cannot 
 ## S1G-C8 — the separate-PROVIDER leg of `30 §5` is not satisfiable by the repository harness
 
 **Requested disposition: `ENVIRONMENT LIMIT — REPORTED OPEN`.**
+
+**OWNER DISPOSITION: `DEFERRED PRODUCTION RESIDUAL` — production administrative
+independence stays OPEN, and it is **not** a blocking S1 condition.** `58 §9` makes
+provisioning the separate audit account a **permitted narrow exception**, not a pass
+condition, and `62 §11`'s ten pass-revocation conditions contain no provider/account
+condition — so S1G is not left PARTIAL on this account. Recorded as two separate claims:
+**`MECHANISM INDEPENDENCE — PROVEN IN S1`** (separate clusters, system identifiers, ports,
+databases, migrations, roles; no shared transaction) and **`PRODUCTION PROVIDER/ACCOUNT
+INDEPENDENCE — OPEN`**. No cloud-provider distinction is faked anywhere.
+`S1G-owner-resolution.md §8`. No production change.
 
 `30 §5` requires *"a distinct database instance on a different provider or, at minimum, a
 separate account with a separate payment method and separate operator credentials"*.

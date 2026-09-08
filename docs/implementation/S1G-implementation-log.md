@@ -168,3 +168,90 @@ separate runner precisely because it addresses a separate database.
 `npm run verify`: typecheck clean, lint clean at `--max-warnings 0`, **84 files, 1171 tests,
 1171 passed, 0 failed, 0 skipped**. Focused S1G run: **8 files, 115 tests**, all using both
 PostgreSQL instances.
+
+---
+
+## 9. The owner-resolution pass — what changed after `f79c664`
+
+`S1G-owner-resolution.md` is the disposition record. This section records the mechanics.
+
+### 9.1 The architecture erratum came FIRST, and it is a new package
+
+`docs/architecture/v1.3.1/` is an immutable input and was not edited. **v1.3.2 was
+materialised as a new package directory** — a copy of v1.3.1 with three normative sections
+corrected, two new root documents and an extended mechanical gate. `diff -rq v1.3.1 v1.3.2`
+lists exactly nine differences and no others:
+
+| Path | Why |
+|---|---|
+| `README.md` | the issue banner, the JCS-01 summary, how to run the gate |
+| `deliverables/30-observability-audit-and-escalation.md` | `§5.3` — the correction itself, its worked examples, its injectivity statement, the record of what v1.2 got wrong, and the class-20 identity effect |
+| `deliverables/36-architecture-validation-plan.md` | `§2`'s `VC-A3` case — the required distinctions, and the seeded old-rule negative control |
+| `deliverables/50-control-artifact-manifest.md` | `§2` class 20 — the rule's name, and the signature consequence |
+| `analysis/consistency-v1.3.py` | conditions **F1–F3**, and two in-memory seeding flags |
+| `analysis/consistency-v1.3.2-output.txt` | the retained clean run |
+| `analysis/consistency-v1.3.2-negative-control-output.txt` | the retained seeded runs, with process exit codes |
+| `phase2-v1.3.2-errata.md` | the erratum |
+| `phase2-v1.3.2-verification.md` | its gate |
+
+Root `README.md` and `.gitattributes` were updated: `v1.3.2` is now named as the current
+authoritative input, and the `-text` rule's comment explains why a repository-authored
+package issue is held under it too.
+
+### 9.2 Why `canonicalBytes.ts` had to change as well
+
+The mandate names two production implementations. **There are three.**
+`src/kernel/canonicalisation/canonicalBytes.ts` is the S1B TypeScript implementation of the
+same `30 §5.3`, and it is what canonicalises decision signatures, lineage hashes, idempotency
+keys and semantic option digests. Correcting the two triggers and leaving it would have put
+two incompatible NULL representations inside one system — which is exactly what the erratum's
+own version discussion forbids. It was corrected with the other two, and it is called out
+here rather than buried, because it is the one part of this pass the mandate did not
+anticipate.
+
+### 9.3 Four test-side consequences, and none of them was a hard-coded hash
+
+`§10` of the mandate forbids reading new expected hashes out of production output. **No
+expected hash was.** The repository holds no hard-coded digest anywhere — searched — because
+every expectation is computed from an oracle or from architecture-retained vectors. The four
+affected sites were all rule transcriptions:
+
+| Site | What it is | Change |
+|---|---|---|
+| `tests/support/jcs1Oracle.ts` | the S1G `VC-A3` oracle, a third reading of `30 §5.3` | rewritten from the v1.3.2 text; `frameField` accepts `null`; `frameLength` exported for the boundary arithmetic |
+| `tests/integration/authority/journal-sequencing.test.ts` | S1F's **test-local** third reading, deliberately not importing the oracle | its framer emits the reserved word for a NULL field |
+| `tests/canonicalisation/canonical-bytes.test.ts` | the two explicit framed-byte expectations for a null text field | `000000016b0000000100` → `000000016bffffffff`, and a new test asserting no payload — including a one-byte `0x00` — can imitate it |
+| `tests/canonicalisation/canonical-text-injectivity.test.ts` | S1B.2 finding 4A's assertions | the same byte expectation, and 4A's commentary restated: the `U+0000` exclusion is **retained** and is no longer the injectivity argument |
+
+**Rows unaffected, and rows affected.** A journal row all of whose declared fields are
+non-null recomputes to exactly the `row_hash` it had at v1.3.1. A row with at least one NULL
+field recomputes to a new value — five bytes replaced with four, per NULL field. In the two
+declared row kinds that means: every `EFFECT_AUTHORISATION` row with a null `approval_id`,
+`vendor_amount` or `forward_integral`, and **every genesis row**, whose `prev_hash` is NULL.
+No fixture carries a recorded expected hash, so no fixture needed a new number.
+
+**No migration and no re-anchor obligation exists**, because ACOS is not deployed and no
+anchor has ever been published. The obligation that a future canonical-format change on a
+live chain would require deliberate chain-versioning and re-anchor semantics is recorded in
+`phase2-v1.3.2-errata.md §1` *Deployment*, not discharged.
+
+### 9.4 One bug the tests found
+
+`countFields` in `vc-a3-cross-implementation.test.ts` walked the framed field boundaries as
+`4 + length` for every field. Under the reserved word that computes `4 + 4294967295`, so the
+walk fell off the end of the buffer and the field-count assertion failed. **The framing has
+to be exactly self-describing, NULLs included**, and the walker now advances four bytes for
+the reserved word. It was a test-side defect and it is worth recording, because it is the
+same mistake a naive parser of the wire format would make.
+
+### 9.5 Verification after the pass
+
+Architecture: `analysis/consistency-v1.3.py` — **25 conditions, 25 PASS, 0 FAIL**, exit 0.
+The seeded negative controls fail as required: `--seed-old-null-bytes` **24 PASS / 1 FAIL**,
+`--seed-old-null-sentinel` **22 PASS / 3 FAIL**, both exit 1. `recompute-v1.3.py` reproduces
+`recompute-v1.3-output.txt` line-for-line, so no authority quantity moved.
+
+Repository: `npm run verify` **green, exit 0** — typecheck clean, lint clean at
+`--max-warnings 0`, **86 files, 1204 tests, 1204 passed, 0 failed, 0 skipped**. No `.only`,
+`.skip` or `.todo` anywhere; `vitest.config.ts` includes `tests/**` and `spikes/**` and
+filters nothing. Focused S1G: **10 files, 147 tests**, all using both PostgreSQL instances.

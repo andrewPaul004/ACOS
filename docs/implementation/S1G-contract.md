@@ -3,7 +3,14 @@
 **Slice:** audit ingress, independent re-chaining and transport completeness.
 **Baseline:** `395a13b` (S1F ACCEPTED).
 **Branch:** `feature/s1g-audit-ingress`.
-**Architecture:** `docs/architecture/v1.3.1/`, unmodified.
+**Architecture:** `docs/architecture/v1.3.1/`, unmodified **by the slice itself**.
+
+> **AMENDED BY THE OWNER-RESOLUTION PASS.** The slice was built against `v1.3.1` and did not
+> touch it. The resolution pass then issued **package issue `v1.3.2`** as a new immutable
+> directory, carrying one normative correction — erratum **JCS-01**, `ACOS-JCS-1` field-level
+> NULL framing — because `S1G-C1` dispositioned to DEFECT. **`docs/architecture/v1.3.1/` is
+> still unmodified**; `docs/architecture/v1.3.2/` is now the authoritative input. See
+> `S1G-owner-resolution.md §1` and `docs/architecture/v1.3.2/phase2-v1.3.2-errata.md`.
 
 ---
 

@@ -34,7 +34,8 @@ the whole cross-product with a discriminating control.
 | Worktree clean at start | yes |
 | Baseline `npm run verify` | exit 0 |
 | Baseline files / tests / passed / failed / skipped | 86 / 1204 / 1204 / 0 / 0 |
-| Final commit | `ea7f60e02c3a6aff9a509616838710525126a147` |
+| Implementation commit | `ea7f60e02c3a6aff9a509616838710525126a147` — all source, migrations, tests and the four S1H documents |
+| Final commit | the documentation commit that adds this line and `§14`'s totals, which cannot name its own sha. `git log --oneline -2` on `feature/s1h-mirror-state-machine` shows both |
 | Worktree clean at end | yes |
 
 ---

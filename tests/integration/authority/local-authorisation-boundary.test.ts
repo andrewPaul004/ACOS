@@ -7,7 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AUTHORITY_STEPS } from '../../../src/kernel/authority/steps.js';
 import {
+  DISPATCH_IS_NOT_IMPLEMENTED,
   LOCAL_AUTHORISATION_STEPS,
+  POST_COMMIT_STEPS,
   localStepPrecedes,
 } from '../../../src/kernel/authorisation/localSteps.js';
 import { LOCAL_SQLSTATE } from '../../../src/kernel/authorisation/localAuthorisationErrors.js';
@@ -161,11 +163,36 @@ describe('`26 §7`\'s sequence is declared in exactly two tables, and they compo
     }
   });
 
-  it('step X — the AUDIT WRITE — is in NEITHER table, because it is not implemented', () => {
+  it('step X — the AUDIT WRITE — is in NEITHER table, because it is AFTER THE COMMIT', () => {
     // `30 §5.1`: "Cross-database atomicity is not attempted, because it does not exist."
-    // The audit push is after the COMMIT, and S1F builds no audit store.
+    // The audit push is after the COMMIT.
+    //
+    // S1G IMPLEMENTS STEP X, and the two assertions below are unchanged — because S1G
+    // implements it exactly where the architecture puts it. A step X appended to either
+    // table would be a claim that the audit write shares a commit point with the money
+    // path, which is the one thing `30 §5.1` says does not exist. It lives in its own
+    // table instead, asserted next.
     expect([...LOCAL_AUTHORISATION_STEPS]).not.toContain('X');
     expect([...AUTHORITY_STEPS]).not.toContain('X');
+  });
+
+  it('S1G declares step X in a SEPARATE post-commit table, disjoint from both', () => {
+    expect([...POST_COMMIT_STEPS]).toEqual(['X']);
+    const pre = [...AUTHORITY_STEPS] as string[];
+    const local = [...LOCAL_AUTHORISATION_STEPS] as string[];
+    for (const step of POST_COMMIT_STEPS) {
+      expect(pre).not.toContain(step);
+      expect(local).not.toContain(step);
+    }
+    // And `26 §7`'s whole sequence is the concatenation of all three.
+    expect([...pre, ...local, ...POST_COMMIT_STEPS]).toEqual([
+      'B', 'C', 'C2', 'C′', 'D', 'E', 'F', 'G', 'H', 'H′', 'H″', 'I', 'J', 'K',
+      'L', 'M', 'N', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+    ]);
+  });
+
+  it('and DISPATCH is still not implemented — S1G stops after the audit write', () => {
+    expect(DISPATCH_IS_NOT_IMPLEMENTED).toBe(true);
   });
 
   it("and R′ — verify mode — is in neither, because resume is not implemented", () => {
@@ -447,27 +474,81 @@ describe('the excluded future steps are absent from `src/`', () => {
     expect(offenders, `a resume path exists:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
-  it('there is no AUDIT PLANE — no push, no attestation, no mirror, no anchor', async () => {
+  it('the AUTHORITY AND MONEY PATH contains no audit-plane code — S1G confined it', async () => {
+    // ACCEPTED AS S1F WROTE IT, NARROWED BY EXACTLY ONE SLICE BOUNDARY, S1G-C2.
+    //
+    // S1F asserted "there is no AUDIT PLANE anywhere in `src/`", which was correct then:
+    // S1F built none. S1G BUILDS ONE, in `src/audit/` and `src/replication/`, so the
+    // literal form of that assertion cannot survive the slice that implements step X.
+    //
+    // What S1F's assertion was PROTECTING survives verbatim and is what is asserted here:
+    // the authority path, the money path and the local authorisation transaction must
+    // contain no audit-plane code, because `30 §5.1` puts the push AFTER the commit and a
+    // reference from inside the transaction would be the cross-database coupling the
+    // architecture refuses. The exemption is TWO DIRECTORIES, named, and everything else
+    // in `src/` is held to the original rule.
+    const AUDIT_PLANE = [`${sep}audit${sep}`, `${sep}replication${sep}`];
     const files = await sourceOf();
     const offenders: string[] = [];
     for (const { path, code } of files) {
-      // `pool.ts` exports `auditUrl()`, the ACCEPTED S1A helper the durable-execution
-      // spike uses to reach the second physical database. It is a connection-string
-      // reader, not an audit plane, and nothing in the authority path calls it — which is
-      // what the second assertion below checks.
+      // `pool.ts` exports `auditUrl()`, the ACCEPTED S1A helper. It is a connection-string
+      // reader, not an audit plane, and nothing in the authority path calls it.
       if (path.endsWith(join('db', 'pool.ts'))) continue;
+      if (AUDIT_PLANE.some((dir) => path.includes(dir))) continue;
       for (const pattern of [
         /auditUrl\(/,
         /JournalAttestation/,
-        /mirrorState/i,
-        /DegradedModeOverride/,
-        /anchor/i,
+        /emitAttestation/,
+        /auditIngress/,
+        /JournalPusher/,
         /mirrored_at\s*=/,
       ]) {
         if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
       }
     }
-    expect(offenders, `audit-plane code in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
+    expect(
+      offenders,
+      `audit-plane code outside src/audit and src/replication:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('and the LOCAL AUTHORISATION TRANSACTION still knows nothing about the audit plane', async () => {
+    // The sharpest form of the property, and the one that makes the post-commit ordering
+    // structural: the module that owns the S1F transaction cannot reach the audit store.
+    const code = (
+      await readFile(
+        join(process.cwd(), 'src', 'kernel', 'authorisation', 'localAuthorisation.ts'),
+        'utf8',
+      )
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    for (const pattern of [/auditUrl/, /audit\//, /replication\//, /mirrored_at/, /audit_journal/]) {
+      expect(code, String(pattern)).not.toMatch(pattern);
+    }
+  });
+
+  it('THE MIRROR STATE MACHINE, THE OVERRIDE AND THE ANCHOR ARE STILL ABSENT', async () => {
+    // Unchanged from S1F, and still true: `30 §5.6`'s three states, `§5.7.1`'s
+    // `MirrorInputStallSignal`, `§5.7.2`'s `DegradedModeOverride` and `I17b`'s external
+    // anchor (`§5.8`) are all OUT OF S1G's scope. Held over the WHOLE of `src/`, audit
+    // plane included.
+    const files = await sourceOf();
+    const offenders: string[] = [];
+    for (const { path, code } of files) {
+      for (const pattern of [
+        /mirrorState/i,
+        /MirrorInputStall/,
+        /CORROBORATED_DEGRADED/,
+        /UNCORROBORATED_STALL/,
+        /DegradedModeOverride/,
+        /anchor/i,
+        /DISPATCHED_UNMIRRORED/,
+      ]) {
+        if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
+      }
+    }
+    expect(offenders, `deferred mechanism in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
   });
 
   it('there is no SETTLEMENT, RECONCILIATION or EXTERNAL CLAIM path', async () => {

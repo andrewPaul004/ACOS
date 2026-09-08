@@ -12,6 +12,8 @@
     "db:down": "docker compose down -v",
     "db:migrate": "tsx src/db/migrate.ts up",
     "db:reset": "tsx src/db/migrate.ts reset",
+    "db:migrate:audit": "tsx src/audit/db/migrate.ts up",
+    "db:reset:audit": "tsx src/audit/db/migrate.ts reset",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",

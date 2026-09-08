@@ -70,20 +70,55 @@ export function localStepPrecedes(
 }
 
 /**
- * `26 §7` step X — THE AUDIT WRITE — IS DELIBERATELY NOT IN THE TABLE ABOVE.
+ * `26 §7` step X — THE AUDIT WRITE — IS STILL DELIBERATELY NOT IN THE TABLE ABOVE, AND
+ * S1G DOES NOT PUT IT THERE.
  *
  * `26 §7` property 9: "Every path writes an audit record, including every denial." That is
  * the AUDIT PLANE, and it cannot be inside this transaction: `30 §5.1` is explicit that
  * "cross-database atomicity is not attempted, because it does not exist", and its ordering
  * block puts the audit push AFTER `COMMIT`.
  *
- * What S1F commits is the CONTROL-database journal row — `30 §5.1` item 1's "primary
- * journal lives in the control database", with the gap-free `journal_seq` and the local
- * chain. The push to the audit store, the mirror state machine, `JournalAttestation`, the
- * two-sided completeness diff and `mirrored_at` are all OPEN.
+ * S1F committed the CONTROL-database journal row. **S1G implements step X**, and it
+ * implements it exactly where `30 §5.1` puts it — after the commit, in a table of its own:
  *
- * A denial's audit record is likewise OPEN. A denial rolls this transaction back, so its
- * record cannot be one of the rows the rollback removes; it belongs to the audit-write
- * path S1F does not build.
+ *   `LOCAL_AUTHORISATION_STEPS`   inside the transaction   R S T U V W
+ *   `POST_COMMIT_STEPS`           after the COMMIT         X
+ *
+ * The two accepted assertions that neither table contains `X` therefore remain literally
+ * true and are asserted unchanged in `local-authorisation-boundary.test.ts`. A step X
+ * appended to either table would be a claim that the audit write shares a commit point
+ * with the money path, which is the one thing `30 §5.1` says does not exist.
  */
-export const STEP_X_AUDIT_WRITE_IS_NOT_IMPLEMENTED = true;
+export const POST_COMMIT_STEPS = [
+  /**
+   * THE AUDIT WRITE. `30 §5.1`'s "push to audit store (async, retried, quota-bounded,
+   * idempotent per §5.2)".
+   *
+   * Implemented by `src/replication/journalPusher.ts` (the control half) and
+   * `src/audit/ingress.ts` (the audit half), across two separate PostgreSQL instances
+   * under two separate roles, with no transaction spanning them.
+   */
+  'X',
+] as const;
+
+export type PostCommitStep = (typeof POST_COMMIT_STEPS)[number];
+
+/**
+ * WHAT IS STILL NOT IMPLEMENTED AFTER STEP X, so the boundary does not drift.
+ *
+ * `30 §5.1`'s ordering block has a third arrow — "dispatch, per (4)" — and S1G stops
+ * before it. Unbuilt:
+ *
+ *   the mirror state machine    `30 §5.6`'s three states, the `MirrorInputStallSignal`
+ *                               (`§5.7.1`) and the `DegradedModeOverride` (`§5.7.2`)
+ *   the dispatch precedence     `30 §5.1` item 4's ordered first-match list
+ *   the outbox                  `25 §7` layer 4's exclusive claim (`I36`), `37` S4
+ *   dispatch                    the adapter, the HTTP call, the vendor's own idempotency
+ *   external anchoring          `I17b`, `30 §5.8`, `37` S3
+ *   `I8`                        the audit plane's own vendor reads, `30 §5.10`, `37` S3
+ *
+ * A DENIAL'S audit record also remains OPEN: a denial rolls the S1F transaction back, so
+ * there is no committed journal row for the replication backlog to find, and the denial
+ * journal row is a separate write this slice does not add.
+ */
+export const DISPATCH_IS_NOT_IMPLEMENTED = true;

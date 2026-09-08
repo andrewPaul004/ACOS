@@ -61,8 +61,16 @@ export default [
   },
   {
     // Test and spike files legitimately print their measured results; that output IS the
-    // deliverable for the negative controls and the kill-point matrix.
-    files: ['tests/**/*.ts', 'spikes/**/*.ts', 'src/db/migrate.ts'],
+    // deliverable for the negative controls and the kill-point matrix. The two migration
+    // RUNNERS are CLIs whose output is what the operator reads — one per plane, and the
+    // audit plane's is a separate runner precisely because it addresses a separate
+    // database (`30 §5`, S1G).
+    files: [
+      'tests/**/*.ts',
+      'spikes/**/*.ts',
+      'src/db/migrate.ts',
+      'src/audit/db/migrate.ts',
+    ],
     rules: {
       'no-console': 'off',
     },

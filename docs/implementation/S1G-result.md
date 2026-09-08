@@ -23,6 +23,9 @@ hand-authored oracle.
 | Actual start | `395a13b`, worktree clean, verified before any edit |
 | Baseline regression | 76 files / 1052 tests / 1052 passed / 0 failed / 0 skipped, `npm run verify` green |
 | Branch | `feature/s1g-audit-ingress` |
+| Implementation commit | `6fc7339` |
+| Documentation commit | `33ccfbf` |
+| Final commit | this one — a commit cannot carry its own sha; `git log feature/s1g-audit-ingress` is authoritative |
 | Worktree clean at end | yes |
 
 ---

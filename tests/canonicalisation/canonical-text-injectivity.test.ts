@@ -21,9 +21,13 @@ import { makeRawIntent, makeRefundOption } from '../support/canonicalisationFixt
  * three places where they did not.
  *
  * ---------------------------------------------------------------------------------
- * 4A  null versus U+0000 text.  `30 §5.3` encodes null as a single 0x00 byte; a text value
- *     containing U+0000 UTF-8 encodes to the same single byte. PostgreSQL `text` cannot
- *     store U+0000, so it is excluded, and injectivity is restored.
+ * 4A  null versus U+0000 text.  As S1B found it, `30 §5.3` encoded null as a single 0x00
+ *     byte and a text value containing U+0000 UTF-8 encodes to the same single byte.
+ *     PostgreSQL `text` cannot store U+0000, so it is excluded, and injectivity over text
+ *     was restored. **v1.3.2 erratum JCS-01 superseded the reason**: the same argument did
+ *     not extend to `bytea`, whose payload can be exactly one 0x00 byte, so NULL now uses
+ *     the reserved framing word `0xFFFFFFFF` and injectivity against NULL is structural
+ *     for every type. The U+0000 exclusion is RETAINED, unchanged and unrelaxed.
  *
  * 4B  Unpaired UTF-16 surrogates.  Node substitutes U+FFFD for each lone surrogate when
  *     encoding UTF-8, so two DISTINCT JavaScript strings — one holding U+D800, one holding
@@ -64,17 +68,22 @@ describe('the hazard is real — this is why the rules exist', () => {
     expect(hex(Buffer.from(LONE_HIGH_SURROGATE, 'utf8'))).toBe('efbfbd');
   });
 
-  it('and a one-character NUL string encodes to the same byte as the null sentinel', () => {
+  it('and a one-character NUL string encodes to the byte v1.2 used as the null sentinel', () => {
     expect(hex(Buffer.from(NUL, 'utf8'))).toBe('00');
-    // The null sentinel, from `30 §5.3`, is exactly this byte.
-    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toContain('00');
+    // v1.2's withdrawn sentinel was exactly this byte, which is the hazard S1B found and
+    // closed for text by excluding U+0000. `30 §5.3` no longer carries NULL in a payload
+    // byte at all (v1.3.2, JCS-01), so the sentinel this test names is historical — and
+    // the exclusion below is still enforced, because JCS-01 did not relax it.
+    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toBe('000000016bffffffff');
+    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).not.toContain('0000000100');
   });
 });
 
 describe('4A — null, empty string and U+0000', () => {
   it('null and the empty string remain DISTINCT, and both remain valid', () => {
     // Unchanged from S1B, and restated here because finding 4A must not have narrowed it.
-    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toBe('000000016b0000000100');
+    // The NULL bytes are v1.3.2's reserved word; the empty string is unchanged.
+    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toBe('000000016bffffffff');
     expect(hex(canonicalBytes('k', [{ kind: 'text', value: '' }]))).toBe('000000016b00000000');
     expect(hex(canonicalHash('k', [{ kind: 'text', value: null }]))).not.toBe(
       hex(canonicalHash('k', [{ kind: 'text', value: '' }])),

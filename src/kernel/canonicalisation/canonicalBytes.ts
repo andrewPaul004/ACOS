@@ -5,7 +5,7 @@ import { toDb, type Money } from '../exposure/money.js';
 /**
  * Canonical bytes for canonicaliser structures, under the `ACOS-JCS-1` rules.
  *
- * `30 §5.3`, the hazard table, verbatim in its rules column:
+ * `30 §5.3`, the hazard table, verbatim in its rules column, AS ISSUED IN v1.3.2:
  *
  *   NUMERIC scale 25.0 vs 25.00 -> "Per-column declared decimal scale, serialised as a
  *     string at that exact scale. 25.0 and 25.00 are different bytes, deliberately — a
@@ -13,12 +13,35 @@ import { toDb, type Money } from '../exposure/money.js';
  *   Timestamp precision and zone -> "RFC 3339, UTC, exactly 6 fractional digits, Z suffix."
  *   Column order -> "Fixed, declared per row kind, in the specification — never the
  *     physical column order, which a migration reorders."
- *   Nulls vs empty strings -> "Single 0x00 sentinel byte for null; an empty string is a
- *     zero-length value."
+ *   Nulls vs empty strings -> "A field-level NULL is carried by the framing word, not by a
+ *     payload byte [...] A NULL has no payload bytes at all; an empty string and an empty
+ *     bytea are zero-length values with an ordinary length word of 0."
  *   Unicode form -> "UTF-8, NFC."
  *   JSON-valued columns -> "RFC 8785 (JCS), applied to the field's value."
- *   Field framing -> "Every field prefixed with its 4-byte big-endian byte length, so no
- *     separator can be forged by content."
+ *   Field framing -> "Every field is prefixed with a 4-byte big-endian unsigned
+ *     length/discriminator word, so no separator can be forged by content. 0xFFFFFFFF is
+ *     RESERVED and means NULL, and a NULL field is that word alone with no payload. A
+ *     non-null field is uint32_be(payload_length) || payload with
+ *     0 <= payload_length <= 0xFFFFFFFE; a payload whose length would reach 0xFFFFFFFF is
+ *     not representable and the implementation must fail closed."
+ *
+ * ---------------------------------------------------------------------------------
+ * v1.3.2 ERRATUM JCS-01 — WHAT CHANGED HERE, AND WHY THIS FILE IS IN SCOPE FOR IT
+ *
+ * v1.2's NULL rule was a single `0x00` sentinel byte, which framed to `00 00 00 01 00`.
+ * A `bytea` payload of exactly one `0x00` byte frames identically, so NULL and a real
+ * one-byte value were the same bytes and the encoding was not injective. `30 §5.3` now
+ * carries NULL in the framing word instead.
+ *
+ * This module is a THIRD production implementation of `30 §5.3` — the two the erratum
+ * names are the control and audit database triggers — and it is corrected with them,
+ * because ACOS-JCS-1 having two incompatible NULL representations inside one system is
+ * exactly what `phase2-v1.3.2-errata.md §1`'s version discussion forbids.
+ *
+ * ONLY NULL FRAMING CHANGED. Every payload rule above is byte-identical to v1.3.1's, so
+ * a structure with no null field hashes to the value it hashed before, and a structure
+ * with at least one null field hashes to the corrected value.
+ * ---------------------------------------------------------------------------------
  *
  * ---------------------------------------------------------------------------------
  * WHAT THIS MODULE IS, AND WHAT IT IS NOT
@@ -29,16 +52,27 @@ import { toDb, type Money } from '../exposure/money.js';
  * something: object property insertion order must be structurally incapable of changing a
  * hash, and `JSON.stringify` preserves insertion order.
  *
- * It is NOT the journal-row serialiser, and S1B does not claim `36 §2` VC-A3. VC-A3 is
- * cross-implementation byte-identity between the control trigger and the AUDIT trigger,
- * and it needs a second independent implementation that S1B does not build. `30 §5.3`,
- * verbatim: "36 §2.6 cross-implements it: the same fixture rows serialised by both
- * triggers must produce byte-identical output." That gate is OPEN after S1B.
+ * It is NOT the journal-row serialiser, and this module is not what `36 §2` VC-A3 gates.
+ * VC-A3 is cross-implementation byte-identity between the control trigger and the AUDIT
+ * trigger. `30 §5.3`, verbatim: "36 §2.6 cross-implements it: the same fixture rows
+ * serialised by both triggers must produce byte-identical output." **S1G built the second
+ * trigger and closed that gate**; this module is judged by `canonical-bytes.test.ts` and
+ * `canonical-text-injectivity.test.ts` against the same specification, not by VC-A3.
  * ---------------------------------------------------------------------------------
  */
 
-/** The null sentinel. `30 §5.3`: "Single 0x00 sentinel byte for null". */
-const NULL_SENTINEL = Buffer.from([0x00]);
+/**
+ * The reserved NULL word. `30 §5.3` (v1.3.2): "`0xFFFFFFFF` is RESERVED and means NULL,
+ * and a NULL field is that word alone with no payload."
+ */
+const NULL_LENGTH_WORD = Buffer.from([0xff, 0xff, 0xff, 0xff]);
+
+/**
+ * The largest representable payload length. `30 §5.3`: "0 <= payload_length <=
+ * 0xFFFFFFFE". A payload reaching `0xFFFFFFFF` has no representation, because that word
+ * means NULL, and the framer fails closed rather than truncating or wrapping.
+ */
+const MAX_PAYLOAD_LENGTH = 0xff_ff_ff_fe;
 
 /**
  * =====================================================================================
@@ -50,13 +84,23 @@ const NULL_SENTINEL = Buffer.from([0x00]);
  * it accepts: two distinct accepted values must never produce identical bytes. Independent
  * review found two ways it was not, and one way object keys could collide.
  *
- * 4A — THE NULL SENTINEL VERSUS NUL TEXT.
+ * 4A — THE NULL SENTINEL VERSUS NUL TEXT.  SUPERSEDED BY v1.3.2 JCS-01.
  *
- * `null` encodes as the single byte 0x00. A text value containing U+0000 UTF-8 encodes as
- * the single byte 0x00 too, so at a nullable text position `null` and a one-character NUL
- * string are the same bytes. PostgreSQL `text` cannot store U+0000 at all, so nothing is
- * lost by excluding it, and excluding it restores injectivity: `null` is one 0x00 byte, an
- * empty string is a zero-length value, and no accepted text can imitate either.
+ * As S1B found it: `null` encoded as the single byte 0x00, and a text value containing
+ * U+0000 UTF-8 encodes to the single byte 0x00 too, so at a nullable text position `null`
+ * and a one-character NUL string were the same bytes. PostgreSQL `text` cannot store
+ * U+0000 at all, so nothing was lost by excluding it, and excluding it restored
+ * injectivity over text.
+ *
+ * **What S1B could not see is that the same argument does not extend to `bytea`**, whose
+ * payload is arbitrary and can be exactly one 0x00 byte. S1G demonstrated that collision
+ * (S1G-C1) and v1.3.2 erratum JCS-01 corrected the specification: NULL is the reserved
+ * framing word, outside payload space, so injectivity against NULL is now structural for
+ * every type at once and needs no per-type exclusion.
+ *
+ * **The U+0000 exclusion is retained, unchanged and unrelaxed.** It is no longer the
+ * injectivity repair it was written as; it is an ordinary Unicode-admissibility rule, and
+ * S1B-C8 remains the accepted owner clarification behind it.
  *
  * 4B — UNPAIRED UTF-16 SURROGATES.
  *
@@ -276,14 +320,22 @@ function jcsString(normalised: string): string {
   return `${out}"`;
 }
 
-/** The value bytes of one field, before framing. */
-function fieldValueBytes(field: CanonicalField): Buffer {
-  if (field.value === null) return NULL_SENTINEL;
+/**
+ * The value bytes of one field, before framing — or `null` for a field-level NULL.
+ *
+ * `null` here means "no payload at all", and the framer turns that into the reserved
+ * length word. It is deliberately NOT a payload of any length: that is the whole content
+ * of erratum JCS-01.
+ */
+function fieldValueBytes(field: CanonicalField): Buffer | null {
+  if (field.value === null) return null;
   switch (field.kind) {
     case 'text':
-      // UTF-8, NFC, validated. An empty string is a zero-length value, distinct from the
-      // null sentinel's one byte — `30 §5.3` — and U+0000 is inadmissible, so no accepted
-      // text can imitate the sentinel (S1B.2 finding 4A).
+      // UTF-8, NFC, validated. An empty string is a zero-length value; NULL is the
+      // reserved framing word and carries no payload, so the two cannot collide and no
+      // text value can imitate NULL whatever its content. U+0000 remains inadmissible
+      // under S1B-C8, which is retained as a Unicode rule (S1B.2 finding 4A) and is no
+      // longer what makes the encoding injective.
       return Buffer.from(canonicalText(field.value, 'a canonical text field'), 'utf8');
     case 'money':
       // The declared scale is 2 and `toDb` renders at exactly that scale, so `25.0` is not
@@ -304,15 +356,34 @@ function fieldValueBytes(field: CanonicalField): Buffer {
 
 /**
  * Serialise a structure: the structure kind first, then every field in declared order,
- * each prefixed with its 4-byte big-endian byte length.
+ * each carrying its 4-byte big-endian length/discriminator word.
  *
  * The kind is framed as a field of its own so two structures with identical field bytes
  * and different meanings do not collide — the domain separation `30 §5.3`'s "declared per
  * row kind" implies and which a bare concatenation would not have.
+ *
+ * `emit(null)` writes the reserved NULL word and nothing else (JCS-01). `emit(buffer)`
+ * writes `uint32_be(length) || buffer`, and refuses a length that would reach the
+ * reserved word.
  */
 export function canonicalBytes(kind: string, fields: CanonicalStructure): Buffer {
   const parts: Buffer[] = [];
-  const emit = (value: Buffer): void => {
+  const emit = (value: Buffer | null): void => {
+    if (value === null) {
+      parts.push(NULL_LENGTH_WORD);
+      return;
+    }
+    if (value.byteLength > MAX_PAYLOAD_LENGTH) {
+      // Unreachable on any current runtime — Node's maximum buffer length is far below
+      // this — and enforced anyway, because `30 §5.3` states the bound and an
+      // implementation that satisfies a normative bound only by accident of its platform
+      // has not satisfied it.
+      throw new Error(
+        `a field payload of ${String(value.byteLength)} bytes is not representable: ` +
+          '30 §5.3 reserves 0xFFFFFFFF for NULL, so the maximum payload length is ' +
+          '0xFFFFFFFE',
+      );
+    }
     const length = Buffer.allocUnsafe(4);
     length.writeUInt32BE(value.byteLength, 0);
     parts.push(length, value);

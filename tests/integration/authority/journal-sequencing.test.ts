@@ -93,8 +93,9 @@ async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>
  * one's. What this asserts is that the SQL trigger implements the SPECIFICATION, against a
  * third reading of it.
  *
- *   field framing   4-byte big-endian byte length, then the bytes
- *   null            a single 0x00 byte
+ *   field framing   4-byte big-endian unsigned length/discriminator word, then the bytes
+ *   null            the RESERVED word 0xFFFFFFFF, and NO payload (v1.3.2, JCS-01)
+ *   non-null        uint32_be(payload_length), 0 <= payload_length <= 0xFFFFFFFE
  *   text            UTF-8, NFC
  *   money           the declared scale, as a string
  *   integer         base-10
@@ -110,8 +111,9 @@ type Field =
   | { kind: 'ts'; value: Date | null }
   | { kind: 'bytes'; value: Buffer | null };
 
-function fieldBytes(field: Field): Buffer {
-  if (field.value === null) return Buffer.from([0x00]);
+/** The PAYLOAD, or `null` for a field-level NULL. v1.3.2: NULL is a property of the frame. */
+function fieldBytes(field: Field): Buffer | null {
+  if (field.value === null) return null;
   switch (field.kind) {
     case 'text':
       return Buffer.from(field.value.normalize('NFC'), 'utf8');
@@ -135,6 +137,11 @@ function frame(fields: readonly Field[]): Buffer {
   const parts: Buffer[] = [];
   for (const field of fields) {
     const value = fieldBytes(field);
+    if (value === null) {
+      // `30 §5.3` (v1.3.2): NULL is the reserved word 0xFFFFFFFF, alone.
+      parts.push(Buffer.from([0xff, 0xff, 0xff, 0xff]));
+      continue;
+    }
     const length = Buffer.alloc(4);
     length.writeUInt32BE(value.byteLength, 0);
     parts.push(length, value);

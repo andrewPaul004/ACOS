@@ -82,11 +82,33 @@ describe('money — the declared decimal scale', () => {
 });
 
 describe('nulls, empty strings and zero', () => {
-  it('null is a one-byte sentinel and an empty string is a zero-length value', () => {
-    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toBe(
-      '000000016b0000000100',
-    );
+  it('null is the RESERVED framing word and an empty string is a zero-length value', () => {
+    // v1.3.2, erratum JCS-01. NULL carries no payload at all: the four bytes `ffffffff`
+    // and nothing after them. v1.3.1 wrote `0000000100` here — a length-1 payload holding
+    // the byte 0x00 — which a real one-byte value could imitate.
+    expect(hex(canonicalBytes('k', [{ kind: 'text', value: null }]))).toBe('000000016bffffffff');
     expect(hex(canonicalBytes('k', [{ kind: 'text', value: '' }]))).toBe('000000016b00000000');
+  });
+
+  it('and NO payload can imitate it — including a one-byte `0x00` bytes field', () => {
+    // The defect S1G demonstrated (S1G-C1) and v1.3.2 corrected, asserted here against
+    // the TypeScript implementation of `30 §5.3` as well as against the two triggers.
+    const asNull = hex(canonicalBytes('k', [{ kind: 'text', value: null }]));
+    const oneZeroByte = hex(
+      canonicalBytes('k', [{ kind: 'bytes', value: Buffer.from([0x00]) }]),
+    );
+    expect(oneZeroByte).toBe('000000016b0000000100');
+    expect(asNull).not.toBe(oneZeroByte);
+
+    // Empty bytes, a two-zero-byte value and four 0xFF bytes are each distinct from NULL.
+    const encodings = [
+      asNull,
+      oneZeroByte,
+      hex(canonicalBytes('k', [{ kind: 'bytes', value: Buffer.alloc(0) }])),
+      hex(canonicalBytes('k', [{ kind: 'bytes', value: Buffer.from([0x00, 0x00]) }])),
+      hex(canonicalBytes('k', [{ kind: 'bytes', value: Buffer.from([0xff, 0xff, 0xff, 0xff]) }])),
+    ];
+    expect(new Set(encodings).size).toBe(5);
   });
 
   it('null, empty string and zero money all hash differently', () => {

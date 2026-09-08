@@ -76,18 +76,28 @@ $$;
 -- =================================================================================
 -- ACOS-JCS-1, in the control database
 --
--- `30 §5.3`, the hazard table, verbatim in the rules column:
+-- `30 §5.3`, the hazard table, verbatim in the rules column, AS ISSUED IN v1.3.2:
 --
 --   NUMERIC scale        "Per-column declared decimal scale, serialised as a string at
 --                         that exact scale. 25.0 and 25.00 are different bytes"
 --   Timestamps           "RFC 3339, UTC, exactly 6 fractional digits, Z suffix."
 --   Column order         "Fixed, declared per row kind, in the specification — never the
 --                         physical column order, which a migration reorders."
---   Nulls vs empty       "Single 0x00 sentinel byte for null; an empty string is a
---                         zero-length value."
+--   Nulls vs empty       "A field-level NULL is carried by the framing word, not by a
+--                         payload byte [...] A NULL has no payload bytes at all; an empty
+--                         string and an empty bytea are zero-length values with an
+--                         ordinary length word of 0."
 --   Unicode form         "UTF-8, NFC."
---   Field framing        "Every field prefixed with its 4-byte big-endian byte length, so
---                         no separator can be forged by content."
+--   Field framing        "Every field is prefixed with a 4-byte big-endian unsigned
+--                         length/discriminator word, so no separator can be forged by
+--                         content. 0xFFFFFFFF is RESERVED and means NULL, and a NULL
+--                         field is that word alone with no payload. A non-null field is
+--                         uint32_be(payload_length) || payload with
+--                         0 <= payload_length <= 0xFFFFFFFE."
+--
+-- v1.3.2 erratum JCS-01 replaced v1.2's one-byte 0x00 NULL sentinel, which was not
+-- injective against a bytea payload of exactly one 0x00 byte. Only NULL framing changed;
+-- every non-null payload rule above is byte-identical to v1.3.1's.
 --
 -- `I17d`, verbatim: "Hash and sequence values are computed by database functions inside
 -- each instance, under roles the writing principal cannot execute as." So the chain is
@@ -108,31 +118,61 @@ $$;
 -- SQL-side JCS implementation is introduced.
 -- ---------------------------------------------------------------------------------
 
-/* One field, framed: its 4-byte big-endian byte length, then its bytes. */
+/*
+ * FIELD FRAMING, AND WHERE NULL LIVES.  v1.3.2 erratum JCS-01.
+ *
+ * `30 §5.3` as issued in v1.3.2:
+ *
+ *   "Every field is prefixed with a 4-byte big-endian unsigned length/discriminator
+ *    word [...] 0xFFFFFFFF is RESERVED and means NULL, and a NULL field is that word
+ *    alone with no payload. A non-null field is uint32_be(payload_length) || payload
+ *    with 0 <= payload_length <= 0xFFFFFFFE; a payload whose length would reach
+ *    0xFFFFFFFF is not representable and the implementation must fail closed."
+ *
+ * SO NULL IS A PROPERTY OF THE FRAME, NOT A PAYLOAD BYTE, and the type helpers below
+ * return SQL NULL for a NULL input rather than a sentinel. This function is therefore
+ * deliberately NOT STRICT: a STRICT function returns NULL without executing, which is
+ * exactly the case that has to emit the reserved word.
+ *
+ * v1.2's rule — one `0x00` sentinel byte, framed as `00 00 00 01 00` — was withdrawn
+ * because a `bytea` payload of exactly one `0x00` byte frames identically, so NULL and a
+ * real one-byte value were the same bytes. `phase2-v1.3.2-errata.md §1` carries the
+ * demonstration, and `tests/negative-controls/unsafe-old-null-sentinel.ts` reproduces the
+ * collision so the correction can be shown to close it.
+ */
 CREATE FUNCTION acos_jcs1_field(value BYTEA) RETURNS BYTEA
-LANGUAGE sql IMMUTABLE STRICT AS $$
-  SELECT int4send(length(value)) || value;
-$$;
-
-/* The null sentinel: one 0x00 byte. */
-CREATE FUNCTION acos_jcs1_null() RETURNS BYTEA
-LANGUAGE sql IMMUTABLE AS $$
-  SELECT '\x00'::BYTEA;
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  -- The reserved word. Four 0xFF bytes, no payload.
+  IF value IS NULL THEN RETURN '\xffffffff'::BYTEA; END IF;
+  -- `length()` is int4, so a bytea can never reach the reserved word on this server.
+  -- The bound is enforced anyway, because the SPECIFICATION states it and an
+  -- implementation that relies on a platform limit to satisfy a normative bound has not
+  -- satisfied it.
+  IF length(value)::BIGINT > 4294967294 THEN
+    RAISE EXCEPTION 'JCS1_FIELD_TOO_LONG' USING ERRCODE = 'ACS41',
+      DETAIL = '30 §5.3 reserves 0xFFFFFFFF for NULL, so a payload length of '
+               '0xFFFFFFFF or more is not representable';
+  END IF;
+  RETURN int4send(length(value)) || value;
+END;
 $$;
 
 /*
  * Text: UTF-8, NFC.
  *
- * U+0000 is inadmissible in ACOS canonical text — owner clarification S1B-C8, which
- * restores injectivity against the null sentinel. PostgreSQL `text` cannot hold U+0000
- * at all, so the exclusion is already structural here; it is asserted rather than
- * assumed so that the two implementations agree on the reason and not merely on the
- * outcome.
+ * U+0000 is inadmissible in ACOS canonical text — owner clarification S1B-C8. PostgreSQL
+ * `text` cannot hold U+0000 at all, so the exclusion is structural here.
+ *
+ * NOTE, v1.3.2: this rule is NO LONGER what separates NULL from text. Under JCS-01 the
+ * reserved framing word does that, for every type at once, so S1B-C8 is now an ordinary
+ * Unicode-admissibility rule rather than an injectivity repair. It is retained unchanged
+ * and unrelaxed — `phase2-v1.3.2-errata.md §1` says so explicitly.
  */
 CREATE FUNCTION acos_jcs1_text(value TEXT) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(normalize(value, NFC), 'UTF8');
 END;
 $$;
@@ -141,7 +181,7 @@ $$;
 CREATE FUNCTION acos_jcs1_money(value NUMERIC) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(to_char(value, 'FM99999999999999990.00'), 'UTF8');
 END;
 $$;
@@ -149,7 +189,7 @@ $$;
 CREATE FUNCTION acos_jcs1_int(value BIGINT) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(value::TEXT, 'UTF8');
 END;
 $$;
@@ -157,7 +197,7 @@ $$;
 CREATE FUNCTION acos_jcs1_bool(value BOOLEAN) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(CASE WHEN value THEN 'true' ELSE 'false' END, 'UTF8');
 END;
 $$;
@@ -166,16 +206,24 @@ $$;
 CREATE FUNCTION acos_jcs1_ts(value TIMESTAMPTZ) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(
     to_char(value AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'UTF8');
 END;
 $$;
 
+/*
+ * Bytes: the bytes themselves, with no exclusion and no escape.
+ *
+ * v1.3.2: EVERY byte string is admissible, INCLUDING the single byte `0x00`, because the
+ * reserved framing word puts NULL outside payload space entirely. S1G reported this leg
+ * PARTIAL and refused the ambiguous input rather than inventing an encoding; JCS-01 is
+ * the owner decision that resolved it, and the refusal is gone because the ambiguity is.
+ */
 CREATE FUNCTION acos_jcs1_bytes(value BYTEA) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-  IF value IS NULL THEN RETURN acos_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN value;
 END;
 $$;

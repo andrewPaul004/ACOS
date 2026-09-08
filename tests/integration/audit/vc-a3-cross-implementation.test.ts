@@ -9,28 +9,39 @@ import {
   attestationFields,
   effectAuthorisationFields,
   frameField,
+  frameLength,
   jcsBytes,
   jcsJson,
   jcsMoney,
   jcsText,
   jcsTimestamp,
   oracleCanonicalBytes,
+  oracleField,
   oracleRowHash,
+  MAX_PAYLOAD_LENGTH,
+  NULL_LENGTH_WORD,
   type OracleField,
 } from '../../support/jcs1Oracle.js';
 
 /**
  * `VC-A3` — `ACOS-JCS-1` CROSS-IMPLEMENTATION. S1G.
  *
- * `36 §2`, verbatim:
+ * `36 §2`, verbatim, AS ISSUED IN v1.3.2:
  *
  *   "VC-A3 — `ACOS-JCS-1` cross-implementation. The same fixture rows serialised by the
  *    control trigger and by the audit trigger produce byte-identical output. Assert each
  *    hazard individually: `25.0 ≠ 25.00`; timestamps at exactly 6 fractional digits UTC;
- *    declared column order survives a physical column reorder; null sentinel distinct
- *    from empty string; NFC normalisation; RFC 8785 for JSON columns; 4-byte BE length
- *    framing. Assert the transmitted bytes are hashed — a receiving implementation that
- *    parses and re-serialises must fail the test."
+ *    declared column order survives a physical column reorder; SQL NULL (`FF FF FF FF`)
+ *    distinct from empty string, from empty `bytea`, from a one-byte `bytea` payload
+ *    `0x00`, and from a JSON literal `null` (v1.3.2, JCS-01), and a seeded implementation
+ *    restoring v1.2's one-byte `0x00` NULL sentinel must fail this case; NFC
+ *    normalisation; RFC 8785 for JSON columns; 4-byte BE length framing. Assert the
+ *    transmitted bytes are hashed — a receiving implementation that parses and
+ *    re-serialises must fail the test."
+ *
+ * The seeded old-rule implementation `36 §2` now demands is
+ * `tests/negative-controls/unsafe-old-null-sentinel.ts`, exercised by
+ * `tests/negative-controls/old-null-sentinel-collision.test.ts`.
  *
  * =================================================================================
  * THREE IMPLEMENTATIONS, AND THE ORACLE IS NEITHER PRODUCTION ONE.
@@ -114,6 +125,60 @@ async function auditBytes(row: Record<string, unknown>): Promise<Buffer> {
   } finally {
     client.release();
   }
+}
+
+/**
+ * ONE FIELD, framed, by each production implementation's own primitives.
+ *
+ * `30 §5.3`'s NULL rule and framing rule are declared over FIELDS, and v1.3.2's erratum
+ * (JCS-01) is entirely about the interaction of the two. The whole-row fixtures below
+ * exercise them through a real row kind; these two helpers exercise them directly, so the
+ * NULL / empty / one-byte matrix can be asserted for a `bytea` field independently of
+ * whether any declared row kind happens to carry a free-form one. That independence is the
+ * point: S1G-C1's defect was invisible from the row kinds alone.
+ */
+async function controlFramedField(sqlType: JcsType, value: unknown): Promise<Buffer> {
+  const client = await control.connect();
+  try {
+    const result = await client.query<{ bytes: Buffer }>(
+      `SELECT acos_jcs1_field(acos_jcs1_${sqlType.fn}($1::${sqlType.cast})) AS bytes`,
+      [value],
+    );
+    return result.rows[0]!.bytes;
+  } finally {
+    client.release();
+  }
+}
+
+async function auditFramedField(sqlType: JcsType, value: unknown): Promise<Buffer> {
+  const client = await audit.owner.connect();
+  try {
+    const result = await client.query<{ bytes: Buffer }>(
+      `SELECT audit_jcs1_field(audit_jcs1_${sqlType.fn}($1::${sqlType.cast})) AS bytes`,
+      [value],
+    );
+    return result.rows[0]!.bytes;
+  } finally {
+    client.release();
+  }
+}
+
+interface JcsType {
+  readonly fn: 'text' | 'money' | 'int' | 'bool' | 'ts' | 'bytes';
+  readonly cast: string;
+}
+
+const BYTES: JcsType = { fn: 'bytes', cast: 'BYTEA' };
+const TEXT: JcsType = { fn: 'text', cast: 'TEXT' };
+const MONEY: JcsType = { fn: 'money', cast: 'NUMERIC' };
+
+/** The same field, framed by all three implementations, asserted equal to the oracle. */
+async function allThree(sqlType: JcsType, value: unknown, oracle: Buffer): Promise<Buffer> {
+  const fromControl = await controlFramedField(sqlType, value);
+  const fromAudit = await auditFramedField(sqlType, value);
+  expect(fromControl.equals(oracle), `control ${sqlType.fn}`).toBe(true);
+  expect(fromAudit.equals(oracle), `audit ${sqlType.fn}`).toBe(true);
+  return oracle;
 }
 
 function compositeParams(row: Record<string, unknown>): unknown[] {
@@ -264,12 +329,20 @@ describe('VC-A3 — the same fixture row, three independent canonicalisations', 
   });
 });
 
+/**
+ * Walk the framed field boundaries and count them.
+ *
+ * v1.3.2: the length word `0xFFFFFFFF` is the reserved NULL discriminator and consumes no
+ * payload, so the walk advances four bytes rather than `4 + length`. A walker that treated
+ * it as a length would demand 4GB of payload and fall off the end — which is the point of
+ * the assertion below: the framing has to be exactly self-describing, NULLs included.
+ */
 function countFields(bytes: Buffer): number {
   let offset = 0;
   let count = 0;
   while (offset < bytes.length) {
-    const length = bytes.readUInt32BE(offset);
-    offset += 4 + length;
+    const word = bytes.readUInt32BE(offset);
+    offset += word === 0xff_ff_ff_ff ? 4 : 4 + word;
     count += 1;
   }
   expect(offset).toBe(bytes.length); // the framing is exact, or this is not a framed string
@@ -290,8 +363,8 @@ describe('VC-A3 — each declared hazard, individually', () => {
     // preserving the input's own scale. What must therefore be asserted is that a value
     // whose declared scale is DIFFERENT — 25.0 at scale 1 — is refused by the oracle, and
     // that a value at a scale the column cannot hold cannot reach either implementation.
-    expect(jcsMoney('25.00').toString('utf8')).toBe('25.00');
-    expect(jcsMoney('25.0').toString('utf8')).toBe('25.00');
+    expect(jcsMoney('25.00')!.toString('utf8')).toBe('25.00');
+    expect(jcsMoney('25.0')!.toString('utf8')).toBe('25.00');
     expect(() => jcsMoney('25.000')).toThrow(/declared scale 2/);
 
     // And the amounts themselves discriminate: one cent moves the bytes.
@@ -312,9 +385,9 @@ describe('VC-A3 — each declared hazard, individually', () => {
   });
 
   it('timestamps render at EXACTLY six fractional digits, UTC, with a `Z`', async () => {
-    expect(jcsTimestamp(AT).toString('utf8')).toBe('2026-03-04T05:06:07.123000Z');
+    expect(jcsTimestamp(AT)!.toString('utf8')).toBe('2026-03-04T05:06:07.123000Z');
     const offsetExpressed = new Date('2026-03-04T00:06:07.123-05:00');
-    expect(jcsTimestamp(offsetExpressed).toString('utf8')).toBe('2026-03-04T05:06:07.123000Z');
+    expect(jcsTimestamp(offsetExpressed)!.toString('utf8')).toBe('2026-03-04T05:06:07.123000Z');
 
     // And both databases agree, from the same instant expressed with an offset.
     const utc = await controlBytes(ordinaryDbRow({ occurred_at: AT }));
@@ -325,11 +398,16 @@ describe('VC-A3 — each declared hazard, individually', () => {
     );
   });
 
-  it('NULL and the EMPTY STRING are distinct — one byte versus zero bytes', async () => {
-    expect(jcsText(null)).toEqual(Buffer.from([0x00]));
+  it('NULL is the RESERVED WORD and the EMPTY STRING is a zero-length value', async () => {
+    // v1.3.2, JCS-01. NULL carries no payload at all; the empty string carries a payload
+    // of length zero. Four bytes versus four bytes, and they are different four bytes.
+    expect(jcsText(null)).toBeNull();
     expect(jcsText('')).toEqual(Buffer.alloc(0));
-    expect(frameField(jcsText(null))).toEqual(Buffer.from([0, 0, 0, 1, 0]));
+    expect(frameField(jcsText(null))).toEqual(Buffer.from([0xff, 0xff, 0xff, 0xff]));
     expect(frameField(jcsText(''))).toEqual(Buffer.from([0, 0, 0, 0]));
+
+    await allThree(TEXT, null, Buffer.from([0xff, 0xff, 0xff, 0xff]));
+    await allThree(TEXT, '', Buffer.from([0, 0, 0, 0]));
 
     const withNull = await controlBytes(ordinaryDbRow({ approval_id: null }));
     const withEmpty = await controlBytes(ordinaryDbRow({ approval_id: '' }));
@@ -338,7 +416,10 @@ describe('VC-A3 — each declared hazard, individually', () => {
     expect((await auditBytes(ordinaryDbRow({ approval_id: '' }))).equals(withEmpty)).toBe(true);
   });
 
-  it('a NULL money field is the sentinel, and is distinct from `0.00`', async () => {
+  it('a NULL money field is the reserved word, and is distinct from `0.00`', async () => {
+    await allThree(MONEY, null, Buffer.from([0xff, 0xff, 0xff, 0xff]));
+    await allThree(MONEY, '0.00', frameField(jcsMoney('0.00')));
+
     const nullAmount = await controlBytes(ordinaryDbRow({ vendor_amount: null }));
     const zeroAmount = await controlBytes(ordinaryDbRow({ vendor_amount: '0.00' }));
     expect(nullAmount.equals(zeroAmount)).toBe(false);
@@ -353,7 +434,7 @@ describe('VC-A3 — each declared hazard, individually', () => {
     const composed = 'caf\u00E9';      // U+00E9, one code point
     const decomposed = 'cafe\u0301';   // e + U+0301, two code points
     expect(composed).not.toBe(decomposed);
-    expect(jcsText(composed).equals(jcsText(decomposed))).toBe(true);
+    expect(jcsText(composed)!.equals(jcsText(decomposed)!)).toBe(true);
 
     const a = await controlBytes(ordinaryDbRow({ resource_ref: composed }));
     const b = await controlBytes(ordinaryDbRow({ resource_ref: decomposed }));
@@ -407,32 +488,288 @@ describe('VC-A3 — each declared hazard, individually', () => {
 });
 
 // =====================================================================================
-// The carried-forward question: nullable `bytes` and JSON literal null.
+// THE NULL / EMPTY / BYTES MATRIX — v1.3.2 erratum JCS-01.
 //
-// `S1F-C7` and `S1F-owner-resolution.md §7` left this OPEN for "the dedicated audit
-// validation slice", which is this one. It is settled here WITHOUT INVENTING ANYTHING.
+// S1G reported the generic `bytes` leg of VC-A3 PARTIAL: under v1.2's one-byte `0x00` NULL
+// sentinel, SQL NULL and a `bytea` value of exactly one `0x00` byte framed to the identical
+// `00 00 00 01 00`, and the specification declared no rule separating them. Nothing was
+// invented then; the input failed closed in all three implementations and S1G-C1 recorded
+// the gap.
+//
+// v1.3.2 resolves it normatively: NULL is the reserved 32-bit length word `0xFFFFFFFF` and
+// carries NO payload. This section is the closure evidence — every case the erratum
+// distinguishes, asserted against the ORACLE first and then against BOTH production
+// implementations, for a `bytea` field directly rather than only through a row kind.
 // =====================================================================================
 
-describe('VC-A3 — the carried-forward nullable-`bytes` / JSON-literal-null question', () => {
-  it('JSON literal `null` and SQL NULL are DISTINCT under `30 §5.3` as written', () => {
-    // RFC 8785 renders the JSON value `null` as the four bytes `null`; the SQL null rule
-    // is a one-byte sentinel. Framed, they are length 4 and length 1. Nothing had to be
-    // added to the specification to distinguish them.
-    expect(jcsJson(null).toString('utf8')).toBe('null');
-    expect(frameField(jcsJson(null))).toEqual(Buffer.from([0, 0, 0, 4, 110, 117, 108, 108]));
-    expect(frameField(jcsText(null))).toEqual(Buffer.from([0, 0, 0, 1, 0]));
-    expect(frameField(jcsJson(null)).equals(frameField(jcsText(null)))).toBe(false);
+const RESERVED = Buffer.from([0xff, 0xff, 0xff, 0xff]);
 
-    // An ABSENT optional field — `undefined`, not a JSON value — is the SQL-null sentinel.
-    expect(frameField(jcsJson(undefined))).toEqual(Buffer.from([0, 0, 0, 1, 0]));
-    // And a JSON object whose member is literal null is distinct from one omitting it.
-    expect(jcsJson({ a: null }).toString('utf8')).toBe('{"a":null}');
-    expect(jcsJson({ a: undefined }).toString('utf8')).toBe('{}');
+describe('VC-A3 — SQL NULL, empty values and arbitrary bytes are pairwise disjoint', () => {
+  /** `§8`'s required cases A–G, as a table, so no case can be quietly dropped. */
+  const CASES = [
+    { label: 'A  SQL NULL', value: null, framed: RESERVED },
+    { label: 'C  empty bytes', value: Buffer.alloc(0), framed: Buffer.from([0, 0, 0, 0]) },
+    { label: 'D  bytes 00', value: Buffer.from([0x00]), framed: Buffer.from([0, 0, 0, 1, 0]) },
+    {
+      label: 'E  bytes 0000',
+      value: Buffer.from([0x00, 0x00]),
+      framed: Buffer.from([0, 0, 0, 2, 0, 0]),
+    },
+    { label: 'F  bytes FF', value: Buffer.from([0xff]), framed: Buffer.from([0, 0, 0, 1, 0xff]) },
+    {
+      label: 'G  arbitrary binary with an embedded zero',
+      value: Buffer.from([0xde, 0x00, 0xad, 0x00, 0xbe, 0xef]),
+      framed: Buffer.from([0, 0, 0, 6, 0xde, 0x00, 0xad, 0x00, 0xbe, 0xef]),
+    },
+  ] as const;
+
+  it('the ORACLE frames each case to exactly the bytes `30 §5.3` prints', () => {
+    for (const { label, value, framed } of CASES) {
+      expect(frameField(jcsBytes(value)), label).toEqual(framed);
+    }
+    // And B — empty TEXT — is the same zero-length value as empty bytes, deliberately:
+    // `30 §5.3` prints both as `00 00 00 00`.
+    expect(frameField(jcsText(''))).toEqual(Buffer.from([0, 0, 0, 0]));
+  });
+
+  it('and BOTH PRODUCTION IMPLEMENTATIONS agree with the oracle, case by case', async () => {
+    for (const { label, value, framed } of CASES) {
+      expect((await controlFramedField(BYTES, value)).equals(framed), `control ${label}`).toBe(
+        true,
+      );
+      expect((await auditFramedField(BYTES, value)).equals(framed), `audit ${label}`).toBe(true);
+    }
+  });
+
+  it('every pair that SHOULD differ DOES differ — in all three implementations', async () => {
+    const oracle = CASES.map(({ value }) => frameField(jcsBytes(value)).toString('hex'));
+    const fromControl: string[] = [];
+    const fromAudit: string[] = [];
+    for (const { value } of CASES) {
+      fromControl.push((await controlFramedField(BYTES, value)).toString('hex'));
+      fromAudit.push((await auditFramedField(BYTES, value)).toString('hex'));
+    }
+    // Six cases, six distinct encodings, in each of the three implementations.
+    expect(new Set(oracle).size).toBe(CASES.length);
+    expect(new Set(fromControl).size).toBe(CASES.length);
+    expect(new Set(fromAudit).size).toBe(CASES.length);
+    expect(fromControl).toEqual(oracle);
+    expect(fromAudit).toEqual(oracle);
+  });
+
+  it('THE DEMONSTRATED COLLISION IS CLOSED — SQL NULL versus a one-byte `0x00` bytea', async () => {
+    // This is S1G-C1, and it is the single assertion the whole erratum exists for.
+    const oneZeroByte = Buffer.from([0x00]);
+
+    expect(frameField(jcsBytes(null))).toEqual(RESERVED);
+    expect(frameField(jcsBytes(oneZeroByte))).toEqual(Buffer.from([0, 0, 0, 1, 0]));
+    expect(frameField(jcsBytes(null)).equals(frameField(jcsBytes(oneZeroByte)))).toBe(false);
+
+    for (const [label, framer] of [
+      ['control', controlFramedField],
+      ['audit', auditFramedField],
+    ] as const) {
+      const asNull = await framer(BYTES, null);
+      const asByte = await framer(BYTES, oneZeroByte);
+      expect(asNull.equals(RESERVED), `${label} NULL`).toBe(true);
+      expect(asNull.equals(asByte), `${label} collision`).toBe(false);
+    }
+
+    // AND IT IS NO LONGER A REFUSAL. v1.3.1 raised
+    // `JCS1_BYTES_AMBIGUOUS_WITH_NULL_SENTINEL` on this input in all three
+    // implementations; v1.3.2 encodes it, so the refusal must be gone as well as the
+    // ambiguity. A specification gap papered over by a fail-closed guard is still a gap.
+    expect(() => jcsBytes(oneZeroByte)).not.toThrow();
+    const auditClient = await audit.owner.connect();
+    try {
+      const held = await auditClient.query<{ b: Buffer }>(`SELECT audit_jcs1_bytes($1::BYTEA) AS b`, [
+        oneZeroByte,
+      ]);
+      expect(held.rows[0]!.b.equals(oneZeroByte)).toBe(true);
+    } finally {
+      auditClient.release();
+    }
+  });
+
+  it('the reserved word can only ever come from NULL — no payload can produce it', async () => {
+    // The injectivity argument, asserted rather than reasoned about: a non-null field
+    // always begins with its own length word, and no length word can be 0xFFFFFFFF, so
+    // the four bytes NULL produces are unreachable from any payload.
+    for (const { label, value } of CASES) {
+      if (value === null) continue;
+      const framed = frameField(jcsBytes(value));
+      expect(framed.subarray(0, 4).equals(RESERVED), `${label} length word`).toBe(false);
+      expect(framed.equals(RESERVED), `${label} whole field`).toBe(false);
+    }
+    // Including a payload that IS four 0xFF bytes — the nearest possible near-miss.
+    const fourFF = Buffer.from([0xff, 0xff, 0xff, 0xff]);
+    const framed = frameField(jcsBytes(fourFF));
+    expect(framed).toEqual(Buffer.from([0, 0, 0, 4, 0xff, 0xff, 0xff, 0xff]));
+    expect(framed.equals(RESERVED)).toBe(false);
+    expect((await controlFramedField(BYTES, fourFF)).equals(framed)).toBe(true);
+    expect((await auditFramedField(BYTES, fourFF)).equals(framed)).toBe(true);
+  });
+
+  it('a 32-byte digest and NULL — the only `bytea` values the row kinds actually carry', async () => {
+    expect(HASH32).toHaveLength(32);
+    expect(jcsBytes(HASH32)!.equals(HASH32)).toBe(true);
+    expect(jcsBytes(null)).toBeNull();
+    await allThree(BYTES, HASH32, frameField(HASH32));
+    await allThree(BYTES, null, RESERVED);
+  });
+});
+
+// =====================================================================================
+// TEXT, NUMERIC and the LENGTH BOUNDARY — `§8`'s remaining legs.
+// =====================================================================================
+
+describe('VC-A3 — text, numeric and the framing boundary', () => {
+  it('empty string, `"0"` and NULL are three distinct text encodings', async () => {
+    const empty = await allThree(TEXT, '', Buffer.from([0, 0, 0, 0]));
+    const zeroChar = await allThree(TEXT, '0', Buffer.from([0, 0, 0, 1, 0x30]));
+    const asNull = await allThree(TEXT, null, RESERVED);
+    const framed = [empty, zeroChar, asNull].map((b) => b.toString('hex'));
+    expect(new Set(framed).size).toBe(3);
+  });
+
+  it('U+0000 is still REJECTED in canonical text — S1B-C8 is retained, not relaxed', async () => {
+    // v1.3.2 removes the INJECTIVITY reason for this rule and keeps the rule. Asserted so
+    // the erratum cannot be read as having quietly relaxed it.
+    expect(() => jcsText(`a${String.fromCharCode(0)}b`)).toThrow(/U\+0000/);
+    const auditClient = await audit.owner.connect();
+    try {
+      await expect(
+        auditClient.query(`SELECT audit_jcs1_text(convert_from($1::BYTEA, 'UTF8'))`, [
+          Buffer.from([0x61, 0x00, 0x62]),
+        ]),
+      ).rejects.toThrow();
+    } finally {
+      auditClient.release();
+    }
+  });
+
+  it('NFC-equivalent text agrees, and the two forms frame identically on both servers', async () => {
+    const composed = 'café';
+    const decomposed = 'café';
+    expect(composed).not.toBe(decomposed);
+    const expected = frameField(jcsText(composed));
+    await allThree(TEXT, composed, expected);
+    await allThree(TEXT, decomposed, expected);
+  });
+
+  it('numeric: NULL, zero, a negative and the declared scale are all distinct', async () => {
+    const cases: readonly (string | null)[] = [null, '0.00', '-1.00', '1.00', '25.00', '25.01'];
+    const framed: string[] = [];
+    for (const value of cases) {
+      const expected = value === null ? RESERVED : frameField(jcsMoney(value));
+      await allThree(MONEY, value, expected);
+      framed.push(expected.toString('hex'));
+    }
+    expect(new Set(framed).size).toBe(cases.length);
+  });
+
+  it('numeric: two textual forms of one stored value cannot alias apart', async () => {
+    // `25.0` and `25.00` are ONE value at the declared scale 2, so they must frame
+    // identically — the hazard `30 §5.3` closes is two implementations disagreeing, and
+    // the rule closes it by pinning the scale.
+    const expected = frameField(jcsMoney('25.00'));
+    await allThree(MONEY, '25.0', expected);
+    await allThree(MONEY, '25.00', expected);
+    expect(() => jcsMoney('25.000')).toThrow(/declared scale 2/);
+  });
+
+  it('the LENGTH WORD arithmetic, at 0, ordinary, 0xFFFFFFFE and 0xFFFFFFFF', () => {
+    // Tested against the framing PRIMITIVE, not against a fixture: a 4GB payload would
+    // prove nothing the arithmetic does not, and `§8` says not to allocate one.
+    expect(frameLength(0)).toEqual(Buffer.from([0x00, 0x00, 0x00, 0x00]));
+    expect(frameLength(7)).toEqual(Buffer.from([0x00, 0x00, 0x00, 0x07]));
+    expect(frameLength(MAX_PAYLOAD_LENGTH)).toEqual(Buffer.from([0xff, 0xff, 0xff, 0xfe]));
+    expect(MAX_PAYLOAD_LENGTH).toBe(0xff_ff_ff_fe);
+
+    // 0xFFFFFFFF is RESERVED and is therefore not a representable payload length. It must
+    // FAIL CLOSED — never wrap to zero, never truncate, never silently emit the NULL word.
+    expect(() => frameLength(0xff_ff_ff_ff)).toThrow(/not representable/);
+    expect(() => frameLength(0x1_00_00_00_00)).toThrow(/not representable/);
+    expect(() => frameLength(-1)).toThrow(/not a payload length/);
+
+    // And the reserved word is the NULL encoding, which is what makes the bound necessary.
+    expect(NULL_LENGTH_WORD).toEqual(Buffer.from([0xff, 0xff, 0xff, 0xff]));
+    expect(frameField(null)).toEqual(NULL_LENGTH_WORD);
+  });
+
+  it('both production framers declare the SPECIFICATION bound, not their platform limit', async () => {
+    // The bound is unreachable on PostgreSQL — `bytea` caps at 1GB — so it is asserted as
+    // a property of the declared code rather than exercised. `30 §5.3` states the bound,
+    // and an implementation that satisfies it only by accident of its platform has not.
+    for (const path of [
+      join(process.cwd(), 'src', 'db', 'migrations', '0007__local_authorisation.sql'),
+      join(process.cwd(), 'src', 'audit', 'db', 'migrations', 'A0001__audit_store.sql'),
+    ]) {
+      const sql = await readFile(path, 'utf8');
+      const code = sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*--.*$/gm, '');
+      expect(code, path).toContain('4294967294');
+      expect(code, path).toContain('JCS1_FIELD_TOO_LONG');
+    }
+  });
+});
+
+// =====================================================================================
+// JSON — `§8`'s JSON leg, and the question S1F-C7 carried forward.
+//
+// `S1F-C7` and `S1F-owner-resolution.md §7` left "any generic nullable bytes / JSON
+// literal-null integration issue" OPEN for the dedicated audit validation slice. The bytes
+// half is closed above by v1.3.2. The JSON half is closed here.
+// =====================================================================================
+
+describe('VC-A3 — JSON, and SQL NULL versus JSON literal `null`', () => {
+  it('JSON literal `null` is an ORDINARY NON-NULL FIELD, and SQL NULL is the reserved word', () => {
+    // RFC 8785 renders the JSON value `null` as the four bytes `null`, so it frames as a
+    // length-4 payload. A field-level SQL NULL frames as `FF FF FF FF` and carries no
+    // payload. Under v1.3.2 they are distinct BY CONSTRUCTION rather than by a difference
+    // in payload length, which is what the old rule relied on.
+    expect(jcsJson(null)!.toString('utf8')).toBe('null');
+    expect(frameField(jcsJson(null))).toEqual(Buffer.from([0, 0, 0, 4, 110, 117, 108, 108]));
+    expect(frameField(jcsText(null))).toEqual(RESERVED);
+    expect(frameField(jcsJson(null)).equals(frameField(jcsText(null)))).toBe(false);
+  });
+
+  it('an ABSENT optional field is a field-level NULL, and is distinct from JSON `null`', () => {
+    // `30 §5.3` (v1.3.2): "An absent optional structure member, where the row kind's
+    // schema makes absence a state distinct from a present null, is a field-level NULL."
+    expect(jcsJson(undefined)).toBeNull();
+    expect(frameField(jcsJson(undefined))).toEqual(RESERVED);
+    expect(frameField(jcsJson(undefined)).equals(frameField(jcsJson(null)))).toBe(false);
+    // And inside a JSON value, a member present-and-null differs from an omitted one.
+    expect(jcsJson({ a: null })!.toString('utf8')).toBe('{"a":null}');
+    expect(jcsJson({ a: undefined })!.toString('utf8')).toBe('{}');
+  });
+
+  it('SQL NULL, JSON null, `{}`, `[]`, `""` and `0` are SIX distinct encodings', () => {
+    // `§8`'s JSON leg. Every one of these is a value the JSON rule admits, and none of
+    // them may collapse onto another or onto a field-level NULL.
+    const framed = [
+      frameField(jcsText(null)), //          SQL NULL          FF FF FF FF
+      frameField(jcsJson(null)), //          JSON null         00 00 00 04 'null'
+      frameField(jcsJson({})), //            JSON {}           00 00 00 02 '{}'
+      frameField(jcsJson([])), //            JSON []           00 00 00 02 '[]'
+      frameField(jcsJson('')), //            JSON ""           00 00 00 02 '""'
+      frameField(jcsJson(0)), //             JSON 0            00 00 00 01 '0'
+    ].map((b) => b.toString('hex'));
+    expect(new Set(framed).size).toBe(6);
+    expect(framed[0]).toBe('ffffffff');
+    expect(jcsJson({})!.toString('utf8')).toBe('{}');
+    expect(jcsJson([])!.toString('utf8')).toBe('[]');
+    expect(jcsJson('')!.toString('utf8')).toBe('""');
+    expect(jcsJson(0)!.toString('utf8')).toBe('0');
+    // And an empty JSON string is NOT an empty field: it is a two-byte payload.
+    expect(frameField(jcsJson('')).equals(frameField(jcsText('')))).toBe(false);
   });
 
   it('NEITHER ROW KIND CARRIES A JSON COLUMN, so no production row exercises the rule', async () => {
-    // `S1F-C7` recorded the decision and A0001 repeats it. Asserted against both schemas
-    // so a later migration cannot introduce one without failing here first.
+    // `S1F-C7` recorded the decision and A0001 repeats it, so the JSON leg above is
+    // settled by the oracle alone — there is no production JSON canonicaliser in either
+    // database to compare it against, and none is introduced. Asserted against both
+    // schemas so a later migration cannot introduce a JSON column silently.
     for (const [label, harness, table] of [
       ['control', control.pool, 'effect_journal'],
       ['audit', audit.owner, 'audit_journal'],
@@ -449,39 +786,6 @@ describe('VC-A3 — the carried-forward nullable-`bytes` / JSON-literal-null que
         client.release();
       }
     }
-  });
-
-  it('a one-byte `0x00` BYTEA is REFUSED by all three, not encoded — S1G-C1', async () => {
-    // `30 §5.3` declares a generic null sentinel and no `bytes` rule that distinguishes a
-    // one-byte 0x00 value from it. THE AMBIGUITY IS REAL AND IS NOT RESOLVED HERE.
-    // `S1G-owner-clarifications.md` S1G-C1 records it and `S1G-result.md` reports the
-    // generic `bytes` leg of VC-A3 as PARTIAL.
-    //
-    // What is asserted is FAIL-CLOSED behaviour, identically, in three places — never a
-    // representation.
-    const oneZeroByte = Buffer.from([0x00]);
-    expect(() => jcsBytes(oneZeroByte)).toThrow(/refused rather than encoded/);
-
-    const auditClient = await audit.owner.connect();
-    try {
-      await expect(
-        auditClient.query(`SELECT audit_jcs1_bytes($1::BYTEA)`, [oneZeroByte]),
-      ).rejects.toThrow(/JCS1_BYTES_AMBIGUOUS_WITH_NULL_SENTINEL/);
-    } finally {
-      auditClient.release();
-    }
-
-    // And it is UNREACHABLE from either declared row kind: the only `bytea` fields are
-    // `prev_hash` and `attested_head_hash`, both always NULL or a 32-byte digest.
-    expect(HASH32).toHaveLength(32);
-    expect(jcsBytes(HASH32).equals(HASH32)).toBe(true);
-    expect(jcsBytes(null)).toEqual(Buffer.from([0x00]));
-  });
-
-  it('EMPTY BYTES and NULL BYTES are distinct — zero length versus the sentinel', () => {
-    expect(frameField(jcsBytes(Buffer.alloc(0)))).toEqual(Buffer.from([0, 0, 0, 0]));
-    expect(frameField(jcsBytes(null))).toEqual(Buffer.from([0, 0, 0, 1, 0]));
-    expect(frameField(jcsBytes(Buffer.alloc(0))).equals(frameField(jcsBytes(null)))).toBe(false);
   });
 });
 
@@ -533,24 +837,10 @@ describe('VC-A3 — the transmitted bytes are what is hashed', () => {
   });
 });
 
-function oracleFieldOf(field: OracleField): Buffer {
-  switch (field.kind) {
-    case 'text':
-      return jcsText(field.value);
-    case 'money':
-      return jcsMoney(field.value);
-    case 'int':
-      return field.value === null ? Buffer.from([0x00]) : Buffer.from(field.value.toString(), 'utf8');
-    case 'bool':
-      return field.value === null ? Buffer.from([0x00]) : Buffer.from(field.value ? 'true' : 'false', 'utf8');
-    case 'ts':
-      return jcsTimestamp(field.value);
-    case 'bytes':
-      return jcsBytes(field.value);
-    case 'json':
-      return jcsJson(field.value);
-  }
-}
+// The vulnerable receiver above diverges on MONEY alone, so every other field goes
+// through the oracle's own payload function. Previously reimplemented here; that
+// duplication is what let this helper carry v1.2's sentinel after the oracle stopped.
+const oracleFieldOf = oracleField;
 
 // =====================================================================================
 // Independence, as a property of the SOURCE.

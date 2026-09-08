@@ -139,9 +139,17 @@ ALTER TABLE effect_journal
  * `attested_at` (the row's `occurred_at`), then `prev_hash` last, exactly as branch 1
  * places it.
  *
- * `attested_head_hash` goes through `acos_jcs1_bytes`. See `S1G-owner-clarifications.md`
- * S1G-C1: it is always a 32-byte SHA-256 digest or the 32 zero bytes, so it never reaches
- * the one input for which `30 §5.3`'s null sentinel is not injective over `bytea`.
+ * `attested_head_hash` goes through `acos_jcs1_bytes`. S1G-C1 recorded that under v1.2's
+ * NULL rule a one-byte `0x00` `bytea` was indistinguishable from SQL NULL, and noted this
+ * field never reaches that input because it is always a 32-byte SHA-256 digest or the 32
+ * zero bytes. **v1.3.2 erratum JCS-01 removes the hazard rather than avoiding it**: NULL
+ * is the reserved framing word `0xFFFFFFFF` with no payload, so no `bytea` payload of any
+ * content can imitate it and the observation above is no longer load-bearing.
+ *
+ * BRANCH 1 IS STILL 0007's FUNCTION TO THE BYTE. JCS-01 changed the framing helper, not
+ * this declaration: the domain tag, the field order and the `acos_jcs1_*` calls are
+ * unchanged, so a row with no NULL field recomputes to the same `row_hash` it had at
+ * v1.3.1, and a row with a NULL field recomputes to the corrected one.
  */
 CREATE OR REPLACE FUNCTION effect_journal_canonical_bytes(row_in effect_journal)
 RETURNS BYTEA

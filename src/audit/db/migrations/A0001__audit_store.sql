@@ -119,47 +119,75 @@ LANGUAGE sql IMMUTABLE AS $fn$ SELECT 10000::BIGINT; $fn$;
 -- =================================================================================
 
 /*
- * Field framing: "Every field prefixed with its 4-byte big-endian byte length, so no
- * separator can be forged by content."
+ * Field framing, v1.3.2 (erratum JCS-01). `30 §5.3`:
+ *
+ *   "Every field is prefixed with a 4-byte big-endian unsigned length/discriminator word,
+ *    so no separator can be forged by content. 0xFFFFFFFF is RESERVED and means NULL, and
+ *    a NULL field is that word alone with no payload. A non-null field is
+ *    uint32_be(payload_length) || payload with 0 <= payload_length <= 0xFFFFFFFE; a
+ *    payload whose length would reach 0xFFFFFFFF is not representable and the
+ *    implementation must fail closed."
  *
  * Assembled with `set_byte` rather than `int4send`. `int4send` is the obvious route and
  * the control plane took it; taking the same route would make the two implementations
- * the same implementation with two names.
+ * the same implementation with two names. THE RESERVED WORD IS ASSEMBLED THE SAME WAY,
+ * byte by byte, rather than written as the literal the control plane writes — for the
+ * same reason.
+ *
+ * NOT STRICT, deliberately. A STRICT function returns NULL without executing, and the
+ * NULL input is precisely the case that must emit the reserved word. The type helpers
+ * below return SQL NULL for a NULL input; NULL is a property of the FRAME here, and no
+ * type helper carries a sentinel.
+ *
+ * The bound is 0xFFFFFFFE and not `int4`'s 2147483647, which is what this function
+ * checked at v1.3.1. On PostgreSQL a `bytea` cannot exceed 1GB so neither bound is
+ * reachable; the specification's bound is the one implemented, because an implementation
+ * that satisfies a normative bound only by accident of its platform has not satisfied it.
  */
 CREATE FUNCTION audit_jcs1_field(value BYTEA) RETURNS BYTEA
-LANGUAGE plpgsql IMMUTABLE STRICT AS $fn$
+LANGUAGE plpgsql IMMUTABLE AS $fn$
 DECLARE
-  n      INTEGER := length(value);
-  prefix BYTEA   := '\x00000000'::BYTEA;
+  n      BIGINT;
+  prefix BYTEA := '\x00000000'::BYTEA;
 BEGIN
-  IF n > 2147483647 THEN
-    RAISE EXCEPTION 'JCS1_FIELD_TOO_LONG' USING ERRCODE = 'ACS41';
+  IF value IS NULL THEN
+    -- The reserved NULL word, assembled: 0xFFFFFFFF, and no payload.
+    prefix := set_byte(prefix, 0, 255);
+    prefix := set_byte(prefix, 1, 255);
+    prefix := set_byte(prefix, 2, 255);
+    prefix := set_byte(prefix, 3, 255);
+    RETURN prefix;
   END IF;
-  prefix := set_byte(prefix, 0, (n >> 24) & 255);
-  prefix := set_byte(prefix, 1, (n >> 16) & 255);
-  prefix := set_byte(prefix, 2, (n >>  8) & 255);
-  prefix := set_byte(prefix, 3,  n        & 255);
+  n := length(value)::BIGINT;
+  IF n > 4294967294 THEN
+    RAISE EXCEPTION 'JCS1_FIELD_TOO_LONG' USING ERRCODE = 'ACS41',
+      DETAIL = '0xFFFFFFFF is reserved for NULL, so a payload of that length or more '
+               'has no representation (30 §5.3, v1.3.2)';
+  END IF;
+  prefix := set_byte(prefix, 0, ((n >> 24) & 255)::INTEGER);
+  prefix := set_byte(prefix, 1, ((n >> 16) & 255)::INTEGER);
+  prefix := set_byte(prefix, 2, ((n >>  8) & 255)::INTEGER);
+  prefix := set_byte(prefix, 3, ( n        & 255)::INTEGER);
   RETURN prefix || value;
 END;
 $fn$;
 
-/* "Single `0x00` sentinel byte for null; an empty string is a zero-length value." */
-CREATE FUNCTION audit_jcs1_null() RETURNS BYTEA
-LANGUAGE sql IMMUTABLE AS $fn$ SELECT set_byte('\x00'::BYTEA, 0, 0); $fn$;
-
 /*
  * Text: "UTF-8, NFC."
  *
- * Owner clarification S1B-C8 is what makes the null sentinel injective over text: ACOS
- * canonical text admits no `U+0000`, so no accepted string can imitate it. PostgreSQL
- * `text` cannot store one, so the exclusion is structural on both servers; it is asserted
- * here rather than assumed so the two implementations agree on the REASON and not merely
- * on the outcome.
+ * Owner clarification S1B-C8: ACOS canonical text admits no `U+0000`. PostgreSQL `text`
+ * cannot store one, so the exclusion is structural on both servers; it is asserted here
+ * rather than assumed so the two implementations agree on the REASON and not merely on
+ * the outcome.
+ *
+ * v1.3.2: this rule NO LONGER carries the injectivity argument. Under JCS-01 the reserved
+ * framing word separates NULL from every payload of every type, so S1B-C8 is an ordinary
+ * Unicode-admissibility rule now. It is retained unchanged and unrelaxed.
  */
 CREATE FUNCTION audit_jcs1_text(value TEXT) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $fn$
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   -- The check runs over the ENCODED bytes, not over `text`: `chr(0)` is itself rejected
   -- by PostgreSQL, which is the structural half of S1B-C8's argument — a `U+0000` cannot
   -- be constructed here, let alone stored. The assertion is kept so the two
@@ -182,7 +210,7 @@ $fn$;
 CREATE FUNCTION audit_jcs1_money(value NUMERIC) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $fn$
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to((value::NUMERIC(18,2))::TEXT, 'UTF8');
 END;
 $fn$;
@@ -190,7 +218,7 @@ $fn$;
 CREATE FUNCTION audit_jcs1_int(value BIGINT) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $fn$
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(format('%s', value), 'UTF8');
 END;
 $fn$;
@@ -198,7 +226,7 @@ $fn$;
 CREATE FUNCTION audit_jcs1_bool(value BOOLEAN) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $fn$
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN convert_to(value::TEXT, 'UTF8');
 END;
 $fn$;
@@ -209,7 +237,7 @@ LANGUAGE plpgsql IMMUTABLE AS $fn$
 DECLARE
   utc TIMESTAMP;
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   utc := value AT TIME ZONE 'UTC';
   RETURN convert_to(
     to_char(utc, 'YYYY-MM-DD') || 'T' ||
@@ -220,30 +248,29 @@ END;
 $fn$;
 
 /*
- * Bytes.
+ * Bytes: the bytes themselves. No exclusion, no escape, no prefix.
  *
- * `30 §5.3` declares the null sentinel generically and declares no separate rule for a
- * `bytea` value. A `bytea` whose content is EXACTLY the single byte `0x00` therefore
- * frames identically to SQL NULL, and the specification does not distinguish them.
+ * WHAT CHANGED, AND WHY IT IS NO LONGER A REFUSAL.
  *
- * NOTHING IS INVENTED HERE. No sentinel, no escape, no prefix. The ambiguous input is
- * REFUSED, on both servers, so an ambiguity cannot be resolved silently in favour of a
- * representation the architecture never declared. See `S1G-owner-clarifications.md`
- * S1G-C1, which records the gap and reports the generic `bytes` leg of `VC-A3` PARTIAL.
+ * At v1.3.1 this function REFUSED a `bytea` whose content was exactly the single byte
+ * `0x00`, raising `JCS1_BYTES_AMBIGUOUS_WITH_NULL_SENTINEL`, because `30 §5.3`'s one-byte
+ * NULL sentinel framed to the identical `00 00 00 01 00` and the specification declared no
+ * rule separating them. S1G recorded that as S1G-C1, reported the generic `bytes` leg of
+ * `VC-A3` PARTIAL, and refused the input rather than inventing an encoding.
  *
- * No declared field of either journal row kind can reach the refusal: the only `bytea`
- * fields are `prev_hash` and `attested_head_hash`, each always NULL or a 32-byte digest.
+ * v1.3.2 erratum JCS-01 is the owner decision that resolved it. NULL is now the reserved
+ * framing word `0xFFFFFFFF` with no payload, so it is outside payload space entirely and
+ * NO byte string of any content or length can imitate it. **EVERY `bytea` value is
+ * admissible, including `'\x00'`**, and the refusal is gone because the ambiguity is.
+ *
+ * `tests/negative-controls/unsafe-old-null-sentinel.ts` retains v1.2's rule as TEST-ONLY
+ * code and demonstrates that it still collides, so the correction is shown to close a real
+ * defect rather than asserted to.
  */
 CREATE FUNCTION audit_jcs1_bytes(value BYTEA) RETURNS BYTEA
 LANGUAGE plpgsql IMMUTABLE AS $fn$
 BEGIN
-  IF value IS NULL THEN RETURN audit_jcs1_null(); END IF;
-  IF value = audit_jcs1_null() THEN
-    RAISE EXCEPTION 'JCS1_BYTES_AMBIGUOUS_WITH_NULL_SENTINEL'
-      USING ERRCODE = 'ACS41',
-            DETAIL  = '30 §5.3 declares no bytes rule that distinguishes a single 0x00 '
-                      'byte from null; the value is refused rather than encoded (S1G-C1)';
-  END IF;
+  IF value IS NULL THEN RETURN NULL; END IF;
   RETURN value;
 END;
 $fn$;

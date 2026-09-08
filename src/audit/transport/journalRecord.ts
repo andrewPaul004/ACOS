@@ -150,6 +150,18 @@ export interface JournalRowFields {
   readonly outboxMatchedRow: number | null;
   readonly outboxMirrorState: string | null;
   readonly outboxRequiresUnmirroredTag: boolean | null;
+  /**
+   * `30 §5.3a` field 18, and `30 §9.2.5`'s evidentiary clock — v1.3.4 (CSB-01, JCS-02).
+   *
+   * The live statutory obligation that made `30 §5.1` row 3 the reason a claim was
+   * permitted, non-NULL only at that row. It travels because the question it answers —
+   * "which live statutory obligation justified this?" — is an AUDIT question, and
+   * control-plane state the control plane can rewrite would not answer it.
+   *
+   * `case_ref` ITSELF DOES NOT TRAVEL. `30 §5.3a`: the clock reference "is the fact an
+   * audit needs, and it is the narrower disclosure."
+   */
+  readonly outboxClaimClockRef: string | null;
 
   /** `30 §5.4`'s `attested_at` on an attestation row; the effect's instant otherwise. */
   readonly occurredAt: Date;

@@ -105,7 +105,12 @@ async function controlBytes(row: Record<string, unknown>): Promise<Buffer> {
                   -- journal_row_shape_per_kind REQUIRES all six absent on this row kind.
                   -- Nothing about the EFFECT_AUTHORISATION field order changes, which is
                   -- what the assertions below continue to prove.
-                  NULL, NULL, NULL, NULL, NULL, NULL
+                  NULL, NULL, NULL, NULL, NULL, NULL,
+                  -- v1.3.4's one column (0011): outbox_claim_clock_ref, 30 5.3a field
+                  -- 18. Absent on this row kind, and listed for the same reason -- this
+                  -- cast is exactly the mechanism that catches a shifted field, and it
+                  -- caught this one. (No backticks: this is inside a template literal.)
+                  NULL
                 )::effect_journal
               ) AS bytes`,
       compositeParams(row),
@@ -131,7 +136,9 @@ async function auditBytes(row: Record<string, unknown>): Promise<Buffer> {
                   -- S1H's eleven columns (A0002), for the same reason as above.
                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                   -- S1I's six columns (A0005), for the same reason again.
-                  NULL, NULL, NULL, NULL, NULL, NULL
+                  NULL, NULL, NULL, NULL, NULL, NULL,
+                  -- v1.3.4's one column (A0006): outbox_claim_clock_ref.
+                  NULL
                 )::audit_journal
               ) AS bytes`,
       compositeParams(row),

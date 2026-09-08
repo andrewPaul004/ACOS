@@ -79,15 +79,29 @@ export const OUTBOX_STATUSES = ['ENQUEUED', 'CLAIMED'] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 
 /**
- * `30 §5.1` item 4's five precedence rows, narrowed to the three that can produce a claim.
+ * `30 §5.1` item 4's five precedence rows, narrowed to the four that can produce a claim.
  *
- * `22 §3.1` prints rows 1 and 2 as **Halt** in all three mirror states — `NORMAL`,
- * `UNCORROBORATED_STALL` and `CORROBORATED_DEGRADED` — and `30 §5.1` item 5 makes them
- * unreachable by override: "An override restores precedence rows 3 and 4 only, never rows
- * 1 or 2." So a claim decided at row 1 or row 2 is not a state this system can produce,
+ * =================================================================================
+ * ROW 2 IS THE ONLY ROW THAT CANNOT, AND v1.3.4 (IRN-01) IS WHY ROW 1 NOW CAN.
+ *
+ * `22 §3.1` prints row 2 as **Halt** in all three mirror states, and `30 §5.1` item 5
+ * makes it unreachable by override: "An override restores precedence rows 3 and 4 only,
+ * never rows 1 or 2." So a claim decided at row 2 is not a state this system can produce,
  * and the type says so as well as the database CHECK does.
+ *
+ * ROW 1 WAS IN THAT SET UNTIL v1.3.4. `30 §5.1b` corrects row 1's `NORMAL` cell only: an
+ * otherwise-valid IRRECOVERABLE effect is `DISPATCH_ELIGIBLE` in `NORMAL` and still halts
+ * in `UNCORROBORATED_STALL`, in `CORROBORATED_DEGRADED`, under the `§5.1a` posture and
+ * against any override. So a claim CAN be decided at row 1 — in `NORMAL`, and nowhere
+ * else — and a type that excluded it would make the class ADR-026 is titled for
+ * unclaimable, which is the defect IRN-01 records.
+ *
+ * `claim_mirror_state` is on the same row, so a row-1 claim recorded in a degraded state
+ * is detectable after the fact and `outbox-irrecoverable-claim.test.ts` asserts none
+ * exists.
+ * =================================================================================
  */
-export type ClaimingRow = 3 | 4 | 5;
+export type ClaimingRow = 1 | 3 | 4 | 5;
 
 /**
  * A committed outbox row, as the claim service and the introspection readers see it.
@@ -138,6 +152,16 @@ export interface OutboxRow {
   readonly claimRequiresUnmirroredTag: boolean | null;
   /** `30 §5.7.2` item 5's `override_id` — the specific authority, not a boolean. */
   readonly claimOverrideId: string | null;
+  /**
+   * `30 §9.2.5`'s evidentiary clock — v1.3.4 (CSB-01), `I65`.
+   *
+   * The live statutory obligation that made row 3 the reason this claim was permitted,
+   * and NULL at every other matched row. `0011`'s
+   * `dispatch_outbox_clock_evidence_is_row_3` CHECK is the biconditional, and its
+   * companion trigger refuses a clock of another company, of another case, or one that
+   * was not live at `claimed_at`.
+   */
+  readonly claimClockRef: string | null;
 }
 
 /** The database row shape, for the readers in this directory. Not exported further. */
@@ -163,13 +187,15 @@ export interface OutboxDbRow {
   readonly claim_mirror_state: string | null;
   readonly claim_requires_unmirrored_tag: boolean | null;
   readonly claim_override_id: string | null;
+  readonly claim_clock_ref: string | null;
 }
 
 export const OUTBOX_COLUMNS = `company_id, idempotency_key, outbox_id, effect_id,
        authorisation_id, action_class, recoverability, adapter, resource_ref,
        dispatch_payload_hash, payload_canonical_bytes, correlation_tag, status,
        enqueued_at, claim_id, claimed_at, claimed_by, claim_matched_row,
-       claim_mirror_state, claim_requires_unmirrored_tag, claim_override_id`;
+       claim_mirror_state, claim_requires_unmirrored_tag, claim_override_id,
+       claim_clock_ref`;
 
 export function toOutboxRow(row: OutboxDbRow): OutboxRow {
   return {
@@ -194,6 +220,7 @@ export function toOutboxRow(row: OutboxDbRow): OutboxRow {
     claimMirrorState: row.claim_mirror_state,
     claimRequiresUnmirroredTag: row.claim_requires_unmirrored_tag,
     claimOverrideId: row.claim_override_id,
+    claimClockRef: row.claim_clock_ref,
   };
 }
 
@@ -213,6 +240,20 @@ export const ENQUEUE_REFUSALS = [
    * must not acquire an outbox row a later claim could take.
    */
   'EFFECT_NOT_AUTHORISED',
+  /**
+   * `I66` / `25 §7`'s outbox scope — v1.3.4 (OBX-02), resolving `S1I-C5`.
+   *
+   * "Every effect that will cross an external-write boundary takes exactly one outbox row,
+   *  and an internal-only effect takes none. The scope predicate is `effect requires
+   *  external dispatch`, derived from the closed action catalogue's execution metadata."
+   *
+   * The outbox is a DISPATCH-boundary mechanism (`25 §7`'s fourth idempotency layer, and
+   * `31 §2` / `33 §1` / ADR-002's "duplicate prevention at the dispatch boundary"). An
+   * internal-only effect crosses no such boundary, so a row for it would be a claim
+   * against a dispatch that cannot happen — and `I36`'s "a CLAIMED row is never
+   * re-dispatched" would then be a constraint on nothing.
+   */
+  'EFFECT_IS_INTERNAL_ONLY',
   /**
    * The supplied bytes do not hash to the committed authorised `dispatch_payload_hash`.
    *

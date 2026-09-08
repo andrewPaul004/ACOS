@@ -56,7 +56,7 @@ import type { MirrorState } from './mirrorState.js';
  * `22 §3.1`'s state-qualified table, which is the same rule with the state column printed:
  *
  *   | row | class                                | NORMAL   | UNCORROBORATED | CORROBORATED
- *   | 1   | IRRECOVERABLE                        | Halt     | Halt           | Halt
+ *   | 1   | IRRECOVERABLE                        | Dispatch | Halt           | Halt   (v1.3.4)
  *   | 2   | above floor, not clock-bearing       | Halt     | Halt           | Halt
  *   | 3   | COMPENSABLE inside a live clock      | Dispatch | **Suspend**    | Dispatch, tagged
  *   | 4   | COMPENSABLE discretionary            | Suspend  | Suspend        | Suspend
@@ -413,9 +413,53 @@ function classifyWithinState(o: PrecedenceOperands): WithinStateDecision {
 
     switch (row) {
       case 1:
-        // "Halt. [...] Unmirrored and unundoable is the combination the mirror exists for."
-        // In all three states — `22 §3.1` prints Halt/Halt/Halt — and unreachable by
-        // override, so the override is not even consulted.
+        // =====================================================================
+        // STATE-QUALIFIED — v1.3.4 (IRN-01), `30 §5.1b`, resolving `S1I-C6`.
+        //
+        // `30 §5.1` item 4 row 1, as v1.3.4 issues it: "In `NORMAL`, **dispatch** —
+        // subject to every ordinary authority requirement, which is where an
+        // irrecoverable effect is actually gated. In `UNCORROBORATED_STALL` and in
+        // `CORROBORATED_DEGRADED`, **halt** [...] `NORMAL` is the state in which the
+        // effect is *not* unmirrored."
+        //
+        // WHAT DID NOT CHANGE, and each is asserted rather than assumed:
+        //   - the CONDITION: `recoverability == IRRECOVERABLE`, unchanged.
+        //   - the POSITION: first, ahead of row 2, in every state. So an IRRECOVERABLE
+        //     effect still never reaches row 2 — it did not at v1.3.3 either, because
+        //     row 1 matched first — and no other row's reachability moves.
+        //   - the HALT in both degraded states.
+        //   - `ownerOverrideAvailable: false` in EVERY state. `30 §5.1` item 5's "never
+        //     rows 1 or 2" is unchanged and `51 §3.6`'s structural CHECK is unchanged,
+        //     so the override is still not consulted here at all.
+        //   - the FULL-HALT POSTURE. `classifyDispatchPrecedence` applies `§5.1a` OVER
+        //     this result and reduces it to HALT, and `§5.1a` restores rows 3 and 4
+        //     only — so a posture halt at row 1 is not restorable either.
+        //
+        // AND `DISPATCH_ELIGIBLE` HERE IS A STATEMENT ABOUT ITEM 4 AND NOTHING ELSE.
+        // `30 §5.1b`: item 4 "is evaluated only over an effect that has already
+        // satisfied every ordinary authority requirement, and it grants no relief from
+        // any of them" — `26 §7`'s ordered sequence, `26 §8`'s Cedar DENY boundaries
+        // including `per_action_max`, `26 §12`'s approval tier, the MIE window ceilings,
+        // `25 §7`'s idempotency layers and the claim-time re-evaluation. An IRRECOVERABLE
+        // effect is gated by the authority model, not by this table.
+        // =====================================================================
+        if (o.mirrorState === 'NORMAL') {
+          return {
+            disposition: 'DISPATCH_ELIGIBLE',
+            matchedRow: 1,
+            // Not tagged: `36 §6` adds `DISPATCHED_UNMIRRORED` for
+            // `CORROBORATED_DEGRADED` and for every override dispatch, and this branch
+            // is neither. In `NORMAL` the row IS mirrored, which is the whole reason it
+            // dispatches.
+            requiresUnmirroredTag: false,
+            overrideId: null,
+            ownerOverrideAvailable: false,
+            explanation:
+              'row 1 in NORMAL: an IRRECOVERABLE effect dispatches, subject to every ' +
+              'ordinary authority requirement; the mirror table halts it only while the ' +
+              'record cannot be made (30 §5.1 item 4 row 1, §5.1b; 22 §3.1)',
+          };
+        }
         return {
           disposition: 'HALT',
           matchedRow: 1,
@@ -423,8 +467,10 @@ function classifyWithinState(o: PrecedenceOperands): WithinStateDecision {
           overrideId: null,
           ownerOverrideAvailable: false,
           explanation:
-            'row 1: recoverability == IRRECOVERABLE halts in every mirror state and is ' +
-            'unreachable by override (30 §5.1 item 4 row 1, item 5; 22 §3.1)',
+            `row 1 in ${o.mirrorState}: recoverability == IRRECOVERABLE halts in both ` +
+            'degraded states and is unreachable by override — unmirrored and unundoable ' +
+            'is the combination the mirror exists for (30 §5.1 item 4 row 1, item 5, ' +
+            '§5.1b; 22 §3.1)',
         };
 
       case 2:

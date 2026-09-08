@@ -30,12 +30,14 @@ import type { AuditIngestOutcome, JournalTransportRecord } from './transport/jou
  */
 
 /**
- * The 44 bound parameters of `audit_ingest_journal_row`, in the declared order.
+ * The 45 bound parameters of `audit_ingest_journal_row`, in the declared order.
  *
  * S1G bound 27. S1H's `A0002` appends eleven, each `DEFAULT NULL`, for `30 §5.7`'s
  * declaration row, `§5.7.1`'s consumed-signal record and `§5.7.2` item 7's override events.
  * S1I's `A0005` appends six more, also `DEFAULT NULL`, for `25 §7`'s outbox claim.
- * The defaults are what keep the ACCEPTED 27- and 38-argument SQL call sites in
+ * v1.3.4's `A0006` appends ONE more, also `DEFAULT NULL`: `30 §5.3a` field 18, the
+ * claim's evidentiary statutory clock (CSB-01, JCS-02).
+ * The defaults are what keep the ACCEPTED 27-, 38- and 44-argument SQL call sites in
  * `post-commit-and-crash-matrix.test.ts` and `vc-a3-cross-implementation.test.ts` resolving
  * to the same function unchanged.
  */
@@ -44,7 +46,7 @@ const INGEST_SQL = `SELECT audit_ingest_journal_row(
   $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
   $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
   $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-  $41, $42, $43, $44
+  $41, $42, $43, $44, $45
 ) AS outcome`;
 
 function bind(record: JournalTransportRecord): unknown[] {
@@ -96,6 +98,7 @@ function bind(record: JournalTransportRecord): unknown[] {
     f.outboxMatchedRow,
     f.outboxMirrorState,
     f.outboxRequiresUnmirroredTag,
+    f.outboxClaimClockRef,
   ];
 }
 

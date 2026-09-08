@@ -149,6 +149,10 @@ describe('`§40` — NO NETWORK, SCOPED TO THE EXTERNAL-EFFECT PATH', () => {
       '../mirror/degradedModeOverride.js',
       '../mirror/dispatchPrecedence.js',
       '../mirror/mirrorStateMachine.js',
+      // v1.3.4 (CSB-01). `30 §5.1` row 3's operand comes from the ACCEPTED S1H clock
+      // module, imported rather than reimplemented — the same rule `§13` states for the
+      // precedence classifier, applied to its operands.
+      '../clocks/statutoryClock.js',
       '../canonicalisation/actionCatalogue.js',
       './correlationTag.js',
       './outboxState.js',
@@ -169,6 +173,11 @@ describe('`§40` — NO NETWORK, SCOPED TO THE EXTERNAL-EFFECT PATH', () => {
     expect(seen).toContain('../mirror/dispatchPrecedence.js');
     expect(seen).toContain('../mirror/mirrorStateMachine.js');
     expect(seen).toContain('../mirror/degradedModeOverride.js');
+    // And so is the ACCEPTED clock module, for the same reason: `30 §9.2.4`'s derivation
+    // reads a LIVE `I56`-provenanced clock, and `isClockBearingOn` is the accepted
+    // implementation of that predicate. A second one in this directory would be a second
+    // reading of row 3's operand.
+    expect(seen).toContain('../clocks/statutoryClock.js');
   });
 
   it('there is no scheduler, no poller and no background worker — `§6`', async () => {
@@ -484,6 +493,9 @@ describe('`§47` — THE LIMITS OF THE CLAIM, STATED AS ASSERTIONS', () => {
     // The FULL key set of what a claim hands back. `§21`'s S1H rule applied to S1I: no
     // adapter, no endpoint, no payload destination, no provider anything.
     expect(Object.keys(claim.claim).sort()).toEqual([
+      // v1.3.4 (CSB-01). `30 §9.2.5`'s evidentiary clock — an ACOS-side statutory
+      // reference, not a provider anything. NULL unless row 3 is the reason.
+      'claimClockRef',
       'decision',
       'journalSeq',
       'matchedRow',

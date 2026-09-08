@@ -21,7 +21,7 @@
  * state-qualified"):
  *
  *   | Precedence row | Class                       | `NORMAL`   | `UNCORROBORATED_STALL` | `CORROBORATED_DEGRADED`
- *   | 1 | IRRECOVERABLE                            | **Halt**   | **Halt**   | **Halt**
+ *   | 1 | IRRECOVERABLE                            | **Dispatch** (v1.3.4, IRN-01) | **Halt** | **Halt**
  *   | 2 | Above the per-action approval floor, not clock-bearing | **Halt** | **Halt** | **Halt**
  *   | 3 | COMPENSABLE inside a live statutory clock | Dispatch — the clock outranks the mirror | **Suspend** — the inversion | Dispatch, tagged `DISPATCHED_UNMIRRORED`
  *   | 4 | COMPENSABLE discretionary                | Suspend    | Suspend    | Suspend
@@ -166,8 +166,29 @@ export const ORACLE_STATES: readonly OracleState[] = [
  * `PRECEDENCE_ROW_ORDER` and this file does not import it.
  */
 export function expectedFor(state: OracleState, c: OracleCase): OracleExpectation {
-  // Row 1 — "recoverability == IRRECOVERABLE | Halt." Halt/Halt/Halt across the states.
+  // ---------------------------------------------------------------------------------
+  // Row 1 — STATE-QUALIFIED at v1.3.4 (IRN-01). `22 §3.1` as this issue prints it:
+  //
+  //     | 1 | IRRECOVERABLE | **Dispatch** — subject to every ordinary authority
+  //         requirement (v1.3.4, IRN-01, `30 §5.1b`) | **Halt** | **Halt** |
+  //
+  // `30 §5.1` item 4 row 1, as this issue prints it: "In `NORMAL`, **dispatch** [...] In
+  // `UNCORROBORATED_STALL` and in `CORROBORATED_DEGRADED`, **halt** [...] `NORMAL` is the
+  // state in which the effect is *not* unmirrored."
+  //
+  // WRITTEN FROM THE ARTIFACT, NOT FROM `classifyDispatchPrecedence`. This file still
+  // imports nothing, so a production correction that spared a degraded state — or one
+  // that never landed in `NORMAL` — fails here.
+  //
+  // The CONDITION and the POSITION are unchanged: IRRECOVERABLE matches row 1 first, in
+  // every state, so it still never reaches row 2 and no other row's reachability moves.
+  // ---------------------------------------------------------------------------------
   if (c.recoverability === 'IRRECOVERABLE') {
+    if (state === 'NORMAL') {
+      // Not tagged: `36 §6` adds `DISPATCHED_UNMIRRORED` in `CORROBORATED_DEGRADED` and
+      // under an override, and this is neither. In `NORMAL` the row IS mirrored.
+      return { row: 1, disposition: 'DISPATCH_ELIGIBLE', requiresUnmirroredTag: false };
+    }
     return { row: 1, disposition: 'HALT', requiresUnmirroredTag: false };
   }
 
@@ -233,6 +254,11 @@ export function expectedUnderFullHalt(
   c: OracleCase,
   overrideInScope = false,
 ): OracleExpectation {
+  // v1.3.4 (IRN-01) INTERACTION, STATED. Row 1 is now DISPATCH_ELIGIBLE in `NORMAL`, and
+  // the posture reduces it to HALT like every other row — `restorable` below is
+  // `row === 3 || row === 4`, so row 1 is not restorable by an override in the posture
+  // either. `30 §5.1b`: "In the FULL-HALT POSTURE: **Halt**, as for every other row, and
+  // **not** restorable — the posture restores rows 3 and 4 only."
   const ordinary = expectedFor(state, c);
   const restorable = ordinary.row === 3 || ordinary.row === 4;
   if (overrideInScope && restorable) {

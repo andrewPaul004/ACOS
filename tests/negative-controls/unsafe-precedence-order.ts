@@ -66,11 +66,23 @@ const ROW_4: Row = {
 };
 const ROW_5: Row = { row: 5, matches: (o) => o.recoverability === 'REVERSIBLE' };
 
-/** The behaviour of one row, in the declared state. Identical to production's. */
+/**
+ * The behaviour of one row, in the declared state. Identical to production's.
+ *
+ * THAT IDENTITY IS THE POINT OF THIS CONTROL. The only variable is the ORDER of the rows,
+ * so every other dimension — including each row's state-qualified behaviour — has to
+ * track the architecture exactly. A control that differed in two ways would show a
+ * difference without saying which change produced it.
+ *
+ * Row 1 is transcribed from `22 §3.1` and `30 §5.1b` as v1.3.4 issues them: **Dispatch in
+ * `NORMAL`, Halt in both degraded states.** It is written out here by hand, from the
+ * table, and not imported — this file imports no production classifier, only its types.
+ */
 function behaviourOf(row: 1 | 2 | 3 | 4 | 5, o: PrecedenceOperands): Disposition {
   switch (row) {
     case 1:
-      return 'HALT';
+      // v1.3.4 (IRN-01). `NORMAL` is the state in which the effect is not unmirrored.
+      return o.mirrorState === 'NORMAL' ? 'DISPATCH_ELIGIBLE' : 'HALT';
     case 2:
       return 'HALT';
     case 3:

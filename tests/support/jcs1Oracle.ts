@@ -457,13 +457,23 @@ export interface OutboxClaimedRow {
   readonly mirrorState: string;
   readonly requiresUnmirroredTag: boolean;
   readonly overrideId: string | null;
+  /** Field 18, new at v1.3.4 (`30 §5.3a`, CSB-01, JCS-02). */
+  readonly claimClockRef: string | null;
   readonly occurredAt: Date;
   readonly prevHash: Buffer | null;
 }
 
 /**
- * S1I's `acos.journal.outbox_claimed.v1`, transcribed by hand from
- * `docs/implementation/S1I-contract.md §5`.
+ * `acos.journal.outbox_claimed.v1`, transcribed by hand from `30 §5.3a`.
+ *
+ * v1.3.4 (JCS-02) MOVED THE SOURCE OF THIS TRANSCRIPTION. S1I wrote it from
+ * `docs/implementation/S1I-contract.md §5`, because `S1I-C4` found that v1.3.3 declared
+ * an order for no row kind at all while `30 §5.3` required one "declared per row kind, in
+ * the specification". `30 §5.3a` is now that specification, and this file transcribes it.
+ *
+ * FIELD 18 IS NEW: `outbox_claim_clock_ref`, between `override_id` (17) and `occurred_at`
+ * (19). `30 §9.2.5`'s evidentiary clock, non-NULL only where the matched row is 3, framed
+ * as a NULL by the reserved `FF FF FF FF` word otherwise (v1.3.2, JCS-01).
  *
  * THE FOURTH READING. The control plane declares this order in
  * `src/db/migrations/0010__dispatch_outbox.sql` and the audit plane declares it
@@ -471,10 +481,13 @@ export interface OutboxClaimedRow {
  * `outbox-journal-rows.test.ts` compares BOTH against this function, never against each
  * other — `36 §0`, and the same discipline `VC-A3` established for the accepted kinds.
  *
- * `override_id` is the LAST field before the timestamp and the chain, and it is NULLABLE:
- * `30 §5.7.2` item 5 requires an override-backed dispatch to "carry `override_id`", and a
- * claim needing no override carries NULL — which `ACOS-JCS-1` frames in the length word
- * rather than as a payload byte (v1.3.2, JCS-01).
+ * `override_id` (17) and `claim_clock_ref` (18) are BOTH NULLABLE and both sit between
+ * the booleans and the timestamp. `30 §5.7.2` item 5 requires an override-backed dispatch
+ * to "carry `override_id`", and a claim needing no override carries NULL; `30 §9.2.5`
+ * requires the evidentiary clock only where row 3 is the reason, and every other row
+ * carries NULL. `ACOS-JCS-1` frames each NULL in the length word rather than as a payload
+ * byte (v1.3.2, JCS-01), so the two adjacent NULLs are eight bytes of reserved word and
+ * no payload — which is exactly the case a sentinel-byte encoding would have collapsed.
  */
 export function outboxClaimedFields(row: OutboxClaimedRow): readonly OracleField[] {
   return [
@@ -495,6 +508,7 @@ export function outboxClaimedFields(row: OutboxClaimedRow): readonly OracleField
     { kind: 'text', value: row.mirrorState },
     { kind: 'bool', value: row.requiresUnmirroredTag },
     { kind: 'text', value: row.overrideId },
+    { kind: 'text', value: row.claimClockRef },
     { kind: 'ts', value: row.occurredAt },
     { kind: 'bytes', value: row.prevHash },
   ];

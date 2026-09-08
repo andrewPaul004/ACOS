@@ -124,6 +124,8 @@ interface BacklogRow {
   readonly outbox_matched_row: number | null;
   readonly outbox_mirror_state: string | null;
   readonly outbox_requires_unmirrored_tag: boolean | null;
+  // Field 18 of `30 §5.3a`, new at v1.3.4 (JCS-02 / CSB-01).
+  readonly outbox_claim_clock_ref: string | null;
   readonly occurred_at: Date;
   readonly prev_hash: Buffer | null;
   readonly row_hash: Buffer;
@@ -186,6 +188,7 @@ function toRecord(row: BacklogRow): JournalTransportRecord {
       outboxMatchedRow: row.outbox_matched_row,
       outboxMirrorState: row.outbox_mirror_state,
       outboxRequiresUnmirroredTag: row.outbox_requires_unmirrored_tag,
+      outboxClaimClockRef: row.outbox_claim_clock_ref,
       dispatchPayloadHash: row.dispatch_payload_hash,
       constructorSemanticMajor: row.constructor_semantic_major,
       constructorNonSemanticMinor: row.constructor_non_semantic_minor,

@@ -203,6 +203,64 @@ describe('ORDINARY class — an abort at every point inside the transaction', ()
       expect(await countOf(client, 'approval')).toBe(0);
     });
   });
+
+  it('`I64` — the CASE BINDING commits with the effect, in the same transaction', async () => {
+    /*
+     * -----------------------------------------------------------------------------
+     * `§21` OF THE S1I OWNER-RESOLUTION MANDATE:
+     *
+     *   "If `effect.case_ref` is persisted in the S1F transaction, rerun every S1F
+     *    kill-point matrix. Required property: no committed effect can exist with a
+     *    missing required case binding; a mutable case binding; a binding written in a
+     *    separate crash window. For a case-associated effect, effect + `case_ref` commit
+     *    together. **Do not weaken the accepted one-transaction property.**"
+     *
+     * THE MATRIX ABOVE ALREADY PROVES THE HARD HALF, and this case says why. `0011`
+     * derives the binding in a `BEFORE INSERT` trigger on `effect`, so the value is
+     * computed and written **as part of the INSERT itself**. There is no second statement,
+     * no second transaction and no window between the two — which is why every abort in
+     * the matrix above leaves NOTHING persisted rather than leaving an effect with an
+     * unwritten binding.
+     *
+     * `assertNothingPersisted` sweeps `effect` among its tables, so a committed effect
+     * missing its case would have to be a committed effect, which the matrix forbids at
+     * every point. What remains to assert is the POSITIVE: that the unkilled run writes
+     * both together and that the binding is the authoritative one.
+     *
+     * NO NEW KILL POINT IS ADDED, and that is a claim rather than an omission: a kill
+     * point between the effect row and its binding is not expressible, because there is no
+     * instant between them to kill at.
+     * -----------------------------------------------------------------------------
+     */
+    await withClient(async (client) => {
+      await client.query(`UPDATE authority_task SET case_ref = $1`, ['case:CS-ATOMICITY']);
+    });
+
+    const outcome = await proposeAndAuthorise(kernel, S1E_PASS_ORDER);
+    expect(outcome.outcome).toBe('LOCAL_AUTHORISATION_COMMITTED');
+
+    await withClient(async (client) => {
+      const rows = await client.query<{ effect_id: string; case_ref: string | null }>(
+        `SELECT effect_id, case_ref FROM effect`,
+      );
+      expect(rows.rows).toHaveLength(1);
+      // Committed together: one effect row, carrying the authoritative binding.
+      expect(rows.rows[0]!.case_ref).toBe('case:CS-ATOMICITY');
+
+      // AND NO EFFECT ANYWHERE IS MISSING A BINDING ITS TASK DECLARES. Stated as a
+      // relational assertion rather than a row read, so it would catch a second effect
+      // written by any path.
+      const divergent = await client.query<{ count: string }>(
+        `SELECT count(*)::TEXT AS count
+           FROM effect e
+           JOIN authorisation a ON a.authorisation_id = e.authorisation_id
+           JOIN authority_task t
+             ON t.company_id = a.company_id AND t.task_id = a.task_id
+          WHERE e.case_ref IS DISTINCT FROM t.case_ref`,
+      );
+      expect(divergent.rows[0]!.count).toBe('0');
+    });
+  });
 });
 
 describe('RATE class — an abort at every point, including the standing rows', () => {

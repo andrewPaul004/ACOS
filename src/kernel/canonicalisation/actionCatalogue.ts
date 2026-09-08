@@ -194,3 +194,58 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     method: 'campaignBudgetSet',
   }),
 });
+
+
+/**
+ * `I66` / `25 §7`'s OUTBOX SCOPE PREDICATE — v1.3.4 (OBX-02), resolving `S1I-C5`.
+ *
+ * =================================================================================
+ * THE DECLARATION, VERBATIM
+ *
+ * `25 §7`: "**The ACOS dispatch outbox applies to every effect that will cross an
+ * external-write boundary** (`48`), whatever its recoverability class. [...] **The scope
+ * predicate is `effect requires external dispatch`.** It is **not**
+ * `effect.recoverability == IRRECOVERABLE`, and it is **not** every catalogue action
+ * unconditionally [...] **The predicate is derived from the closed action catalogue's
+ * execution metadata**, so it is a property of the catalogue that a model cannot choose
+ * and a caller cannot pass."
+ *
+ * `I66`: "Every effect that will cross an external-write boundary takes exactly one
+ * outbox row, and an internal-only effect takes none."
+ * =================================================================================
+ *
+ * =================================================================================
+ * WHY IT IS DERIVED FROM THE ADAPTER AND NOT DECLARED AS A FLAG
+ *
+ * A boolean field on the catalogue entry would be a second place the fact lives, and
+ * `48 §2`'s perimeter enumeration already decides it: a class executes by calling an
+ * ADAPTER, and an adapter is by construction a component in the integration plane whose
+ * rows in `48 §2` are the external writes. So the predicate reads the execution metadata
+ * that already has to be right for the class to execute at all — `26 §5`'s catalogue
+ * assignment of `adapter` and `method` — rather than a flag someone must remember to set
+ * correctly beside it.
+ *
+ * **`INTERNAL_ONLY_ADAPTER` IS THE EXPLICIT REPRESENTATION OF AN INTERNAL-ONLY CLASS.**
+ * `37` S1's closed catalogue has no such class today — all four run against a mock
+ * adapter standing in for a real external one — so at S1 the predicate is TRUE for every
+ * catalogue member and the existing enqueue behaviour already conforms. It is declared
+ * anyway, and tested through `requiresExternalDispatchFor`, because `I66` has two halves
+ * and a predicate whose false branch is unrepresentable proves only one of them.
+ * `outbox-scope.test.ts` exercises both.
+ * =================================================================================
+ *
+ * THERE IS NO OVERRIDE AND NO PARAMETER. This function takes an `ActionClass` and reads
+ * the frozen catalogue. It has no options argument, no allow list and no escape, so
+ * `I66`'s "never a caller's or a model's choice" is a property of the signature rather
+ * than of a check inside it.
+ */
+export const INTERNAL_ONLY_ADAPTER = 'internal_only';
+
+export function requiresExternalDispatch(entry: ActionCatalogueEntry): boolean {
+  return entry.adapter !== INTERNAL_ONLY_ADAPTER;
+}
+
+/** The same predicate, resolved from the closed catalogue by class. */
+export function requiresExternalDispatchFor(actionClass: ActionClass): boolean {
+  return requiresExternalDispatch(ACTION_CATALOGUE[actionClass]);
+}

@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 
 import { inTransaction, type Client, type Pool } from '../../db/pool.js';
 import { hasSqlstate } from '../exposure/errors.js';
+import {
+  requiresExternalDispatchFor,
+  type ActionClass,
+} from '../canonicalisation/actionCatalogue.js';
 import { mintCorrelationTag } from './correlationTag.js';
 import {
   OUTBOX_COLUMNS,
@@ -127,6 +131,7 @@ interface EnqueueSourceRow {
   readonly company_id: string;
   readonly status: string;
   readonly dispatch_payload_hash: string;
+  readonly action_class: ActionClass;
 }
 
 /**
@@ -164,7 +169,7 @@ export async function enqueueDispatchOn(
   }
 
   const source = await client.query<EnqueueSourceRow>(
-    `SELECT e.company_id, e.status, a.dispatch_payload_hash
+    `SELECT e.company_id, e.status, e.action_class, a.dispatch_payload_hash
        FROM effect e
        JOIN authorisation a ON a.authorisation_id = e.authorisation_id
       WHERE e.effect_id = $1 AND e.company_id = $2`,
@@ -178,6 +183,37 @@ export async function enqueueDispatchOn(
       detail: `no committed effect ${input.effectId} for company ${input.companyId}`,
     };
   }
+  // ---------------------------------------------------------------------------------
+  // `I66` — THE OUTBOX SCOPE, v1.3.4 (OBX-02), resolving `S1I-C5`.
+  //
+  // `25 §7`: "The scope predicate is `effect requires external dispatch`. It is **not**
+  // `effect.recoverability == IRRECOVERABLE`, and it is **not** every catalogue action
+  // unconditionally [...] The predicate is derived from the closed action catalogue's
+  // execution metadata, so it is a property of the catalogue that a model cannot choose
+  // and a caller cannot pass."
+  //
+  // READ FROM THE COMMITTED `effect` ROW's `action_class`, WHICH IS CATALOGUE-BOUND. The
+  // action class on the effect came through `26 §7`'s pipeline from the closed catalogue,
+  // and `requiresExternalDispatchFor` reads the frozen catalogue entry. There is no
+  // parameter on `enqueueDispatchOn` that touches this and no options object to add one
+  // to, so `I66`'s "never a caller's or a model's choice" is a property of the signature.
+  //
+  // AT S1 EVERY CATALOGUE CLASS IS EXTERNAL-WRITE — all four run against an adapter — so
+  // this branch is not currently reachable through the catalogue, and that is stated
+  // rather than hidden: `outbox-scope.test.ts` exercises the predicate itself over an
+  // internal-only entry as well as asserting all three recoverability classes enqueue.
+  // `§17` of the S1I owner-resolution mandate asks for exactly that split.
+  if (!requiresExternalDispatchFor(found.action_class)) {
+    return {
+      kind: 'REFUSED',
+      reason: 'EFFECT_IS_INTERNAL_ONLY',
+      detail:
+        `effect ${input.effectId} is action class ${found.action_class}, which crosses no ` +
+        'external-write boundary; the outbox applies to external-write effects and only ' +
+        'those (25 §7, I66)',
+    };
+  }
+
   if (found.status !== 'AUTHORISED') {
     return {
       kind: 'REFUSED',

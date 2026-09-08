@@ -184,10 +184,25 @@ describe('`§37` ITEM 5 / `§12` — CALLER-SUPPLIED RECOVERABILITY', () => {
     expect((await outboxRows(h.control))[0]!.recoverability).toBe('IRRECOVERABLE');
 
     /*
-     * AND THE CONSEQUENCE, WHICH IS WHY THE PROPERTY MATTERS. `30 §5.1` row 1 halts every
-     * IRRECOVERABLE effect in every mirror state (`22 §3.1`: Halt/Halt/Halt). A relabelled
-     * row would reach row 5 and be claimed. The production row is refused at row 1.
+     * AND THE CONSEQUENCE, WHICH IS WHY THE PROPERTY MATTERS — RE-BASED AT v1.3.4.
+     *
+     * Until v1.3.4 the consequence was visible in `NORMAL`, because `22 §3.1` printed row
+     * 1 as Halt in every state: a relabelled row reached row 5 and was claimed, and the
+     * true row was refused at row 1. `30 §5.1b` corrects row 1's `NORMAL` cell, so in
+     * `NORMAL` both the true class and the relabelled one are now claimable and the
+     * relabelling is not observable THERE.
+     *
+     * IT IS OBSERVABLE IN A DEGRADED STATE, WHICH IS WHERE THE CLASS ACTUALLY MATTERS.
+     * `30 §5.1b` leaves row 1 halting in `UNCORROBORATED_STALL` and in
+     * `CORROBORATED_DEGRADED`, and row 5 dispatching in both (`22 §3.1`). So a relabelled
+     * REVERSIBLE row would be CLAIMED while the mirror cannot record it, and the true
+     * IRRECOVERABLE row is refused at row 1 — unmirrored and unundoable, which is the
+     * combination the mirror exists for.
+     *
+     * The discrimination is therefore SHARPER after the correction rather than weaker: it
+     * now names the exact state in which mislabelling recoverability would cause harm.
      */
+    await declareMirrorDegraded(h.control, COMPANY_ID, 'PUSH_ACK_TIMEOUT', NOW);
     const claim = await claimForExternalDispatch(h.control, {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
@@ -198,8 +213,15 @@ describe('`§37` ITEM 5 / `§12` — CALLER-SUPPLIED RECOVERABILITY', () => {
     if (claim.kind === 'REFUSED') {
       expect(claim.reason).toBe('PRE_DISPATCH_HALTED');
       expect(claim.decision?.matchedRow).toBe(1);
+      // The classifier names the state in its own explanation, which is where a
+      // row-1 halt records WHICH state produced it (`30 §5.1b`).
+      expect(claim.decision?.explanation).toContain('UNCORROBORATED_STALL');
     }
     expect((await outboxRows(h.control))[0]!.status).toBe('ENQUEUED');
+    // And the relabelled class WOULD have been claimable in the same state — row 5
+    // dispatches in `UNCORROBORATED_STALL` (`22 §3.1`). That is the harm the composite
+    // foreign key prevents, stated rather than implied.
+    expect(stored).toBe('REVERSIBLE');
   });
 
   it('and the DATABASE refuses a relabelled row even on a direct INSERT', async () => {
@@ -354,8 +376,20 @@ describe('`§37` ITEM 10 / `§30` — A CLAIM BYPASS', () => {
     });
     await ensureUnsafeBypassLedger(h.control);
 
-    // THE BYPASS. An IRRECOVERABLE effect — `30 §5.1` row 1, Halt in every state — claimed
-    // with no evaluation of any kind.
+    // -------------------------------------------------------------------------------
+    // THE STATE MATTERS AT v1.3.4, SO IT IS DECLARED RATHER THAN ASSUMED.
+    //
+    // `§30` of the S1I mandate asks for "the most public claim surface while effect is
+    // HALTED. Expected: no claim." Until v1.3.4 an IRRECOVERABLE effect was halted in
+    // every state, so the fixture needed no state at all. `30 §5.1b` makes row 1 eligible
+    // in `NORMAL`, so the halted fixture is now this class in a DEGRADED state — which is
+    // also the state in which a bypass would do the most harm, because it is the state in
+    // which the mirror cannot record what was sent.
+    // -------------------------------------------------------------------------------
+    await declareMirrorDegraded(h.control, COMPANY_ID, 'PUSH_ACK_TIMEOUT', NOW);
+
+    // THE BYPASS. An IRRECOVERABLE effect in `UNCORROBORATED_STALL` — `30 §5.1` row 1,
+    // Halt, unreachable by override — claimed with no evaluation of any kind.
     const forced = await unsafeForceClaim(h.control, {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
@@ -376,8 +410,9 @@ describe('`§37` ITEM 10 / `§30` — A CLAIM BYPASS', () => {
     if (production.kind === 'REFUSED') {
       expect(production.reason).toBe('PRE_DISPATCH_HALTED');
       expect(production.decision?.matchedRow).toBe(1);
+      expect(production.decision?.explanation).toContain('UNCORROBORATED_STALL');
       // And there is no owner escape to offer: `30 §5.1` item 5 makes rows 1 and 2
-      // unreachable by override.
+      // unreachable by override, in EVERY state, and v1.3.4 does not touch that.
       expect(production.decision?.ownerOverrideAvailable).toBe(false);
     }
     expect((await outboxRows(h.control))[0]!.status).toBe('ENQUEUED');

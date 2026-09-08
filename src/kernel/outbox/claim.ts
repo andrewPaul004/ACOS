@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { inTransaction, type Client, type Pool } from '../../db/pool.js';
 import { fromDb, type Money } from '../exposure/money.js';
+import { isClockBearingOn, selectEvidentiaryClockOn } from '../clocks/statutoryClock.js';
 import { activeOverrideOn, claimOverrideAllowanceOn } from '../mirror/degradedModeOverride.js';
 import { classifyDispatchPrecedence, type PrecedenceDecision } from '../mirror/dispatchPrecedence.js';
 import { mirrorDispatchOperandsOn } from '../mirror/mirrorStateMachine.js';
@@ -79,55 +80,92 @@ import {
  */
 
 /**
- * `30 §5.1` row 3's operand, and THE ONE LEG S1I REPORTS PARTIAL — `S1I-C1`.
+ * `30 §5.1` row 3's operand, DERIVED — v1.3.4 (CSB-01), `30 §9.2.4`, `I65`.
  *
  * =================================================================================
- * WHAT ROW 3 NEEDS, AND WHAT v1.3.3 DOES NOT DECLARE.
+ * WHAT THIS REPLACED, AND WHY THE REPLACEMENT IS NOT A RELAXATION
  *
- * Row 3 matches on "Clock-bearing (a live statutory clock citing a RECORD-grade fact,
- * `§9.1`) and `recoverability == COMPENSABLE`". `30 §9.1` gives the clock's shape:
+ * S1I shipped this function taking NO ARGUMENTS and returning `false`, because
+ * `S1I-C1` found that v1.3.3 declared no binding from an effect to a `case_ref` and row
+ * 3's operand is keyed on one. That was the fail-closed stop `§51` of the S1I mandate
+ * directs, not a design.
  *
- *   Clock { id, statute, case_ref, started_at, deadline_at, source_record_ref }
+ * `30 §9.2` now declares the binding, and `30 §9.2.4` declares the derivation:
  *
- * The accepted `isClockBearingOn` answers "is there a live RECORD-backed clock for THIS
- * `case_ref`". SO THE OPERAND IS KEYED ON `case_ref`.
+ *     "**`clock_bearing` is derived at the decision instant from CURRENT authoritative
+ *      clock state.** It is never read from an enqueue-time boolean, never persisted as
+ *      authority, and never accepted as a parameter. **The effect supplies exactly one
+ *      thing: its immutable authoritative `case_ref`.**"
  *
- * **v1.3.3 DECLARES NO BINDING FROM AN EFFECT TO A `case_ref`.** Not in `30 §9.1`, not in
- * `26 §5`, not in `26 §2.1`'s `AuthorizationRequest` field list, not in `24 §3` K10, and
- * not in `24 §4`'s ERD. `case_ref` is a free identifier in the clock table and nothing
- * relates it to an `effect`, an `authorisation`, a `resource_ref` or a `task_id`.
+ * So the operand is now TRUE where a legitimate qualifying clock exists, and row 3 is
+ * reachable. What has not changed is that no caller can cause it: the binding is
+ * kernel-derived by `0011`'s `effect_derive_case_ref` trigger, immutable under
+ * `effect_append_only`, and read HERE from the committed `effect` row.
+ * =================================================================================
  *
- * WHY THAT MATTERS EXACTLY HERE, AND WHY IT IS NOT COSMETIC. Row 3 is the ONLY relaxation
- * in the architecture — `30 §9.1`: "the statutory clock is a lever on the audit plane and
- * its provenance is a security property rather than a compliance detail." A COMPENSABLE
- * discretionary effect suspends at row 4; the SAME effect, declared clock-bearing,
- * DISPATCHES at row 3 in `NORMAL` and `CORROBORATED_DEGRADED`. So a claim-time
- * `case_ref` chosen by the caller — or guessed by the kernel from `resource_ref` — would be
- * precisely the lever `30 §9.1` exists to close: "a model that can cause a clock to exist
- * can manufacture the row-3 exemption it wants", and a model that can cause the kernel to
- * LOOK UP THE WRONG CLOCK obtains the same exemption without needing to create one.
+ * =================================================================================
+ * THE SIGNATURE IS THE SECURITY PROPERTY. READ IT BEFORE THE BODY.
  *
- * S1H did not surface this because `classifyDispatchPrecedence` is pure and its tests hand
- * it the operand directly. S1I is the first slice that must DERIVE it from state.
+ *   caseRef: string | null   — NOT a `case_ref` the caller chose. The ONLY value passed
+ *                              here is `effect.case_ref`, read from the committed row in
+ *                              the operand query below, in this transaction.
  *
- * `§51` OF THE S1I MANDATE: "Stop and return PARTIAL rather than guessing if v1.3.3 does
- * not specify a required load-bearing point such as [...] claim-time approval/mirror
- * revalidation." This is that stop, taken in the fail-closed direction: the operand is
- * `false`, so no claim is ever made at row 3, a COMPENSABLE effect falls to row 4 and
- * SUSPENDS unless an in-scope override restores it, and no relaxation is obtained that the
- * architecture has not authorised.
+ * There is no `clockBearing` parameter, no `clockId` parameter, no `preferClock` option
+ * and no candidate list. `30 §9.2.1`: "a `case_ref` parameter on a claim surface is a
+ * defect of the same class as a caller-supplied `clockBearing` boolean" — and
+ * `claimForExternalDispatch`'s own input type has neither. `no-transport-boundary.test.ts`
+ * asserts the exported surface against a hand-authored list, and
+ * `tests/negative-controls/unsafe-caller-case-ref.ts` is the TEST-ONLY classifier that
+ * takes one, as `§8` of the S1I owner-resolution mandate requires.
  *
- * `docs/implementation/S1I-owner-clarifications.md` `S1I-C1` records the gap and the two
- * candidate resolutions. `docs/implementation/S1I-result.md §9` reports the row-3
- * claim-time leg PARTIAL.
+ * THE ATTACK IT CLOSES, in `30 §9.2`'s words: "a model that can make the kernel look up
+ * the WRONG clock obtains the exemption without needing to create one." `I56` closed
+ * clock CREATION. This closes clock SELECTION.
+ * =================================================================================
  *
- * THE FUNCTION TAKES NO ARGUMENTS AND RETURNS A CONSTANT, ON PURPOSE. A parameter would be
- * the escape hatch; a lookup keyed on a guessed `case_ref` would be the lever. Neither
- * exists.
+ * =================================================================================
+ * THE NULL CASE PERFORMS NO QUERY, WHICH IS THE POINT
+ *
+ * `30 §9.2.3`: "**A NULL `case_ref` never means 'search for any clock that fits.'** There
+ * is no global clock search, no nearest-case match, no fallback and no heuristic. Absence
+ * of a binding is a determinate `false`, not a query."
+ *
+ * The early return below IS that rule. It is not an optimisation and must not be
+ * "simplified" into a query with a nullable predicate: a `WHERE case_ref = NULL` matches
+ * nothing in SQL today, but a later edit to that predicate is one character away from
+ * matching everything, and the shape that cannot go wrong is the shape that never asks.
+ * =================================================================================
+ *
+ * =================================================================================
+ * CURRENT STATE, BOTH DIRECTIONS, AND FAIL-CLOSED
+ *
+ * `isClockBearingOn` is the ACCEPTED S1H function and is imported rather than
+ * reimplemented — `§13` of the S1I mandate: "Do not create an alternate dispatch
+ * precedence implementation", and the same rule applies to its operands. It reads
+ * `closed_at IS NULL AND deadline_at > now` joined to a RECORD-grade retained artifact,
+ * so:
+ *
+ *   - a clock that OPENS between enqueue and claim makes row 3 apply;
+ *   - a clock that CLOSES or EXPIRES makes row 3 stop applying;
+ *   - a citation that ceases to resolve reads as NOT clock-bearing — fail closed, which
+ *     is `I56`'s "a clock with an unresolvable `source_record_ref` is a critical
+ *     incident" read in the safe direction;
+ *   - a process restart changes none of the three, because nothing is cached anywhere.
+ *
+ * `outbox-claim-clock.test.ts` asserts all four.
  * =================================================================================
  */
-export function clockBearingAtClaim(): boolean {
-  return false;
+export async function clockBearingAtClaim(
+  client: Client,
+  input: {
+    readonly companyId: string;
+    /** `effect.case_ref`, read from the committed row. Never a caller's value. */
+    readonly caseRef: string | null;
+    readonly now: Date;
+  },
+): Promise<boolean> {
+  if (input.caseRef === null) return false;
+  return isClockBearingOn(client, input.companyId, input.caseRef, input.now);
 }
 
 /** What a successful claim hands back. It is a RECORD, not a permission to send. */
@@ -141,6 +179,14 @@ export interface AcquiredClaim {
   readonly requiresUnmirroredTag: boolean;
   /** `30 §5.7.2` item 5's `override_id`, or null when no override was needed. */
   readonly overrideId: string | null;
+  /**
+   * `30 §9.2.5`'s evidentiary clock — the live statutory obligation that made row 3 the
+   * reason this claim was permitted. NULL at every other matched row.
+   *
+   * v1.3.4 (CSB-01). It exists so a later audit can answer "which live statutory
+   * obligation justified this?" and it is selected by the claim, never supplied.
+   */
+  readonly claimClockRef: string | null;
   /** The `OUTBOX_CLAIMED` journal row's sequence. `23 §6` B8. */
   readonly journalSeq: bigint;
   /** The full classifier decision, for the audit trail and for the tests. */
@@ -162,6 +208,14 @@ interface ClaimOperandRow {
   readonly recoverability: Recoverability;
   readonly total_exposure: string;
   readonly has_recorded_approval: boolean;
+  /**
+   * `effect.case_ref` — v1.3.4 (CSB-01), `30 §9.2`. Kernel-derived at INSERT by `0011`'s
+   * `effect_derive_case_ref` trigger from the authoritative task, immutable under
+   * `effect_append_only`, and read here from the committed row. NOT from the outbox row:
+   * the outbox carries no case column, because a second copy is a second place the
+   * binding could disagree with itself.
+   */
+  readonly case_ref: string | null;
 }
 
 /**
@@ -268,6 +322,7 @@ export async function claimForExternalDispatchOn(
   const operandRow = await client.query<ClaimOperandRow>(
     `SELECT e.action_class,
             e.recoverability,
+            e.case_ref,
             a.total_exposure,
             (ap.approval_id IS NOT NULL) AS has_recorded_approval
        FROM effect e
@@ -288,14 +343,20 @@ export async function claimForExternalDispatchOn(
   const mirror = await mirrorDispatchOperandsOn(client, row.companyId, input.now);
   const override = await activeOverrideOn(client, row.companyId, input.now);
   const totalExposure: Money = fromDb(operands.total_exposure);
+  const clockBearing = await clockBearingAtClaim(client, {
+    companyId: row.companyId,
+    caseRef: operands.case_ref,
+    now: input.now,
+  });
 
   const decision = classifyDispatchPrecedence({
     mirrorState: mirror.mirrorState,
     actionClass: operands.action_class,
     recoverability: operands.recoverability,
-    // `S1I-C1`. The row-3 operand v1.3.3 declares no binding for, read in the fail-closed
-    // direction. See `clockBearingAtClaim` above.
-    clockBearing: clockBearingAtClaim(),
+    // `30 §5.1` row 3's operand, DERIVED from the effect's OWN immutable case binding
+    // against CURRENT clock state, in this transaction. v1.3.4 (CSB-01), `30 §9.2.4`.
+    // `S1I-C1`'s hard-coded `false` is gone; what replaced it takes no caller value.
+    clockBearing,
     totalExposure,
     // Structurally `false` at S1I: `approval` rows are created only for an
     // `AWAITING_APPROVAL` effect (0007), only an `AUTHORISED` effect can be enqueued
@@ -328,15 +389,82 @@ export async function claimForExternalDispatchOn(
     };
   }
 
-  // `DISPATCH_ELIGIBLE`. `matchedRow` is 3, 4 or 5 — rows 1 and 2 halt in every state
-  // (`22 §3.1`) and are unreachable by override (`30 §5.1` item 5), so the narrowing below
-  // is an assertion the classifier already guarantees.
+  // ---------------------------------------------------------------------------------
+  // `DISPATCH_ELIGIBLE`. `matchedRow` is 1, 3, 4 or 5.
+  //
+  // ROW 2 IS THE ONLY IMPOSSIBLE ONE: `22 §3.1` prints it Halt in every state and
+  // `30 §5.1` item 5 makes it unreachable by override.
+  //
+  // ROW 1 BECAME POSSIBLE AT v1.3.4 (IRN-01, `30 §5.1b`) — in `NORMAL` only. The second
+  // assertion below is what makes that narrow: a row-1 claim in a degraded state would
+  // mean the classifier's state qualification had been lost, and `30 §5.1b` is explicit
+  // that the correction touches `NORMAL` and nothing else.
+  //
+  // Both are ASSERTIONS the classifier already guarantees, not fallbacks. A fallback here
+  // would be a second dispatch rule, which `§13` of the S1I mandate forbids.
+  // ---------------------------------------------------------------------------------
   const matchedRow = decision.matchedRow;
-  if (matchedRow !== 3 && matchedRow !== 4 && matchedRow !== 5) {
+  if (matchedRow === 2) {
     throw new Error(
-      `classifier returned DISPATCH_ELIGIBLE at row ${String(matchedRow)}, which 30 §5.1 ` +
-        'item 4 and 22 §3.1 make impossible',
+      'classifier returned DISPATCH_ELIGIBLE at row 2, which 30 §5.1 item 4 row 2, item 5 ' +
+        'and 22 §3.1 make impossible in every mirror state',
     );
+  }
+  if (matchedRow === 1 && mirror.mirrorState !== 'NORMAL') {
+    throw new Error(
+      `classifier returned DISPATCH_ELIGIBLE at row 1 in ${mirror.mirrorState}; 30 §5.1b ` +
+        'makes row 1 eligible in NORMAL only and halted in both degraded states',
+    );
+  }
+
+  // ---------------------------------------------------------------------------------
+  // THE EVIDENTIARY CLOCK — `30 §9.2.5`, v1.3.4 (CSB-01), `I65`.
+  //
+  // "Where row 3 is the reason a dispatch decision resolved permissively, the selected
+  //  `clock_ref` is persisted as evidence on that decision, so that a later audit can
+  //  answer: which live statutory obligation justified this?"
+  //
+  // ONLY AT ROW 3, AND ONLY WHEN ROW 3 IS THE REASON. `30 §9.2.5`: "Where row 3 is not
+  // the reason, the field is NULL or absent per the declared schema." `0011`'s
+  // `dispatch_outbox_clock_evidence_is_row_3` CHECK is the biconditional that makes the
+  // two agree, so a bug here is a constraint violation rather than a quiet wrong answer.
+  //
+  // THE SELECTION IS DETERMINISTIC AND IS NOT THIS FUNCTION'S. `selectEvidentiaryClockOn`
+  // orders by earliest `deadline_at` then ascending `clock_id`, over the SAME qualifying
+  // set `clockBearingAtClaim` counted — `30 §9.2.5`: "The selection does not change the
+  // boolean." Nothing here re-decides eligibility; it names the clock behind an answer
+  // already given.
+  //
+  // A NON-NULL `caseRef` IS GUARANTEED HERE. `matchedRow === 3` implies `clockBearing`
+  // was true, which implies `operands.case_ref` was non-null — a NULL binding returns
+  // `false` without a query. The narrowing below is that implication written down; the
+  // throw is an assertion, not a fallback.
+  // ---------------------------------------------------------------------------------
+  let claimClockRef: string | null = null;
+  if (matchedRow === 3) {
+    if (operands.case_ref === null) {
+      throw new Error(
+        `classifier matched row 3 for effect ${row.effectId}, which carries no case ` +
+          'binding; row 3 requires a live clock and a case-less effect is never ' +
+          'clock-bearing (30 §9.2.3, §9.2.4)',
+      );
+    }
+    const evidence = await selectEvidentiaryClockOn(
+      client,
+      row.companyId,
+      operands.case_ref,
+      input.now,
+    );
+    if (evidence === null) {
+      // Unreachable: the same qualifying set was non-empty a few statements ago, in this
+      // transaction, at this instant. An assertion for the same reason the operand
+      // resolution below is one.
+      throw new Error(
+        `row 3 matched for effect ${row.effectId} on case ${operands.case_ref} but no ` +
+          'qualifying live clock could be selected as evidence (30 §9.2.5)',
+      );
+    }
+    claimClockRef = evidence.clockRef;
   }
 
   // ---------------------------------------------------------------------------------
@@ -386,7 +514,7 @@ export async function claimForExternalDispatchOn(
   const claimId = `claim:${randomUUID()}`;
   const emitted = await client.query<{ emit_outbox_claimed: string }>(
     `SELECT emit_outbox_claimed($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                                $14, $15)`,
+                                $14, $15, $16)`,
     [
       row.companyId,
       row.outboxId,
@@ -402,6 +530,8 @@ export async function claimForExternalDispatchOn(
       mirror.mirrorState,
       decision.requiresUnmirroredTag,
       decision.overrideId,
+      // Field 18 of `30 §5.3a`'s declared order, between `override_id` and `occurred_at`.
+      claimClockRef,
       input.now,
     ],
   );
@@ -415,7 +545,8 @@ export async function claimForExternalDispatchOn(
             claim_matched_row = $6,
             claim_mirror_state = $7,
             claim_requires_unmirrored_tag = $8,
-            claim_override_id = $9
+            claim_override_id = $9,
+            claim_clock_ref = $10
       WHERE company_id = $1 AND idempotency_key = $2 AND status = 'ENQUEUED'
       RETURNING ${OUTBOX_COLUMNS}`,
     [
@@ -428,6 +559,7 @@ export async function claimForExternalDispatchOn(
       mirror.mirrorState,
       decision.requiresUnmirroredTag,
       decision.overrideId,
+      claimClockRef,
     ],
   );
   const updated = claimed.rows[0];
@@ -450,6 +582,7 @@ export async function claimForExternalDispatchOn(
       mirrorState: mirror.mirrorState,
       requiresUnmirroredTag: decision.requiresUnmirroredTag,
       overrideId: decision.overrideId,
+      claimClockRef,
       journalSeq: BigInt(emitted.rows[0]!.emit_outbox_claimed),
       decision,
     },

@@ -234,14 +234,21 @@ describe('`§15` — the three recoverability classes, in all three mirror state
       expect(await claimJournalRows(h.control)).toHaveLength(0);
     });
 
-    it(`IRRECOVERABLE in ${state}: HALT at row 1, unconditionally`, async () => {
+    it(`IRRECOVERABLE in ${state}: row 1, and its behaviour follows the STATE`, async () => {
       /*
-       * `30 §5.1` item 4 row 1: "Halt. No send, no reship, no public post, no address
-       * edit. Unmirrored and unundoable is the combination the mirror exists for."
-       * `22 §3.1` prints Halt/Halt/Halt — INCLUDING `NORMAL`.
+       * `30 §5.1` item 4 row 1 as v1.3.4 (IRN-01) issues it: "In `NORMAL`, **dispatch** —
+       * subject to every ordinary authority requirement [...] In `UNCORROBORATED_STALL`
+       * and in `CORROBORATED_DEGRADED`, **halt** [...] `NORMAL` is the state in which the
+       * effect is *not* unmirrored."
        *
-       * So the class ADR-026 is titled for cannot reach a claim at S1 scope. That is
-       * v1.3.3's own reading and `S1I-result.md §9` reports it as the finding it is.
+       * Until v1.3.4 this case asserted HALT in all three states, which is what
+       * `S1I-C6` reported as a finding: `22 §3.1` printed Halt/Halt/Halt, so the class
+       * ADR-026 is titled for could never reach a claim at all and ADR-026's own decision
+       * items 2 through 5 had no subject. `30 §5.1b` records the correction and its
+       * bounds.
+       *
+       * THE EXPECTATION IS THE HAND-AUTHORED ORACLE'S, NOT PRODUCTION'S. `36 §0`:
+       * `expectedFor` is transcribed from `22 §3.1` and `30 §5.1` and imports nothing.
        */
       const effect = await authoriseReship(h, { resourceId: `ORD-RESHIP-${state}` });
       await enqueue(effect, `irr-${state}`);
@@ -254,13 +261,19 @@ describe('`§15` — the three recoverability classes, in all three mirror state
         hasRecordedApproval: false,
       };
       const expectedDisposition = expectedFor(state, oracleCase);
-      expect(expectedDisposition.disposition).toBe('HALT');
       expect(expectedDisposition.row).toBe(1);
+      expect(expectedDisposition.disposition).toBe(
+        state === 'NORMAL' ? 'DISPATCH_ELIGIBLE' : 'HALT',
+      );
 
       const actual = await claimDisposition(effect, T0);
-      expect(actual.disposition).toBe('HALT');
       expect(actual.row).toBe(1);
-      expect((await outboxRows(h.control))[0]!.status).toBe('ENQUEUED');
+      expect(actual.disposition).toBe(expectedDisposition.disposition);
+      // In `NORMAL` the row is durably CLAIMED; in either degraded state nothing is
+      // written and the row stays claimable if the state later recovers (`§14`).
+      expect((await outboxRows(h.control))[0]!.status).toBe(
+        state === 'NORMAL' ? 'CLAIMED' : 'ENQUEUED',
+      );
     });
   }
 });

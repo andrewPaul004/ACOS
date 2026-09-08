@@ -267,3 +267,94 @@ export async function isClockBearing(
     client.release();
   }
 }
+
+/**
+ * `30 §9.2.5`'s DETERMINISTIC EVIDENTIARY SELECTION — v1.3.4 (CSB-01), `I65`.
+ *
+ * =================================================================================
+ * WHY A SELECTION EXISTS AT ALL, AND WHY IT IS NOT THE SAME QUESTION AS THE BOOLEAN
+ *
+ * `30 §5.1` row 3's operand is a BOOLEAN: "a live statutory clock citing a RECORD-grade
+ * fact". `isClockBearingOn` answers it, and a count is the honest shape for that answer.
+ *
+ * But `30 §9.2.5` requires something further of a decision that resolved PERMISSIVELY
+ * because of row 3:
+ *
+ *     "Where row 3 is the reason a dispatch decision resolved permissively, the selected
+ *      `clock_ref` is persisted as evidence on that decision, so that a later audit can
+ *      answer: *which live statutory obligation justified this?*"
+ *
+ * Nothing bounds the number of live clocks on one case at S1 — `phase2-v1.3-lower-
+ * severity-register.md` TA-08 schedules "at most one live clock per `(case_ref,
+ * statute)`" at **S5** and v1.3.4 explicitly did not bring it forward. So "the clock"
+ * may be several clocks, and an evidence field written from an unordered query would name
+ * a different clock on a different day for the same facts. `30 §9.2.5` therefore
+ * declares an order:
+ *
+ *     "1. **earliest authoritative statutory deadline** (`deadline_at` ascending); then
+ *      2. **stable `clock_ref` ascending**, as the total tie-break."
+ *
+ * **THE SELECTION DOES NOT CHANGE THE BOOLEAN.** `30 §9.2.5`: "The operand remains *at
+ * least one qualifying live clock exists*; the selection names **which** clock is
+ * recorded as the reason." So this function and `isClockBearingOn` must agree on
+ * EXISTENCE and they are written to the same qualifying set for that reason — one
+ * returning the count's truth, the other the ordered head.
+ *
+ * WHY EARLIEST DEADLINE. It is the obligation closest to breach, which is the one a row-3
+ * relaxation is most defensibly taken for. A tie-break on `clock_id` follows because
+ * `deadline_at` is not unique and an order that is not total is not deterministic.
+ * =================================================================================
+ *
+ * =================================================================================
+ * THE QUALIFYING SET IS `30 §9.2.4`'s, AND IT IS THE SAME ONE `isClockBearingOn` READS
+ *
+ *   company_id  = the effect's company
+ *   case_ref    = the effect's OWN immutable authoritative case binding
+ *   closed_at IS NULL AND deadline_at > now      — live, per row 3's "live"
+ *   provenance  = 'RECORD'                       — `I56`, joined rather than assumed
+ *
+ * **A NULL `case_ref` NEVER REACHES THIS FUNCTION.** `30 §9.2.3`: "A NULL `case_ref`
+ * never means 'search for any clock that fits.' There is no global clock search, no
+ * nearest-case match, no fallback and no heuristic." The caller — `clockBearingAtClaim`
+ * in `src/kernel/outbox/claim.ts` — returns `false` without calling anything when the
+ * binding is absent, so the case-less path performs no query at all. The `caseRef`
+ * parameter here is typed `string`, not `string | null`, so the case-less call is not
+ * merely avoided by a branch: it does not typecheck.
+ *
+ * AND THE CALLER DOES NOT CHOOSE. There is no `preferClockId`, no ordering option and no
+ * candidate list parameter. `30 §9.2.5`: "The decision selects the clock. A caller never
+ * does."
+ * =================================================================================
+ */
+export interface EvidentiaryClock {
+  readonly clockRef: string;
+  readonly statute: Statute;
+  readonly deadlineAt: Date;
+}
+
+export async function selectEvidentiaryClockOn(
+  client: Client,
+  companyId: string,
+  caseRef: string,
+  now: Date,
+): Promise<EvidentiaryClock | null> {
+  const result = await client.query<{
+    clock_id: string;
+    statute: Statute;
+    deadline_at: Date;
+  }>(
+    `SELECT c.clock_id, c.statute, c.deadline_at
+       FROM statutory_clock c
+       JOIN retained_source_record r
+         ON r.company_id = c.company_id AND r.source_record_id = c.source_record_ref
+      WHERE c.company_id = $1 AND c.case_ref = $2
+        AND c.closed_at IS NULL AND c.deadline_at > $3
+        AND r.provenance = 'RECORD'
+      ORDER BY c.deadline_at ASC, c.clock_id ASC
+      LIMIT 1`,
+    [companyId, caseRef, now],
+  );
+  const row = result.rows[0];
+  if (row === undefined) return null;
+  return { clockRef: row.clock_id, statute: row.statute, deadlineAt: row.deadline_at };
+}

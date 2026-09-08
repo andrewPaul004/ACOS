@@ -216,7 +216,20 @@ describe('ONE CLAIM, AND WHAT IT RECORDS', () => {
     });
     expect(enqueued.kind).toBe('ENQUEUED');
 
-    // One claim that SUCCEEDS, and one that is HALTED at row 1.
+    // -------------------------------------------------------------------------------
+    // TWO CLAIMS, BOTH SUCCEEDING, AND NEITHER CONSUMING ANYTHING — v1.3.4 (IRN-01).
+    //
+    // Until v1.3.4 the IRRECOVERABLE claim was REFUSED at row 1 in every state, so this
+    // case asserted the MIE ledger was untouched by a claim that never happened. That
+    // proved almost nothing: `30 §5.1b` records that the printed table made the class
+    // ADR-026 is titled for permanently undispatchable.
+    //
+    // **Now the IRRECOVERABLE effect CLAIMS in `NORMAL`, and the ledger is STILL zero.**
+    // That is the property `§24` of the S1I mandate actually asks for, and it is only
+    // testable once the claim can happen: "Do not consume it merely because a claim exists
+    // unless current architecture explicitly defines claim as the consumption point."
+    // v1.3.3 and v1.3.4 both define the consumption point and neither is the claim.
+    // -------------------------------------------------------------------------------
     expect(
       (
         await claimForExternalDispatch(h.control, {
@@ -227,16 +240,21 @@ describe('ONE CLAIM, AND WHAT IT RECORDS', () => {
         })
       ).kind,
     ).toBe('CLAIMED');
-    expect(
-      (
-        await claimForExternalDispatch(h.control, {
-          companyId: COMPANY_ID,
-          idempotencyKey: irrecoverable.idempotencyKey,
-          claimedBy: WORKER,
-          now: NOW,
-        })
-      ).kind,
-    ).toBe('REFUSED');
+    const irrecoverableClaim = await claimForExternalDispatch(h.control, {
+      companyId: COMPANY_ID,
+      idempotencyKey: irrecoverable.idempotencyKey,
+      claimedBy: WORKER,
+      now: NOW,
+    });
+    expect(irrecoverableClaim.kind).toBe('CLAIMED');
+    if (irrecoverableClaim.kind !== 'CLAIMED') return;
+    // Row 1, in `NORMAL`, untagged and with no override — `30 §5.1b`.
+    expect(irrecoverableClaim.claim.matchedRow).toBe(1);
+    expect(irrecoverableClaim.claim.mirrorState).toBe('NORMAL');
+    expect(irrecoverableClaim.claim.requiresUnmirroredTag).toBe(false);
+    expect(irrecoverableClaim.claim.overrideId).toBeNull();
+    // Row 1's reason is the CLASS, never a clock, so it carries no clock evidence.
+    expect(irrecoverableClaim.claim.claimClockRef).toBeNull();
 
     const client = await h.control.connect();
     try {

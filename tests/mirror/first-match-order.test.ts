@@ -81,10 +81,27 @@ describe("`VC-A6`'s three named fixtures", () => {
     expect(d.requiresUnmirroredTag).toBe(true);
   });
 
-  it('an IRRECOVERABLE effect halts at ROW 1 REGARDLESS of clock or approval', () => {
-    // "An IRRECOVERABLE effect halts at row 1 **regardless** of clock or approval, which is
-    // the one place the trade is refused." All eight combinations of the other three
-    // operands, in all three states.
+  it('an IRRECOVERABLE effect matches ROW 1 REGARDLESS of clock or approval, and its behaviour is STATE-QUALIFIED', () => {
+    // ---------------------------------------------------------------------------------
+    // `30 §5.1` as v1.3.4 issues it: "An IRRECOVERABLE effect matches row 1 regardless of
+    // clock or approval, and row 1 is where the trade is refused **in the two degraded
+    // states**."
+    //
+    // TWO PROPERTIES, ASSERTED SEPARATELY BECAUSE THEY ARE DIFFERENT PROPERTIES:
+    //
+    //   (1) THE MATCH IS UNCONDITIONAL. Row 1 matches on `recoverability` alone, in every
+    //       state, for every combination of the other three operands. `30 §5.1b`: "Row 1's
+    //       CONDITION is unchanged [...] Its POSITION is unchanged: first, ahead of row 2,
+    //       in every state." This is what keeps row 2 unreachable for the class and keeps
+    //       the correction from moving anything else.
+    //
+    //   (2) THE BEHAVIOUR IS STATE-QUALIFIED. Dispatch in `NORMAL`, Halt in both degraded
+    //       states. `30 §5.1b`: "`NORMAL` is the state in which the effect is *not*
+    //       unmirrored."
+    //
+    // All eight combinations of the other three operands, in all three states — so a
+    // clock, an approval or an above-floor exposure changing the answer would fail here.
+    // ---------------------------------------------------------------------------------
     for (const state of ['NORMAL', 'UNCORROBORATED_STALL', 'CORROBORATED_DEGRADED'] as const) {
       for (const clockBearing of [false, true]) {
         for (const totalExposure of ['19.99', '20.01']) {
@@ -101,9 +118,15 @@ describe("`VC-A6`'s three named fixtures", () => {
               now: NOW,
             });
             expect(d.matchedRow).toBe(1);
-            expect(d.disposition).toBe('HALT');
+            expect(d.disposition).toBe(state === 'NORMAL' ? 'DISPATCH_ELIGIBLE' : 'HALT');
+            // `36 §6`: the tag follows `CORROBORATED_DEGRADED` and an override dispatch.
+            // Row 1 in `NORMAL` is neither — in `NORMAL` the row IS mirrored, which is why
+            // it dispatches at all — and in the degraded states it halts, so nothing is
+            // tagged in any of the three.
+            expect(d.requiresUnmirroredTag).toBe(false);
             // `30 §5.1` item 5: "An override restores precedence rows 3 and 4 only, never
-            // rows 1 or 2." So there is no owner escape to offer for this effect.
+            // rows 1 or 2." UNCHANGED by v1.3.4, in EVERY state — so there is no owner
+            // escape to offer for this effect anywhere, including where it halts.
             expect(d.ownerOverrideAvailable).toBe(false);
           }
         }

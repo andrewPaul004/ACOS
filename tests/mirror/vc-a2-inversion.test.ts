@@ -154,12 +154,41 @@ describe('`VC-A2` — A UNILATERAL CONTROL-SIDE DECLARATION NEVER INCREASES ELIG
       return PERMISSIVENESS[stall.disposition] < PERMISSIVENESS[normal.disposition];
     });
     expect(stricter.length).toBeGreaterThan(0);
-    // And every one of them is row 3, because row 3 is the only row whose behaviour differs
+    // ---------------------------------------------------------------------------------
+    // AND EVERY ONE OF THEM IS ROW 1 OR ROW 3 — the two rows whose behaviour differs
     // between `NORMAL` and `UNCORROBORATED_STALL` in `22 §3.1`'s table.
+    //
+    // v1.3.4 (IRN-01) ADDED ROW 1 TO THIS SET, and `30 §5.1b` records it: "`§5.6`'s
+    // inversion now has a second row. Before v1.3.4 exactly one row differed [...] Now
+    // rows 1 and 3 differ, row 1 by Dispatch versus Halt. **This strengthens the
+    // inversion; it does not weaken it.** Both differences run in the same direction:
+    // declaring the mirror unreachable costs the declarer the clock-bearing COMPENSABLE
+    // dispatch *and* the irrecoverable one."
+    //
+    // The membership is asserted EXHAUSTIVELY rather than as "at least these": a third
+    // row appearing here would mean a state qualification landed somewhere the
+    // architecture does not declare one, which is the failure this assertion exists for.
+    // ---------------------------------------------------------------------------------
+    const strictRows = new Set(
+      stricter.map((c) => classifyDispatchPrecedence(operands('NORMAL', c)).matchedRow),
+    );
+    expect([...strictRows].sort()).toEqual([1, 3]);
     for (const c of stricter) {
-      expect(classifyDispatchPrecedence(operands('NORMAL', c)).matchedRow).toBe(3);
-      expect(c.recoverability).toBe('COMPENSABLE');
-      expect(c.clockBearing).toBe(true);
+      const row = classifyDispatchPrecedence(operands('NORMAL', c)).matchedRow;
+      if (row === 1) {
+        // `30 §5.1b`: Dispatch in `NORMAL`, Halt in `UNCORROBORATED_STALL`.
+        expect(c.recoverability).toBe('IRRECOVERABLE');
+        expect(classifyDispatchPrecedence(operands('NORMAL', c)).disposition).toBe(
+          'DISPATCH_ELIGIBLE',
+        );
+        expect(
+          classifyDispatchPrecedence(operands('UNCORROBORATED_STALL', c)).disposition,
+        ).toBe('HALT');
+      } else {
+        // `30 §5.1` row 3: Dispatch in `NORMAL`, Suspend in `UNCORROBORATED_STALL`.
+        expect(c.recoverability).toBe('COMPENSABLE');
+        expect(c.clockBearing).toBe(true);
+      }
     }
   });
 
@@ -192,17 +221,47 @@ describe('`VC-A2` — A UNILATERAL CONTROL-SIDE DECLARATION NEVER INCREASES ELIG
 });
 
 describe('`VC-A2` — ONLY THE DECLARED ROWS RELAX IN CORROBORATED_DEGRADED', () => {
-  it('CORROBORATED_DEGRADED is never stricter than NORMAL, and never looser either', () => {
-    // `36 §6`: "`CORROBORATED_DEGRADED`: **as `NORMAL`**, with every dispatch tagged
-    // `DISPATCHED_UNMIRRORED`." So the dispositions must be IDENTICAL to `NORMAL`'s and only
-    // the tag differs. `§24` of the mandate: "Only the architecture-declared rows may become
-    // less restrictive. No others."
+  it('CORROBORATED_DEGRADED equals NORMAL at rows 2-5, is STRICTER at row 1, and is never looser', () => {
+    // ---------------------------------------------------------------------------------
+    // `36 §6` AS v1.3.4 ISSUES IT: "`CORROBORATED_DEGRADED`: as `NORMAL` **for rows 2
+    // through 5**, with every dispatch tagged `DISPATCHED_UNMIRRORED` — **and row 1
+    // halts, because corroboration proves the stall rather than curing it**."
+    //
+    // `30 §5.1b`(a) gives the reason in `§5.1a`'s own words: "corroboration **proves** the
+    // stall rather than curing it — the record that is not being made is not made any
+    // more by the audit plane confirming so." An IRRECOVERABLE effect in
+    // `CORROBORATED_DEGRADED` is still unmirrored and unundoable, which is exactly the
+    // combination row 1 refuses. **A corroborated stall is a stall with a witness.**
+    //
+    // WHAT DID NOT CHANGE: the ordering. `§24` of the S1H mandate — "Only the
+    // architecture-declared rows may become less restrictive. No others." — is asserted
+    // below as `CORROBORATED_DEGRADED` never being LOOSER than `NORMAL` at any row. What
+    // v1.3.4 removed is the EQUALITY at row 1, and it removed it in the strict direction.
+    // ---------------------------------------------------------------------------------
+    let strictRowOne = 0;
     for (const c of CASES) {
       const normal = classifyDispatchPrecedence(operands('NORMAL', c));
       const corroborated = classifyDispatchPrecedence(operands('CORROBORATED_DEGRADED', c));
-      expect(corroborated.disposition, label(c)).toBe(normal.disposition);
+      // The matched ROW is identical in every case: v1.3.4 changed row 1's behaviour, not
+      // the ordered list or any row's condition.
       expect(corroborated.matchedRow, label(c)).toBe(normal.matchedRow);
+      // Never looser, at any row. This is the property `§24` actually asks for.
+      expect(
+        PERMISSIVENESS[corroborated.disposition],
+        label(c),
+      ).toBeLessThanOrEqual(PERMISSIVENESS[normal.disposition]);
+
+      if (normal.matchedRow === 1) {
+        expect(normal.disposition, label(c)).toBe('DISPATCH_ELIGIBLE');
+        expect(corroborated.disposition, label(c)).toBe('HALT');
+        strictRowOne += 1;
+      } else {
+        // Rows 2 through 5: still exactly `NORMAL`, and only the tag differs.
+        expect(corroborated.disposition, label(c)).toBe(normal.disposition);
+      }
     }
+    // The exception is real and is exercised, not merely permitted by the branch above.
+    expect(strictRowOne).toBeGreaterThan(0);
   });
 
   it('exactly the rows that relax from UNCORROBORATED are the clock-bearing COMPENSABLE ones', () => {
@@ -252,16 +311,49 @@ describe('`VC-A2` — ONLY THE DECLARED ROWS RELAX IN CORROBORATED_DEGRADED', ()
 
 describe('the three-way table `§47 §6` asks for, computed once and asserted', () => {
   it('for every recoverability/clock/approval class, NORMAL ≥ CORROBORATED ≥ UNCORROBORATED', () => {
-    // The single ordering statement the owner report's table rests on. Written as a chain so
-    // a violation names which link broke.
+    // ---------------------------------------------------------------------------------
+    // The single ordering statement the owner report's table rests on, written as a chain
+    // so a violation names which link broke.
+    //
+    // `30 §5.1b`(a) states it exactly, and the relation is `>=` and not `=`:
+    //
+    //     "**The permissiveness ordering is unchanged and still total.** For every row and
+    //      every operand tuple: `NORMAL` ≥ `CORROBORATED_DEGRADED` ≥ `UNCORROBORATED_STALL`
+    //      with `Dispatch > Suspend > Halt`. Row 1 now reads `Dispatch ≥ Halt ≥ Halt`,
+    //      which satisfies it. **What v1.3.4 removes is the EQUALITY between `NORMAL` and
+    //      `CORROBORATED_DEGRADED`, not the ordering.**"
+    //
+    // v1.3.3 ASSERTED THE EQUALITY `n === d` HERE, and that was correct while row 1 halted
+    // in every state. It is not the property the test's own title names, and v1.3.4 makes
+    // the difference observable. The chain below asserts the ordering the title states.
+    // ---------------------------------------------------------------------------------
     for (const c of CASES) {
       const n = PERMISSIVENESS[classifyDispatchPrecedence(operands('NORMAL', c)).disposition];
       const d =
         PERMISSIVENESS[classifyDispatchPrecedence(operands('CORROBORATED_DEGRADED', c)).disposition];
       const u =
         PERMISSIVENESS[classifyDispatchPrecedence(operands('UNCORROBORATED_STALL', c)).disposition];
-      expect(n, `NORMAL vs CORROBORATED for ${label(c)}`).toBe(d);
+      expect(d, `CORROBORATED must not exceed NORMAL for ${label(c)}`).toBeLessThanOrEqual(n);
+      expect(u, `UNCORROBORATED must not exceed CORROBORATED for ${label(c)}`).toBeLessThanOrEqual(d);
       expect(u, `UNCORROBORATED must not exceed NORMAL for ${label(c)}`).toBeLessThanOrEqual(n);
+    }
+  });
+
+  it('and the chain is STRICT at row 1 and an EQUALITY at rows 2-5 — the exception is exactly one row', () => {
+    // The ordering above holds trivially if every state agreed everywhere, so the shape of
+    // the one inequality is asserted directly. `36 §6` as v1.3.4 issues it:
+    // "`CORROBORATED_DEGRADED`: as `NORMAL` **for rows 2 through 5** [...] **and row 1
+    // halts**."
+    for (const c of CASES) {
+      const normal = classifyDispatchPrecedence(operands('NORMAL', c));
+      const d =
+        PERMISSIVENESS[classifyDispatchPrecedence(operands('CORROBORATED_DEGRADED', c)).disposition];
+      const n = PERMISSIVENESS[normal.disposition];
+      if (normal.matchedRow === 1) {
+        expect(d, `row 1 must be STRICTLY stricter for ${label(c)}`).toBeLessThan(n);
+      } else {
+        expect(d, `rows 2-5 must equal NORMAL for ${label(c)}`).toBe(n);
+      }
     }
   });
 });

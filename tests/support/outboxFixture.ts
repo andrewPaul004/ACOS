@@ -23,6 +23,11 @@ import {
   loadCommerceFixture,
   rawIntent,
 } from './enumerationFixture.js';
+import {
+  createStatutoryClock,
+  retainSourceRecord,
+  type Statute,
+} from '../../src/kernel/clocks/statutoryClock.js';
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
 import { dispatchPayloadCanonicalBytes } from '../../src/kernel/canonicalisation/canonicaliser.js';
 import { commitLocalAuthorisation } from '../../src/kernel/authorisation/localAuthorisation.js';
@@ -509,7 +514,7 @@ export function reshipDispatchPayloadBytes(input: {
 
 export async function authoriseReship(
   h: OutboxHarness,
-  options: { readonly resourceId?: string } = {},
+  options: { readonly resourceId?: string; readonly taskId?: string } = {},
 ): Promise<AuthorisedEffect> {
   const resourceId = options.resourceId ?? RESHIP_RESOURCE_ID;
   const authorisationRef = `auth:AR-S1I-RESHIP-${randomUUID()}`;
@@ -520,7 +525,7 @@ export async function authoriseReship(
   const facts: LocalAuthorisationRequestFacts = {
     companyId: COMPANY_ID,
     sessionId: 'session:S1I-kernel',
-    taskId: 'task:T-S1I-reship',
+    taskId: options.taskId ?? 'task:T-S1I-reship',
     principalId: 'principal:support_reasoner:1',
     authorisationRef,
     actionClass: 'fulfilment.reship',
@@ -833,6 +838,8 @@ export interface ClaimJournalRow {
   readonly mirrorState: string;
   readonly requiresUnmirroredTag: boolean;
   readonly overrideId: string | null;
+  /** `30 §5.3a` field 18, v1.3.4 (CSB-01). */
+  readonly claimClockRef: string | null;
   readonly occurredAt: Date;
   readonly prevHash: Buffer | null;
   readonly rowHash: Buffer;
@@ -845,7 +852,8 @@ export async function claimJournalRows(control: Pool): Promise<readonly ClaimJou
       `SELECT journal_seq, outbox_id, outbox_claim_id, outbox_correlation_tag, effect_id,
               authorisation_id, idempotency_key, action_class, resource_ref,
               dispatch_payload_hash, outbox_matched_row, outbox_mirror_state,
-              outbox_requires_unmirrored_tag, override_id, occurred_at, prev_hash, row_hash
+              outbox_requires_unmirrored_tag, override_id, outbox_claim_clock_ref,
+              occurred_at, prev_hash, row_hash
          FROM effect_journal
         WHERE company_id = $1 AND journal_row_kind = 'OUTBOX_CLAIMED'
         ORDER BY journal_seq`,
@@ -866,10 +874,249 @@ export async function claimJournalRows(control: Pool): Promise<readonly ClaimJou
       mirrorState: r['outbox_mirror_state'] as string,
       requiresUnmirroredTag: r['outbox_requires_unmirrored_tag'] as boolean,
       overrideId: r['override_id'] as string | null,
+      claimClockRef: r['outbox_claim_clock_ref'] as string | null,
       occurredAt: r['occurred_at'] as Date,
       prevHash: r['prev_hash'] as Buffer | null,
       rowHash: r['row_hash'] as Buffer,
     }));
+  } finally {
+    client.release();
+  }
+}
+
+// =====================================================================================
+// THE EFFECT→CASE BINDING AND ITS CLOCKS — v1.3.4 (CSB-01), `30 §9.2`
+// =====================================================================================
+
+/**
+ * `24 §3` K7's task-level case binding, seeded.
+ *
+ * =================================================================================
+ * THIS IS THE ONLY WAY A CASE ENTERS THE SYSTEM IN THESE SUITES, AND THAT IS THE POINT.
+ *
+ * `30 §9.2.1`: "For a case-associated effect, `case_ref` is inherited from the
+ * authoritative originating task [...] It MUST NOT come from any of: `ProposedIntent`;
+ * `rationale`; the dispatch payload; a free-text reason; a model classification; a
+ * caller-supplied claim-time argument; inference from a customer identifier; inference
+ * from a similar order; or an arbitrary resource lookup selected at claim time."
+ *
+ * So the fixture writes `authority_task.case_ref` — kernel state, `24 §3` K7 — and then
+ * runs the ORDINARY accepted S1F pipeline. Nothing in `authoriseRefund`,
+ * `authorisePause`, `authoriseReship` or `commitLocalAuthorisation` takes a case, and
+ * `0011`'s `effect_derive_case_ref` trigger is what puts it on the effect.
+ *
+ * A fixture that wrote `effect.case_ref` directly would be proving that an INSERT works.
+ * `effect-case-binding.test.ts` does exactly that ONCE, as an attack, and asserts the
+ * trigger discards the supplied value.
+ * =================================================================================
+ *
+ * `24 §3` K7's own listed sources are "an ingress case, an escalation, a
+ * `RemedyObligation`'s preserved lineage". None of those three subsystems exists at S1 —
+ * `37` S2 builds ingress and `26 §12`'s resume is unbuilt — so at S1I these are SEEDED,
+ * exactly as `retainSourceRecord`'s RECORD artifacts are seeded for `I56`.
+ */
+export async function bindTaskToCase(
+  control: Pool,
+  taskId: string,
+  caseRef: string | null,
+): Promise<void> {
+  const client = await control.connect();
+  try {
+    const updated = await client.query(
+      `UPDATE authority_task SET case_ref = $3
+        WHERE company_id = $1 AND task_id = $2`,
+      [COMPANY_ID, taskId, caseRef],
+    );
+    if (updated.rowCount !== 1) {
+      throw new Error(
+        `no authority_task ${taskId} for ${COMPANY_ID}; seed the task before binding a case`,
+      );
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * The `authority_task` the ACCEPTED S1F refund pipeline runs under.
+ *
+ * `authorityFixture.ts` seeds exactly one task and `proposeAndAuthorise` uses it, so this
+ * is the task whose `case_ref` a refund effect inherits. Re-exported by name rather than
+ * duplicated, so a fixture change moves both.
+ */
+export { TASK_ID as REFUND_TASK_ID } from './enumerationFixture.js';
+
+/** Read the committed `effect.case_ref` with raw SQL. Never through `src/`. */
+export async function effectCaseRef(
+  control: Pool,
+  effectId: string,
+): Promise<string | null> {
+  const client = await control.connect();
+  try {
+    const result = await client.query<{ case_ref: string | null }>(
+      `SELECT case_ref FROM effect WHERE company_id = $1 AND effect_id = $2`,
+      [COMPANY_ID, effectId],
+    );
+    if (result.rows[0] === undefined) throw new Error(`no effect ${effectId}`);
+    return result.rows[0].case_ref;
+  } finally {
+    client.release();
+  }
+}
+
+/** Read the committed `dispatch_outbox.claim_clock_ref` with raw SQL. */
+export async function claimClockRefOf(
+  control: Pool,
+  idempotencyKey: string,
+): Promise<string | null> {
+  const client = await control.connect();
+  try {
+    const result = await client.query<{ claim_clock_ref: string | null }>(
+      `SELECT claim_clock_ref FROM dispatch_outbox
+        WHERE company_id = $1 AND idempotency_key = $2`,
+      [COMPANY_ID, idempotencyKey],
+    );
+    if (result.rows[0] === undefined) throw new Error(`no outbox row for ${idempotencyKey}`);
+    return result.rows[0].claim_clock_ref;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Open a live statutory clock on a case, through the ACCEPTED `I56` path.
+ *
+ * `createStatutoryClock` is production and takes a `sourceRecordId` that must resolve to a
+ * retained RECORD-grade artifact — `I56`: "A model classification can route a case; it can
+ * never create a clock." This helper retains the artifact and then creates the clock, so
+ * every clock in these suites has real provenance and none is inserted directly.
+ */
+export async function openLiveClock(
+  control: Pool,
+  input: {
+    readonly caseRef: string;
+    readonly clockId: string;
+    readonly deadlineAt: Date;
+    readonly statute?: Statute;
+    readonly startedAt?: Date;
+  },
+): Promise<void> {
+  const sourceRecordId = `record:${input.clockId}`;
+  await retainSourceRecord(control, {
+    companyId: COMPANY_ID,
+    sourceRecordId,
+    kind: 'PROCESSOR_DISPUTE_WEBHOOK',
+    contentHash: createHash('sha256').update(input.clockId).digest(),
+    externalRef: `external:${input.clockId}`,
+    receivedAt: input.startedAt ?? S1I_NOW,
+  });
+  await createStatutoryClock(control, {
+    companyId: COMPANY_ID,
+    clockId: input.clockId,
+    statute: input.statute ?? 'FTC_7_WORKING_DAYS',
+    caseRef: input.caseRef,
+    startedAt: input.startedAt ?? S1I_NOW,
+    deadlineAt: input.deadlineAt,
+    sourceRecordId,
+  });
+}
+
+/**
+ * Close a live clock. `30 §9.2.4`: "a clock that closes, expires, or whose citation ceases
+ * to resolve, between enqueue and the decision makes row 3 stop applying."
+ *
+ * `statutory_clock` is not append-only — `0009` installs no such trigger on it, because a
+ * clock's whole purpose is to close — so this is an ordinary UPDATE and not an attack.
+ */
+export async function closeClock(control: Pool, clockId: string, at: Date): Promise<void> {
+  const client = await control.connect();
+  try {
+    await client.query(
+      `UPDATE statutory_clock SET closed_at = $3
+        WHERE company_id = $1 AND clock_id = $2`,
+      [COMPANY_ID, clockId, at],
+    );
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Seed an `authority_task` carrying a case, for suites that need TWO cases at once.
+ *
+ * =================================================================================
+ * WHY A SECOND TASK IS REQUIRED RATHER THAN A SECOND CASE ON ONE TASK.
+ *
+ * `25 §7`'s effect idempotency key is `H(task_id ‖ action_class ‖ resource_id ‖
+ * semantic_param_digest)`. Two effects of one action class on one resource under one task
+ * are THE SAME EFFECT — `I42` returns the prior result rather than creating a second row —
+ * so a fixture cannot produce two differently-cased effects from one task even in
+ * principle.
+ *
+ * **That is `30 §9.2.6`'s idempotency argument, observed rather than asserted:** "`case_ref`
+ * is a function of `task_id`, so two effects with different case bindings necessarily carry
+ * different `task_id`s and already have different keys." A fixture that needs two cases
+ * needs two tasks, and the reason it needs two tasks is the reason the key is unchanged.
+ * =================================================================================
+ */
+export async function seedTaskWithCase(
+  control: Pool,
+  task: {
+    readonly taskId: string;
+    readonly caseRef: string | null;
+    readonly principalId?: string;
+    readonly taskType?: string;
+  },
+): Promise<void> {
+  const client = await control.connect();
+  try {
+    await client.query(
+      `INSERT INTO authority_task (company_id, task_id, task_type, principal_id, case_ref)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        COMPANY_ID,
+        task.taskId,
+        task.taskType ?? 'support.refund',
+        task.principalId ?? 'principal:support_reasoner:1',
+        task.caseRef,
+      ],
+    );
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Clone a committed `authorisation` under a NEW id, keeping its `task_id`.
+ *
+ * ONLY FOR THE `I64` DERIVATION ATTACK. `effect.authorisation_id` is UNIQUE (`24 §3` K5 /
+ * `I31`), so an attacker attempting to insert an effect with a chosen `case_ref` needs an
+ * authorisation that has no effect yet — otherwise the unique constraint refuses the row
+ * before `effect_derive_case_ref` can run, and the test would prove `I31` rather than
+ * `I64`.
+ *
+ * `authorisation` is append-only for UPDATE and DELETE; INSERT is how it is written, so
+ * this is an ordinary insert and not a schema bypass.
+ */
+export async function cloneAuthorisation(
+  control: Pool,
+  sourceAuthorisationId: string,
+  newAuthorisationId: string,
+): Promise<void> {
+  const client = await control.connect();
+  try {
+    await client.query(
+      `INSERT INTO authorisation
+       SELECT $3 AS authorisation_id, company_id, principal_id, session_id, task_id,
+              action_class, resource_ref, resource_id, dispatch_payload_hash, intent_hash,
+              context_digest, constructor_id, constructor_semantic_major,
+              constructor_non_semantic_minor, policy_version, vendor_amount,
+              total_exposure, forward_integral, is_rate_class, recoverability,
+              value_direction, autonomy_level, gate_class, created_at
+         FROM authorisation
+        WHERE company_id = $1 AND authorisation_id = $2`,
+      [COMPANY_ID, sourceAuthorisationId, newAuthorisationId],
+    );
   } finally {
     client.release();
   }

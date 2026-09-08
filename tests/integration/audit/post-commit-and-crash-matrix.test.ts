@@ -446,6 +446,78 @@ describe('the retry source is PostgreSQL, not an in-memory queue', () => {
     expect(code).toContain('outbox_correlation_tag');
     expect(code).toContain('outbox_requires_unmirrored_tag');
   });
+
+  it('and the replacement assertions DEMONSTRABLY FIRE against a seeded occurrence', async () => {
+    /*
+     * -----------------------------------------------------------------------------
+     * `§28` OF THE S1I OWNER-RESOLUTION MANDATE:
+     *
+     *   "Claude disclosed an accepted test whose intended `CLAIMED` boundary assertion
+     *    contained literal `0x08` bytes where a word-boundary regex had been intended.
+     *    This is a test defect. Since S1I already added a firing replacement assertion,
+     *    retain that correction. Do not preserve a known no-op for historical purity.
+     *    Record: **TEST DEFECT FOUND AND REPAIRED**. **Verify the replacement assertion
+     *    demonstrably fails against a seeded forbidden `CLAIMED` occurrence.**"
+     *
+     * THE DEFECT THAT MADE THIS NECESSARY, RESTATED. `` inside a regex LITERAL is a word
+     * boundary; `` inside a STRING passed to `new RegExp` — or a literal `0x08` byte
+     * pasted into a pattern — is a BACKSPACE character. The accepted pattern therefore
+     * required a real backspace on either side of `CLAIMED`, which no source file contains,
+     * so the assertion could never fail whatever the pusher said. **An assertion that
+     * cannot fail is indistinguishable from one that is absent**, and `36 §0`'s rule about
+     * self-validating tests is the same rule one level down.
+     *
+     * SO THE REPLACEMENT IS RUN AGAINST A MUTATED COPY OF THE SOURCE, IN MEMORY. Each
+     * forbidden token is seeded into the text one at a time and the assertion must reject
+     * it. Nothing on disk is touched, and the real file is re-asserted clean afterwards.
+     * -----------------------------------------------------------------------------
+     */
+    const code = await readFile(join('src', 'replication', 'journalPusher.ts'), 'utf8');
+
+    // A seeded occurrence: the real source plus one line naming the forbidden token.
+    const seed = (token: string): string => [code, `const seeded = ${token};`].join('\n');
+    const seededWithClaimed = seed("'CLAIMED'");
+
+    /*
+     * FIRST: THE DEFECT ITSELF, REPRODUCED, so the reason for the repair is checkable
+     * rather than only described.
+     *
+     * `BACKSPACE` below is the byte that was pasted into the accepted pattern where the
+     * two-character escape sequence for a word boundary was meant. It is built with
+     * `String.fromCharCode` so that no literal control byte lives in this file either.
+     */
+    const BACKSPACE = String.fromCharCode(8);
+    const defective = new RegExp(`${BACKSPACE}CLAIMED${BACKSPACE}`);
+    expect(
+      defective.test(seededWithClaimed),
+      'the withdrawn pattern must NOT fire even on a seeded occurrence — that is the defect',
+    ).toBe(false);
+    // Nor on ANY text here, because no source file contains a backspace at all.
+    expect(defective.test(code)).toBe(false);
+    // And the WORD-BOUNDARY pattern that was intended DOES fire on the same seeded text,
+    // which is what makes the two distinguishable rather than a matter of opinion.
+    expect(/\bCLAIMED\b/.test(seededWithClaimed)).toBe(true);
+    expect(/\bCLAIMED\b/.test(code)).toBe(false);
+
+    // SECOND: every replacement absence, seeded one at a time, must be DETECTED — and the
+    // real file must be clean of it. Both halves, so a vacuous pass is impossible.
+    for (const forbidden of [
+      'dispatch_outbox',
+      'claimForExternalDispatch',
+      'enqueueDispatch',
+      "'CLAIMED'",
+      'INSERT INTO',
+      'DELETE FROM',
+      'FOR UPDATE',
+      'SKIP LOCKED',
+    ]) {
+      expect(
+        seed(JSON.stringify(forbidden)).includes(forbidden),
+        `the replacement assertion for ${forbidden} did not detect a seeded occurrence`,
+      ).toBe(true);
+      expect(code.includes(forbidden), `journalPusher.ts carries ${forbidden}`).toBe(false);
+    }
+  });
 });
 
 function bindRecord(record: Awaited<ReturnType<typeof transportRecordFor>>): unknown[] {

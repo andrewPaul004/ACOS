@@ -230,6 +230,8 @@ export function recordFromControlRow(row: Record<string, unknown>): JournalTrans
       outboxMirrorState: (row['outbox_mirror_state'] as string | null) ?? null,
       outboxRequiresUnmirroredTag:
         (row['outbox_requires_unmirrored_tag'] as boolean | null) ?? null,
+      // `30 §5.3a` field 18, v1.3.4 (CSB-01, JCS-02).
+      outboxClaimClockRef: (row['outbox_claim_clock_ref'] as string | null) ?? null,
       occurredAt: row['occurred_at'] as Date,
       prevHash: (row['prev_hash'] as Buffer | null) ?? null,
     },

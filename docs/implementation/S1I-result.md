@@ -21,7 +21,24 @@
 | Actual | `8ce0d4121b46d765afe0d8f0c5d6afae5811386f` |
 | Worktree at start | clean |
 | Branch | `feature/s1i-durable-outbox-claim` |
+| Implementation commit | `dec85eb` — `dec85eba480bc9e63f3e56d1fc1afaa32e5a74b8` |
 | Baseline `npm run verify` | **109 files / 1679 tests / 1679 passed / 0 failed / 0 skipped**, exit 0, 596.52s |
+| Worktree at finish | clean |
+
+**The implementation commit and this documentation commit are distinct**, following the S1H
+precedent: `dec85eb` carries the migrations, the modules, the suites and the whole document
+set as written at implementation time, and the commit that follows it records `dec85eb`'s own
+sha here and in `S1I-implementation-log.md §12`. A result document cannot contain the sha of
+the commit that contains it.
+
+### `§52`'s diff audit, run against the real diff
+
+`git diff 8ce0d41...HEAD` touches **44 files**. Every `+` line under `src/` was scanned for
+the twelve forbidden patterns `§52` enumerates — a global `fetch`, `node:http(s)`, `axios`,
+`undici`, `XMLHttpRequest`, a timer, a cron, `forceClaim`, `markClaimed`, `claim_expires_at`,
+`dispatched_at`, `'DISPATCHED'`, a credential, a bearer token, an authorization header, a
+vendor name. **Seven lines matched, and every one is a COMMENT disclaiming the pattern it
+names.** No production statement in the slice contains any of them.
 
 ---
 

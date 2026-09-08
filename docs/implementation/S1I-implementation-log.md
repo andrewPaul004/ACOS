@@ -355,6 +355,17 @@ in `S1I-contract.md §9`.
 
 ---
 
-## 12. Verification
+## 12. Verification and the final commit
 
-See `S1I-result.md §17` for the figures.
+**`npm run verify` green: 120 files, 1797 tests, 1797 passed, 0 failed, 0 skipped, exit 0,
+568.27s.** Baseline was 109 files / 1679 tests. See `S1I-result.md §17` for the per-suite
+breakdown and the diff sizes.
+
+**Implementation commit: `dec85eb` — `dec85eba480bc9e63f3e56d1fc1afaa32e5a74b8`.**
+
+It carries the two migrations, the five production modules, the four changed production
+files, the eleven test suites, the six vulnerable-control modules, the compile fixture, the
+fixture, the five changed accepted test files and the whole S1I document set as written at
+implementation time. The commit that follows it records that sha in this section and in
+`S1I-result.md §1`, for the reason S1H recorded the same split: a result document cannot
+contain the sha of the commit that contains it.

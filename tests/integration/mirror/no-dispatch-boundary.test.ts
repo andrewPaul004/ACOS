@@ -1,4 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { money } from '../../../src/kernel/exposure/money.js';
 import { join, sep } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -77,15 +78,20 @@ describe('THE CLASSIFIER RETURNS A DISPOSITION, NOT A DISPATCH', () => {
       actionClass: 'refund.create',
       recoverability: 'COMPENSABLE',
       clockBearing: true,
-      aboveApprovalFloor: false,
+      totalExposure: money('19.99'),
       hasRecordedApproval: true,
       activeOverride: null,
+      unreachableSince: new Date(T0.getTime() - 60_000),
       now: T0,
     });
-    // The full key set. `§21`: "Do not return adapter payloads."
+    // The full key set. `§21`: "Do not return adapter payloads." v1.3.3 adds the two
+    // FULL-HALT POSTURE booleans and nothing else; both are DERIVED from `unreachableSince`
+    // and `now`, and neither is an adapter, an endpoint or a payload.
     expect(Object.keys(decision).sort()).toEqual([
       'disposition',
       'explanation',
+      'fullHaltPosture',
+      'haltedByFullHaltPosture',
       'matchedRow',
       'overrideId',
       'ownerOverrideAvailable',
@@ -102,9 +108,10 @@ describe('THE CLASSIFIER RETURNS A DISPOSITION, NOT A DISPATCH', () => {
       actionClass: 'refund.create' as const,
       recoverability: 'COMPENSABLE' as const,
       clockBearing: true,
-      aboveApprovalFloor: true,
+      totalExposure: money('22.00'),
       hasRecordedApproval: true,
       activeOverride: null,
+      unreachableSince: new Date(T0.getTime() - 60_000),
       now: T0,
     };
     const first = classifyDispatchPrecedence(operands);

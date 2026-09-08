@@ -1,4 +1,11 @@
+import {
+  DEGRADED_MODE_TIMING,
+  DEGRADED_PER_ACTION_APPROVAL_FLOOR,
+  isAboveDegradedApprovalFloor,
+  isFullHaltPosture,
+} from './degradedModeThresholds.js';
 import type { ActionClass, Recoverability } from '../canonicalisation/actionCatalogue.js';
+import { toDb, type Money } from '../exposure/money.js';
 import type { MirrorState } from './mirrorState.js';
 
 /**
@@ -23,9 +30,11 @@ import type { MirrorState } from './mirrorState.js';
  *    | **1** | `recoverability == IRRECOVERABLE` | **Halt.** No send, no reship, no public
  *            post, no address edit. Unmirrored and unundoable is the combination the mirror
  *            exists for. |
- *    | **2** | Above the per-action approval floor **and not** clock-bearing | **Halt.** The
- *            approval itself proceeds normally; what halts is *dispatch* of an
- *            already-approved above-floor effect while unmirrored. |
+ *    | **2** | Above the per-action approval floor (`degraded_per_action_approval_floor_
+ *            monetary`, **$20.00**, `51 §3.7`; compared against `effect.request.exposure.
+ *            total_exposure`) **and not** clock-bearing | **Halt.** The approval itself
+ *            proceeds normally; what halts is *dispatch* of an already-approved above-floor
+ *            effect while unmirrored. |
  *    | **3** | Clock-bearing (a live statutory clock citing a RECORD-grade fact, `§9.1`) and
  *            `recoverability == COMPENSABLE` | **Dispatch**, in `NORMAL` and
  *            `CORROBORATED_DEGRADED` only. Journal `DISPATCHED_UNMIRRORED` and raise it in
@@ -34,6 +43,11 @@ import type { MirrorState } from './mirrorState.js';
  *    | **4** | `recoverability == COMPENSABLE`, discretionary | **Suspend.** |
  *    | **5** | `recoverability == REVERSIBLE` | **Dispatch** against the committed, locally
  *            chained journal. |
+ *
+ *    And item 5's second rule, which qualifies every row above (v1.3.3, `§5.1a`): "Mirror
+ *    unreachable continuously for at or beyond `audit_unreachable_full_halt_threshold`
+ *    (**30 minutes**, `51 §3.8`) halts **all** classes including REVERSIBLE — the point at
+ *    which the company stops."
  *
  *    **Row 2 before row 3, and row 1 before both.** [...] **Approval-bearing effects
  *    evaluate at rows 3 or 5 once approved**; the approval gate is `26 §12`'s concern and
@@ -60,10 +74,16 @@ import type { MirrorState } from './mirrorState.js';
  *
  * `30 §5.1` item 4 is an ORDERED FIRST-MATCH LIST and AUD-05 is what happens when it is
  * not treated as one: "v1.1 presented five independent rows and **two of them matched
- * simultaneously for the most consequential case.** A $30 refund inside a live FTC clock is
- * COMPENSABLE-inside-a-clock [...] **and** above the $25 per-action approval floor [...].
- * The table declared no precedence, so the largest and most time-critical refund class had
- * two contradictory specified behaviours."
+ * simultaneously for the most consequential case.** A refund inside a live FTC clock is
+ * COMPENSABLE-inside-a-clock [...] **and** above the per-action approval floor [...]. The
+ * table declared no precedence, so the largest and most time-critical refund class had two
+ * contradictory specified behaviours."
+ *
+ * v1.3.3 corrects the same passage's own arithmetic: v1.1 stated that floor in prose as the
+ * same `$25` figure as `refund.create`'s `per_action_max`, and `30 §5.1a` records that the
+ * two are different quantities of different kinds. The declared floor is `$20.00`, so the
+ * ambiguous fixture is a `$22.00` refund inside a live clock rather than a `$30` one — a
+ * `$30` refund now DENIES `PER_ACTION` and never reaches this function at all.
  *
  * So the rows are a literal array in the architecture's own order, evaluation stops at the
  * first match, and the matched row number is part of the output — because `VC-A6` requires
@@ -105,28 +125,58 @@ export type Disposition = (typeof DISPOSITIONS)[number];
  *                          `source_record_ref` resolves to a retained RECORD-grade
  *                          artifact (`I56`). `24 §3` K10: a model "may not [...] create a
  *                          clock, or influence the fact a clock cites."
- *   `aboveApprovalFloor`   `26 §12`'s approval gate. SEE THE NOTE BELOW.
+ *   `totalExposure`        the effect's `exposure.total_exposure`, built by step R's own
+ *                          constructor. `51 §3.7`'s declared comparison operand for the
+ *                          approval floor. SEE THE NOTE BELOW.
  *   `hasRecordedApproval`  the effect's `approval_id`, kernel state since S1F.
  *   `activeOverride`       `degraded_mode_override`, status `ACTIVE`, owner-granted under a
  *                          real Ed25519 signature.
+ *   `unreachableSince`     `mirror_declaration.opened_at` for the company's OPEN declaration,
+ *                          or `null` when none is open. `30 §5.1a`'s `continuous_unreachability`
+ *                          operand. SEE THE SECOND NOTE BELOW.
  *   `now`                  the control database clock (`36 §6`).
  *
  * ---------------------------------------------------------------------------------
- * `aboveApprovalFloor` IS A BOOLEAN OPERAND AND THE THRESHOLD BEHIND IT IS UNDECLARED.
+ * THE APPROVAL FLOOR IS DERIVED HERE. THE CALLER CANNOT CHOOSE IT. (v1.3.3, S1H-C1)
  *
- * `50 §2` class 3 lists the "approval floor" as a field of the owner-signed action
- * catalogue. `30 §5.1`'s explanation and `22 §3.1` both refer to "the $25 per-action approval
- * floor" in prose. **NO NUMERIC `approval_floor` QUANTITY IS DECLARED ANYWHERE IN v1.3.2** —
- * `51 §3.1` declares `refund.create`'s `per_action_max` as $25.00, which is a DENY boundary
- * (`26 §8`: `total_exposure <= 25.00` or the action denies `PER_ACTION`), not an approval
- * boundary, and `26 §12`'s tier table gives no monetary thresholds at all.
+ * S1H shipped this classifier with `aboveApprovalFloor: boolean` as a caller-supplied
+ * operand, because v1.3.2 declared no numeric floor anywhere and `§42` of the S1H mandate
+ * forbids inventing one. That was reported as `S1H-C1` and as PARTIAL, and it was an
+ * AUTHORITY ESCAPE HATCH: a caller passing `false` skipped row 2 entirely.
  *
- * `§42` of the S1H mandate forbids inventing it. So this classifier takes the predicate as
- * a DECLARED OPERAND, supplied by `26 §12`'s approval machinery, which `37` S5 builds. The
- * ROW-2 BEHAVIOUR is fully implemented and fully tested over both values of the boolean;
- * what is PARTIAL is the derivation of the boolean, and `S1H-result.md §10` reports it as
- * such with the citation. `S1H-owner-clarifications.md S1H-C1` asks the owner to declare
- * the quantity.
+ * **v1.3.3 declares the quantity, so the boolean is gone.** `51 §3.7`:
+ * `degraded_per_action_approval_floor_monetary` = **USD 20.00**, compared **strictly**
+ * against `effect.request.exposure.total_exposure`. This classifier takes the MONEY and
+ * derives the predicate through `isAboveDegradedApprovalFloor`, which is the one place the
+ * comparison happens.
+ *
+ * There is no seam, TEST-ONLY or otherwise, that re-admits the boolean. The pure truth
+ * table is still exercised over both of its values — by choosing exposures on either side
+ * of the declared floor, which is strictly stronger than a seam because it also proves the
+ * derivation.
+ * ---------------------------------------------------------------------------------
+ *
+ * ---------------------------------------------------------------------------------
+ * THE FULL-HALT POSTURE IS DERIVED HERE TOO, FROM THE DECLARATION'S AGE. (v1.3.3, S1H-C10)
+ *
+ * `30 §5.1` item 5: "Mirror unreachable continuously for at or beyond
+ * `audit_unreachable_full_halt_threshold` (**30 minutes**, `51 §3.8`) halts **all** classes
+ * including REVERSIBLE — the point at which the company stops."
+ *
+ * `unreachableSince` is `mirror_declaration.opened_at`, not a boolean and not an elapsed
+ * count, for the same reason the floor is a `Money`: a `fullHalt: boolean` would be the same
+ * escape hatch one release later. `30 §5.1a` declares the timer semantics and they fall out
+ * of the schema — the declaration is opened once, at most one is open per company, and none
+ * of the events the architecture lists as NOT resetting the timer touches `opened_at`.
+ *
+ * THE ONE COHERENCE GUARD. `30 §5.6`'s three states are entered from the mirror
+ * OBSERVATION, and `mirrorStateMachine.ts` opens a declaration on entering either degraded
+ * state and closes it on returning to `NORMAL`. So `mirrorState !== 'NORMAL'` and
+ * `unreachableSince === null` is not a conservative reading — it is an INCOHERENT operand
+ * pair, and the only way to produce it is to hand-build operands that the durable machine
+ * would never produce. It throws. `NORMAL` with a non-null `unreachableSince` throws for the
+ * same reason in the other direction. Without the guard, passing `null` alongside
+ * `UNCORROBORATED_STALL` would be exactly the boolean escape hatch this pass removed.
  * ---------------------------------------------------------------------------------
  */
 export interface PrecedenceOperands {
@@ -134,9 +184,25 @@ export interface PrecedenceOperands {
   readonly actionClass: ActionClass;
   readonly recoverability: Recoverability;
   readonly clockBearing: boolean;
-  readonly aboveApprovalFloor: boolean;
+  /**
+   * `effect.request.exposure.total_exposure`. `51 §3.7`'s declared comparison operand for
+   * the approval floor, and the same operand `51 §3.1` declares for `per_action_max`.
+   *
+   * NOT `vendor_amount`. NOT a dispatch amount. NOT a model-supplied amount. There is no
+   * second monetary field on this type, so there is nothing to confuse it with.
+   */
+  readonly totalExposure: Money;
   readonly hasRecordedApproval: boolean;
   readonly activeOverride: OverrideScope | null;
+  /**
+   * `mirror_declaration.opened_at` for the company's OPEN declaration, or `null` when none
+   * is open — `30 §5.1a`'s `continuous_unreachability` operand.
+   *
+   * Must be non-null exactly when `mirrorState !== 'NORMAL'`; the classifier throws on the
+   * incoherent pairs rather than reading them conservatively, because a `null` accepted
+   * alongside a degraded state would be the escape hatch v1.3.3 removed.
+   */
+  readonly unreachableSince: Date | null;
   readonly now: Date;
 }
 
@@ -192,6 +258,23 @@ export interface PrecedenceDecision {
    * named modules. This string is kernel-authored and derived from the operands.
    */
   readonly explanation: string;
+  /**
+   * `30 §5.1a`'s FULL-HALT POSTURE — whether the company's open declaration has been open
+   * for at or beyond `audit_unreachable_full_halt_threshold` (v1.3.3, S1H-C10).
+   *
+   * Reported rather than folded silently into `disposition`, because `VC-A2g` has to be able
+   * to assert WHY a REVERSIBLE effect halted: at row 5 with the posture, not at row 1. It is
+   * DERIVED from `unreachableSince` and `now`; no caller supplies it.
+   */
+  readonly fullHaltPosture: boolean;
+  /**
+   * Set when the FULL-HALT POSTURE is what reduced this row's disposition to `HALT`.
+   *
+   * `false` for a row that halts on its own merits — rows 1 and 2 halt in every state and in
+   * or out of the posture — so a reader cannot mistake the posture for the cause of a halt
+   * it did not cause.
+   */
+  readonly haltedByFullHaltPosture: boolean;
 }
 
 /** `30 §5.1` item 4's rows, in the architecture's order. Index 0 is row 1. */
@@ -226,7 +309,11 @@ function matchesRow1(o: PrecedenceOperands): boolean {
  * — and that "never row 2" is the operative half.
  */
 function matchesRow2(o: PrecedenceOperands): boolean {
-  return o.aboveApprovalFloor && !o.clockBearing && !o.hasRecordedApproval;
+  // `51 §3.7`'s strict comparison, derived here and nowhere else in `src/`. The operand is
+  // the effect's own `total_exposure`; there is no boolean a caller could supply instead.
+  return (
+    isAboveDegradedApprovalFloor(o.totalExposure) && !o.clockBearing && !o.hasRecordedApproval
+  );
 }
 
 /** `30 §5.1` row 3 — clock-bearing AND COMPENSABLE. Both conjuncts, verbatim. */
@@ -303,7 +390,15 @@ function overrideCovers(
  * the end is therefore unreachable and is an assertion rather than a fallback — a default
  * disposition would be a sixth rule the architecture does not declare.
  */
-export function classifyDispatchPrecedence(o: PrecedenceOperands): PrecedenceDecision {
+/** The ordered first-match evaluation INSIDE the declared state. `§5.1a`'s posture is
+ * applied by `classifyDispatchPrecedence` over this result, so `matchedRow` here is always
+ * the row `30 §5.1` item 4 itself selects. */
+type WithinStateDecision = Omit<
+  PrecedenceDecision,
+  'fullHaltPosture' | 'haltedByFullHaltPosture'
+>;
+
+function classifyWithinState(o: PrecedenceOperands): WithinStateDecision {
   // `36 §6`: "`CORROBORATED_DEGRADED`: as `NORMAL`, with every dispatch tagged
   // `DISPATCHED_UNMIRRORED`." So the tag follows the STATE for ordinary dispatch, and
   // `30 §5.7.2` item 5 adds it for every override dispatch regardless of state.
@@ -434,7 +529,129 @@ export function classifyDispatchPrecedence(o: PrecedenceOperands): PrecedenceDec
     `30 §5.1 item 4's five rows are exhaustive and none matched: ${JSON.stringify({
       recoverability: o.recoverability,
       clockBearing: o.clockBearing,
-      aboveApprovalFloor: o.aboveApprovalFloor,
+      totalExposure: toDb(o.totalExposure),
+      approvalFloor: toDb(DEGRADED_PER_ACTION_APPROVAL_FLOOR),
     })}`,
   );
 }
+
+/**
+ * `30 §5.1a`'s `continuous_unreachability`, and the coherence guard on its operand.
+ *
+ * `30 §5.1a`, verbatim:
+ *
+ *   continuous_unreachability = now() − declaration.opened_at   , for the open declaration
+ *   continuous_unreachability = 0                               , when no declaration is open
+ *
+ * The guard is not defensive programming. `30 §5.6` enters a degraded state from the mirror
+ * OBSERVATION, and `mirrorStateMachine.ts` opens the `AUDIT_MIRROR_DEGRADED` declaration in
+ * the same transaction as that entry and closes it on the return to `NORMAL`. So the two
+ * incoherent pairs below cannot arise from the durable machine at all, and accepting either
+ * would reintroduce exactly the escape hatch v1.3.3 removed from the approval floor: a
+ * caller could pass `UNCORROBORATED_STALL` with `unreachableSince: null` and buy an
+ * indefinite exemption from the posture.
+ */
+function continuousUnreachabilityMs(o: PrecedenceOperands): number {
+  if (o.mirrorState === 'NORMAL') {
+    if (o.unreachableSince !== null) {
+      throw new Error(
+        'incoherent operands: mirrorState is NORMAL and unreachableSince is non-null. ' +
+          '30 §5.6 row 1 is the mirror acknowledging, and a NORMAL resolution closes the ' +
+          'AUDIT_MIRROR_DEGRADED declaration (30 §5.7), so no declaration can be open',
+      );
+    }
+    return 0;
+  }
+  if (o.unreachableSince === null) {
+    throw new Error(
+      `incoherent operands: mirrorState is ${o.mirrorState} and unreachableSince is null. ` +
+        'Both degraded states are entered from the mirror observation and open a ' +
+        'declaration (30 §5.6, §5.7), so opened_at exists. 30 §5.1a reads its age as ' +
+        'continuous_unreachability and a null here would exempt the state from the ' +
+        'FULL-HALT POSTURE indefinitely',
+    );
+  }
+  return o.now.getTime() - o.unreachableSince.getTime();
+}
+
+/**
+ * Classify one effect. ORDERED, FIRST-MATCH, TOTAL, THEN QUALIFIED BY `§5.1a`'s POSTURE.
+ *
+ * =================================================================================
+ * `30 §5.1a`'s FULL-HALT POSTURE, APPLIED AFTER THE ROW IS DECIDED AND NOT INSTEAD OF IT.
+ *
+ * `30 §5.1a`: "In the posture, item 4's ordered list is evaluated and then every disposition
+ * is reduced to Halt, for **every** recoverability class including REVERSIBLE."
+ *
+ * So the ordered list runs first and `matchedRow` still reports the architecture's own answer
+ * — `VC-A2g` needs to assert that a REVERSIBLE effect halted at ROW 5 UNDER THE POSTURE and
+ * not at row 1, and a posture implemented as a sixth row or as an early return would lose
+ * that. It is a REDUCTION over the disposition, which is also why it cannot make anything
+ * more permissive: `HALT` is the strictest of the three (`mirrorPrecedenceTable.ts`'s
+ * `PERMISSIVENESS`) and the reduction only ever moves toward it.
+ *
+ * THE OVERRIDE, COMPOSED EXACTLY AS `§5.1a` COMPOSES IT. Item 5 says the override is the
+ * only escape from "either the halt or `UNCORROBORATED_STALL`'s row-3 suspension", and one
+ * sentence later that "an override restores precedence rows 3 and 4 only, never rows 1 or 2".
+ * `§5.1a` resolves the composition: "in the posture, rows 3 and 4 are restorable by an
+ * in-scope override; rows 1, 2 and 5 are not."
+ *
+ * The implementation of that is one line — the reduction is skipped exactly where the row's
+ * own evaluation already consulted an in-scope override and came out eligible. Row 5 has no
+ * override path anywhere in the slice: `precedence_rows` cannot hold `5` (`51 §3.6`, a DB
+ * CHECK in `0009`, and `overrideCovers`'s own `row !== 3 && row !== 4` refusal), so a row-5
+ * dispatch in the posture halts with no escape to offer.
+ * =================================================================================
+ */
+export function classifyDispatchPrecedence(o: PrecedenceOperands): PrecedenceDecision {
+  const unreachableMs = continuousUnreachabilityMs(o);
+  const fullHaltPosture = isFullHaltPosture(unreachableMs);
+  const within = classifyWithinState(o);
+
+  if (!fullHaltPosture) {
+    return { ...within, fullHaltPosture: false, haltedByFullHaltPosture: false };
+  }
+
+  // Rows 3 and 4 restored by an in-scope override are the declared escape and survive. Every
+  // other disposition — including row 5's REVERSIBLE dispatch, which is what item 5's "all
+  // classes including REVERSIBLE" is about — reduces to HALT.
+  const restoredByOverride = within.overrideId !== null;
+  if (restoredByOverride) {
+    return {
+      ...within,
+      fullHaltPosture: true,
+      haltedByFullHaltPosture: false,
+      explanation:
+        `${within.explanation}; the FULL-HALT POSTURE holds (continuous unreachability ` +
+        `${String(unreachableMs)}ms >= ${String(
+          DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs,
+        )}ms, 51 §3.8) and row ${String(within.matchedRow)} is inside the override's scope, ` +
+        'which 30 §5.1 item 5 makes the only escape from the halt (30 §5.1a)',
+    };
+  }
+
+  if (within.disposition === 'HALT') {
+    // Rows 1 and 2 halt on their own merits, in or out of the posture. Reporting the posture
+    // as the CAUSE here would be false, so `haltedByFullHaltPosture` stays `false`.
+    return { ...within, fullHaltPosture: true, haltedByFullHaltPosture: false };
+  }
+
+  return {
+    disposition: 'HALT',
+    matchedRow: within.matchedRow,
+    // A HALT dispatches nothing, so there is nothing to tag and no override to attribute.
+    requiresUnmirroredTag: false,
+    overrideId: null,
+    // Rows 3 and 4 still have an escape to offer the owner; rows 1, 2 and 5 do not.
+    ownerOverrideAvailable: within.ownerOverrideAvailable,
+    explanation:
+      `row ${String(within.matchedRow)} in ${o.mirrorState} resolved ${within.disposition}, ` +
+      'and the FULL-HALT POSTURE reduces it to HALT: continuous unreachability ' +
+      `${String(unreachableMs)}ms >= audit_unreachable_full_halt_threshold ` +
+      `${String(DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs)}ms (51 §3.8), which halts ` +
+      'all classes including REVERSIBLE (30 §5.1 item 5, §5.1a)',
+    fullHaltPosture: true,
+    haltedByFullHaltPosture: true,
+  };
+}
+

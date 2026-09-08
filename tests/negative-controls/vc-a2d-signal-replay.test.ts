@@ -7,6 +7,7 @@ import {
   type MirrorHarness,
 } from '../support/mirrorFixture.js';
 import { transportRecordFor } from '../support/replicationFixture.js';
+import { money } from '../../src/kernel/exposure/money.js';
 import { emitAttestation } from '../../src/replication/attestation.js';
 import {
   closeStallInterval,
@@ -208,9 +209,14 @@ describe('STEPS 3, 4 AND 5 — the outage resolves, the signal ages, the control
       actionClass: 'refund.create' as const,
       recoverability: 'COMPENSABLE' as const,
       clockBearing: true,
-      aboveApprovalFloor: false,
+      // v1.3.3: below `51 §3.7`'s `$20.00` floor, so the fixture still lands on row 3.
+      totalExposure: money('19.99'),
       hasRecordedApproval: true,
       activeOverride: null,
+      // A declaration was reopened immediately above at `RECOVERED_AT`, so continuous
+      // unreachability is effectively zero — far inside `51 §3.8`'s 30-minute FULL-HALT
+      // threshold, which this control is not about and which would halt both machines.
+      unreachableSince: RECOVERED_AT,
       now: RECOVERED_AT,
     };
 

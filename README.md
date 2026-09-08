@@ -3,7 +3,7 @@
 **Non-production architectural MVP. S1A increment only.**
 
 This repository contains the first authorized implementation work against **ACOS Operating
-Spine v1.3, package issue v1.3.2**. It implements **S1A**: the exposure-ledger substrate
+Spine v1.3, package issue v1.3.3**. It implements **S1A**: the exposure-ledger substrate
 proof and the durable-execution spike. Nothing more.
 
 > **This is NOT authorized for** production deployment · real customers · real money · real
@@ -44,7 +44,8 @@ ACOS/
 ├── _input/                          the original architecture zip, retained
 ├── docs/
 │   ├── architecture/v1.3.1/         the architecture package as first issued. IMMUTABLE
-│   ├── architecture/v1.3.2/         the CURRENT package issue. IMMUTABLE INPUT
+│   ├── architecture/v1.3.2/         the second package issue. IMMUTABLE
+│   ├── architecture/v1.3.3/         the CURRENT package issue. IMMUTABLE INPUT
 │   └── implementation/              S1A's own documents (see below)
 ├── src/
 │   ├── db/
@@ -72,10 +73,13 @@ ACOS/
 ```
 
 **Each `docs/architecture/vX.Y.Z/` package is an immutable input.** A package issue is never
-modified in place: `v1.3.2` was materialised as a new directory carrying the `ACOS-JCS-1`
-NULL-framing correction (`phase2-v1.3.2-errata.md`, JCS-01), and `v1.3.1` remains on disk
-byte-identical to its own issue. **`docs/architecture/v1.3.2/` is the current authoritative
-input.** Neither is modified, including where
+modified in place. `v1.3.2` was materialised as a new directory carrying the `ACOS-JCS-1`
+NULL-framing correction (`phase2-v1.3.2-errata.md`, JCS-01). `v1.3.3` was materialised the
+same way, carrying four normative declarations of quantities the mechanism needed and the
+package did not declare (`phase2-v1.3.3-errata.md`: APF-01 the degraded per-action approval
+floor, MLT-01 and FHT-01 the two degraded-mode timing thresholds, SWR-01
+`STORE_WRITE_REJECTED`'s derivation). `v1.3.1` and `v1.3.2` remain on disk byte-identical to
+their own issues. **`docs/architecture/v1.3.3/` is the current authoritative input.** Neither is modified, including where
 it contains a known stale sentence — see the precedence note in
 [`S1A-contract.md`](docs/implementation/S1A-contract.md) and
 [`S1A-implementation-log.md §1`](docs/implementation/S1A-implementation-log.md).
@@ -145,7 +149,7 @@ than asserted once.
 
 ## Scheduled blocks respected
 
-Per [`phase2-v1.3-implementation-brief.md §5`](docs/architecture/v1.3.2/phase2-v1.3-implementation-brief.md),
+Per [`phase2-v1.3-implementation-brief.md §5`](docs/architecture/v1.3.3/phase2-v1.3-implementation-brief.md),
 this repository contains **no** path to any of:
 
 | Blocked | By |

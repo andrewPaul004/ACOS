@@ -10,6 +10,7 @@ import {
   UNSAFE_ROW_4_BEFORE_ROW_3,
   unsafeEvaluate,
 } from '../negative-controls/unsafe-precedence-order.js';
+import { money } from '../../src/kernel/exposure/money.js';
 import { expectedFor, type OracleState } from '../support/mirrorPrecedenceTable.js';
 
 /**
@@ -41,9 +42,15 @@ function refundOperands(
     actionClass: 'refund.create',
     recoverability: 'COMPENSABLE',
     clockBearing: true,
-    aboveApprovalFloor: true,
+    // v1.3.3: `51 §3.7`'s declared operand. `$22.00` is above the `$20.00` floor and still
+    // admitted by `refund.create`'s `$25.00` `per_action_max` — `36`'s re-based VC-A6
+    // fixture. There is no boolean to pass here any more (`S1H-C1`).
+    totalExposure: money('22.00'),
     hasRecordedApproval: true,
     activeOverride: null,
+    // Well inside `51 §3.8`'s 30-minute threshold: `30 §5.1a`'s FULL-HALT POSTURE is
+    // `full-halt-posture.test.ts`'s subject and would otherwise mask every row here.
+    unreachableSince: state === 'NORMAL' ? null : new Date(NOW.getTime() - 60_000),
     now: NOW,
     ...over,
   };
@@ -80,16 +87,17 @@ describe("`VC-A6`'s three named fixtures", () => {
     // operands, in all three states.
     for (const state of ['NORMAL', 'UNCORROBORATED_STALL', 'CORROBORATED_DEGRADED'] as const) {
       for (const clockBearing of [false, true]) {
-        for (const aboveApprovalFloor of [false, true]) {
+        for (const totalExposure of ['19.99', '20.01']) {
           for (const hasRecordedApproval of [false, true]) {
             const d = classifyDispatchPrecedence({
               mirrorState: state,
               actionClass: 'fulfilment.reship',
               recoverability: 'IRRECOVERABLE',
               clockBearing,
-              aboveApprovalFloor,
+              totalExposure: money(totalExposure),
               hasRecordedApproval,
               activeOverride: null,
+              unreachableSince: state === 'NORMAL' ? null : new Date(NOW.getTime() - 60_000),
               now: NOW,
             });
             expect(d.matchedRow).toBe(1);
@@ -150,7 +158,9 @@ describe('`VC-A6` — NO FIXTURE MATCHES TWO ROWS WITH DIFFERENT OUTCOMES', () =
     // Rows 1..5 as predicates, transcribed here and not imported:
     const predicates: readonly [number, (o: PrecedenceOperands) => boolean][] = [
       [1, (o) => o.recoverability === 'IRRECOVERABLE'],
-      [2, (o) => o.aboveApprovalFloor && !o.clockBearing && !o.hasRecordedApproval],
+      // `51 §3.7`'s strict comparison, transcribed here in minor units and NOT imported:
+      // `total_exposure > 20.00` is above the floor.
+      [2, (o) => o.totalExposure > 2000n && !o.clockBearing && !o.hasRecordedApproval],
       [3, (o) => o.clockBearing && o.recoverability === 'COMPENSABLE'],
       [4, (o) => o.recoverability === 'COMPENSABLE' && !o.clockBearing],
       [5, (o) => o.recoverability === 'REVERSIBLE'],
@@ -160,7 +170,7 @@ describe('`VC-A6` — NO FIXTURE MATCHES TWO ROWS WITH DIFFERENT OUTCOMES', () =
     for (const state of ['NORMAL', 'UNCORROBORATED_STALL', 'CORROBORATED_DEGRADED'] as const) {
       for (const recoverability of ['REVERSIBLE', 'COMPENSABLE', 'IRRECOVERABLE'] as const) {
         for (const clockBearing of [false, true]) {
-          for (const aboveApprovalFloor of [false, true]) {
+          for (const totalExposure of ['19.99', '20.01']) {
             for (const hasRecordedApproval of [false, true]) {
               const o: PrecedenceOperands = {
                 mirrorState: state,
@@ -172,9 +182,11 @@ describe('`VC-A6` — NO FIXTURE MATCHES TWO ROWS WITH DIFFERENT OUTCOMES', () =
                       : 'fulfilment.reship',
                 recoverability,
                 clockBearing,
-                aboveApprovalFloor,
+                totalExposure: money(totalExposure),
                 hasRecordedApproval,
                 activeOverride: null,
+                unreachableSince:
+                  state === 'NORMAL' ? null : new Date(NOW.getTime() - 60_000),
                 now: NOW,
               };
               const matching = predicates.filter(([, p]) => p(o)).map(([row]) => row);
@@ -215,7 +227,7 @@ describe('THE VULNERABLE CONTROL — the rows in the wrong order', () => {
       expectedFor('NORMAL', {
         recoverability: 'COMPENSABLE',
         clockBearing: true,
-        aboveApprovalFloor: true,
+        totalExposure: '22.00',
         hasRecordedApproval: true,
       }).disposition,
     );
@@ -232,7 +244,7 @@ describe('THE VULNERABLE CONTROL — the rows in the wrong order', () => {
     const separating: string[] = [];
     for (const recoverability of ['REVERSIBLE', 'COMPENSABLE', 'IRRECOVERABLE'] as const) {
       for (const clockBearing of [false, true]) {
-        for (const aboveApprovalFloor of [false, true]) {
+        for (const totalExposure of ['19.99', '20.01']) {
           for (const hasRecordedApproval of [false, true]) {
             const o: PrecedenceOperands = {
               mirrorState: 'NORMAL',
@@ -244,9 +256,10 @@ describe('THE VULNERABLE CONTROL — the rows in the wrong order', () => {
                     : 'fulfilment.reship',
               recoverability,
               clockBearing,
-              aboveApprovalFloor,
+              totalExposure: money(totalExposure),
               hasRecordedApproval,
               activeOverride: null,
+              unreachableSince: null,
               now: NOW,
             };
             const unsafe = unsafeEvaluate(UNSAFE_ROW_3_BEFORE_ROW_2, o);

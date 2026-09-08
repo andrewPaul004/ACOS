@@ -52,7 +52,9 @@ interface Row {
 const ROW_1: Row = { row: 1, matches: (o) => o.recoverability === 'IRRECOVERABLE' };
 const ROW_2: Row = {
   row: 2,
-  matches: (o) => o.aboveApprovalFloor && !o.clockBearing && !o.hasRecordedApproval,
+  // `51 §3.7`'s strict comparison in minor units — the same predicate production
+  // derives. Only the ORDER of the rows differs in this control.
+  matches: (o) => o.totalExposure > 2000n && !o.clockBearing && !o.hasRecordedApproval,
 };
 const ROW_3: Row = {
   row: 3,

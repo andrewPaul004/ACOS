@@ -92,19 +92,45 @@ export interface StallObservation {
  * the audit store; if the store cannot answer, the audit plane cannot publish anything
  * either, which is `§5.6`'s "Audit store down | No — its own checks cannot run | No".
  *
- * `STORE_WRITE_REJECTED` — **NOT DERIVED, AND THE OMISSION IS DELIBERATE.** v1.3.2 declares
- * the enum member and declares no derivation rule for it. The one candidate reading —
- * insert-quota saturation — is EXPLICITLY FORBIDDEN as a mode transition:
+ * `STORE_WRITE_REJECTED` — **DERIVED, under v1.3.3's `30 §5.7.1a`, from the audit plane's
+ * own `audit_store_write_failure` observations and from nothing else.**
  *
- *   `30 §5.1` item 5: "**Audit-store saturation is an incident, not a mode change (I17c).**"
+ * v1.3.2 declared the enum member and no derivation, and the one reading a reader reaches
+ * for — insert-quota saturation — is EXPLICITLY FORBIDDEN as a mode transition:
+ *
+ *   `30 §5.1` item 5: "Audit-store saturation is an incident, not a mode change (I17c)."
  *   `30 §5.6`'s reachability table: "Audit insert quota saturated (`I17c`) | Yes | Yes | Yes
  *   | **Yes**, but `§5.1` item 5 declares saturation *an incident, not a mode change*."
  *
- * So this function never returns `STORE_WRITE_REJECTED`, and `vc-a2d-signal-authenticity.
- * test.ts` asserts that a saturated quota produces the `AUDIT_QUOTA_SATURATED` incident and
- * NO signal — which is `§10`'s last adversarial case. `§42` of the S1H mandate forbids
- * inventing the missing derivation rule, so `S1H-result.md §5` reports that leg PARTIAL and
- * `S1H-owner-clarifications.md S1H-C8` asks for the rule.
+ * `§5.7.1a` keeps both statements and gives the member a CLOSED TEN-CONDITION predicate that
+ * quota saturation fails at conjunct 8. The predicate is established by `A0001`/`A0004`'s
+ * ingest control flow — six of the eight disqualifying conditions leave that function
+ * through a `RETURN` rather than an exception, and the trigger performing the canonical,
+ * hash and quota checks is `BEFORE INSERT` — so a row in `audit_store_write_failure` is by
+ * construction an otherwise-valid, authenticated, in-quota attempt that failed at the store
+ * write. THIS FUNCTION READS THAT TABLE AND DERIVES NOTHING ELSE FROM ANYTHING ELSE.
+ *
+ * `vc-a2d-signal-authenticity.test.ts` still asserts that a saturated quota produces the
+ * `AUDIT_QUOTA_SATURATED` incident and NO signal, and
+ * `store-write-availability.test.ts` adds the four negative controls and the mandatory
+ * positive one.
+ *
+ * ---------------------------------------------------------------------------------
+ * WHICH REASON WINS WHEN BOTH CONDITIONS HOLD, AND WHY THE CHOICE CARRIES NO AUTHORITY.
+ *
+ * A store-write failure that persists also stops attestations reaching the store, so after
+ * `k × cadence` both conditions hold. v1.3.3 declares no precedence between `reason` values
+ * and none is needed, because **`reason` is not an authority operand**: `resolveMirrorState`
+ * never reads it, `corroborationSignal.ts` checks only that it is a member of the closed
+ * enum, and `§5.7.1a` says a `STORE_WRITE_REJECTED` signal "confers exactly what
+ * `ATTESTATION_STALL` confers and nothing more". `store-write-availability.test.ts` asserts
+ * that both reasons resolve the same state from the same operands.
+ *
+ * So the choice is diagnostic and this function reports the MORE SPECIFIC observation: the
+ * store-write failure is a mechanism the audit plane observed directly, where the
+ * attestation stall is an inference from an absence. Recorded as `S1H-C8`'s implementation
+ * detail rather than as a reading of a rule the architecture does not state.
+ * ---------------------------------------------------------------------------------
  * =================================================================================
  */
 export async function observeStall(
@@ -130,6 +156,37 @@ export async function observeStall(
 
   const report = await evaluateTransportCompleteness(audit, companyId, now);
   const stall = report.findings.find((f) => f.kind === 'ATTESTATION_STALL');
+
+  // `30 §5.7.1a`. The window is `attestation_cadence × k` = 15 minutes, read from the AUDIT
+  // STORE'S OWN transcription (`audit_store_write_failure_window()`) rather than from a
+  // constant in this file, for the same reason `issueSignal` reads `max_age` from the store:
+  // the value belongs to the instance that owns the artifact.
+  const storeWrite = await audit.query<{ observed_at: Date; sqlstate: string }>(
+    `SELECT observed_at, sqlstate
+       FROM audit_store_write_failure
+      WHERE company_id = $1
+        AND failure_class = 'AUDIT_STORE_WRITE_UNAVAILABLE'
+        AND observed_at > $2::TIMESTAMPTZ - audit_store_write_failure_window()
+      ORDER BY observed_at DESC
+      LIMIT 1`,
+    [companyId, now],
+  );
+  const failure = storeWrite.rows[0];
+
+  if (failure !== undefined) {
+    return {
+      companyId,
+      reason: 'STORE_WRITE_REJECTED',
+      observedAt: now,
+      lastAttestationSeq: report.latestAttestation?.attestedMaxJournalSeq ?? 0n,
+      lastAttestationReceivedAt: report.latestAttestation?.attestedAt ?? null,
+      detail:
+        'an otherwise-valid, authenticated, in-quota replication attempt reached audit ' +
+        'ingress and could not be made durable: AUDIT_STORE_WRITE_UNAVAILABLE, SQLSTATE ' +
+        `${failure.sqlstate} (30 §5.7.1a)`,
+    };
+  }
+
   if (stall === undefined) return null;
 
   return {

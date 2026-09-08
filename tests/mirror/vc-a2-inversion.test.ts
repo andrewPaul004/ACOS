@@ -5,6 +5,7 @@ import {
   type PrecedenceOperands,
 } from '../../src/kernel/mirror/dispatchPrecedence.js';
 import type { ActionClass, Recoverability } from '../../src/kernel/canonicalisation/actionCatalogue.js';
+import { money } from '../../src/kernel/exposure/money.js';
 import {
   ORACLE_STATES,
   PERMISSIVENESS,
@@ -53,12 +54,20 @@ function operands(state: OracleState, c: OracleCase): PrecedenceOperands {
     actionClass: ACTION_FOR[c.recoverability],
     recoverability: c.recoverability,
     clockBearing: c.clockBearing,
-    aboveApprovalFloor: c.aboveApprovalFloor,
+    // v1.3.3: the DECLARED OPERAND, not a boolean. `51 §3.7` makes it
+    // `exposure.total_exposure` and production derives the above-floor predicate from it, so
+    // this suite now proves the derivation as well as the truth table (`S1H-C1`).
+    totalExposure: money(c.totalExposure),
     hasRecordedApproval: c.hasRecordedApproval,
     // NO OVERRIDE anywhere in this file. `§23`'s inversion is a property of the states
     // themselves; the override is `VC-A2e`'s subject and admitting one here would make the
     // inversion table depend on a grant.
     activeOverride: null,
+    // `30 §5.1a`'s `continuous_unreachability` operand. Non-null exactly when a degraded
+    // state holds, and DELIBERATELY WELL INSIDE the 30-minute threshold: the FULL-HALT
+    // POSTURE is `full-halt-posture.test.ts`'s subject and admitting it here would collapse
+    // the inversion table onto HALT and make the inversion proof vacuous.
+    unreachableSince: state === 'NORMAL' ? null : new Date(NOW.getTime() - 60_000),
     now: NOW,
   };
 }
@@ -67,7 +76,7 @@ function label(c: OracleCase): string {
   return (
     `${c.recoverability}` +
     `/clock=${String(c.clockBearing)}` +
-    `/aboveFloor=${String(c.aboveApprovalFloor)}` +
+    `/exposure=${c.totalExposure}` +
     `/approved=${String(c.hasRecordedApproval)}`
   );
 }
@@ -154,14 +163,20 @@ describe('`VC-A2` — A UNILATERAL CONTROL-SIDE DECLARATION NEVER INCREASES ELIG
     }
   });
 
-  it('the $30-refund case specifically: NORMAL dispatches, UNCORROBORATED suspends', () => {
+  it('the above-floor refund case specifically: NORMAL dispatches, UNCORROBORATED suspends', () => {
     // `36 §9` VC-A6's fixture and `22 §3.1`'s worked case, as one row: above the floor,
     // clock-bearing, COMPENSABLE, approved. `30 §5.1`: "An above-floor clock-bearing
-    // COMPENSABLE effect — the $30 refund — reaches row 3 and dispatches."
+    // COMPENSABLE effect [...] reaches row 3 and dispatches."
+    //
+    // v1.3.3 re-bases the amount. `36`'s VC-A6 now reads "a **$22.00 refund inside a live
+    // FTC clock** — above the declared `$20.00` approval floor (`51 §3.7`) and still
+    // admitted by `refund.create`'s `$25.00` `per_action_max`", because the old `$30`
+    // fixture is inadmissible: `26 §8` denies `PER_ACTION` above `$25.00` and a denied
+    // effect never reaches this classifier at all.
     const refund: OracleCase = {
       recoverability: 'COMPENSABLE',
       clockBearing: true,
-      aboveApprovalFloor: true,
+      totalExposure: '22.00',
       hasRecordedApproval: true,
     };
     const normal = classifyDispatchPrecedence(operands('NORMAL', refund));

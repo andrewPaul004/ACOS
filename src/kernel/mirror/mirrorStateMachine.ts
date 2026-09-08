@@ -6,6 +6,7 @@ import {
   type SignalRejection,
   type SignalWire,
 } from './corroborationSignal.js';
+import { classifyMirrorLag, type MirrorLagCondition } from './degradedModeThresholds.js';
 import {
   resolveMirrorState,
   type HeldCorroboration,
@@ -188,6 +189,158 @@ export async function persistedState(
     const row = result.rows[0];
     if (row === undefined) return null;
     return { state: row.state as MirrorState, evaluatedAt: row.evaluated_at };
+  } finally {
+    client.release();
+  }
+}
+
+// =====================================================================================
+// `30 §5.1a`'s TWO TIMING OPERANDS, READ FROM THE DURABLE TABLES. v1.3.3, S1H-C10.
+// =====================================================================================
+
+/**
+ * `30 §5.1a`'s `continuous_unreachability` operand — the open declaration's `opened_at`, or
+ * `null` when no declaration is open.
+ *
+ * ---------------------------------------------------------------------------------
+ * THE TIMER'S SEMANTICS ARE THE SCHEMA'S, NOT THIS FUNCTION'S.
+ *
+ * `30 §5.1a`: "**The timer STARTS when a declaration opens and RESETS only when one
+ * closes.** It is not reset by a state change between `UNCORROBORATED_STALL` and
+ * `CORROBORATED_DEGRADED`, by a signal arriving or expiring, by a re-issued signal, by a
+ * restart of either plane, or by the passage of an attestation interval — none of those
+ * closes a declaration."
+ *
+ * Every case in that sentence is a case that leaves `mirror_declaration.opened_at` alone, so
+ * there is nothing here to reset and no counter to advance. `declareMirrorDegraded` RETURNS
+ * THE EXISTING DECLARATION rather than opening a second one — `mirror_declaration_one_open_
+ * per_company` makes a second impossible anyway — so a repeated declaration cannot restart
+ * the clock either, and `full-halt-posture.test.ts` asserts each of those against real
+ * PostgreSQL.
+ *
+ * `opened_at` is `NOT NULL`, and `mirror_declaration_closes_after_opening` keeps
+ * `closed_at >= opened_at`, so the interval is never negative and never absent.
+ * ---------------------------------------------------------------------------------
+ */
+export async function openDeclarationOpenedAt(
+  client: Client,
+  companyId: string,
+): Promise<Date | null> {
+  const result = await client.query<{ opened_at: Date }>(
+    `SELECT opened_at FROM mirror_declaration
+      WHERE company_id = $1 AND closed_at IS NULL`,
+    [companyId],
+  );
+  return result.rows[0]?.opened_at ?? null;
+}
+
+/**
+ * `30 §5.1a`'s `mirror_lag` operand.
+ *
+ * > Let `mirror_lag` be the age of the **oldest journal row this company has committed that
+ * > the audit store has not acknowledged** — `now() − min(occurred_at)` over `effect_journal`
+ * > rows whose `mirrored_at` is null, evaluated on the **control database clock**.
+ *
+ * `0` when the backlog is empty, which is `NORMAL`'s "mirror acknowledging within threshold".
+ *
+ * ---------------------------------------------------------------------------------
+ * THIS OPERAND IS CONTROL-DERIVED AND CONTROL-FORGEABLE, AND THAT IS DECLARED.
+ *
+ * `30 §5.2` makes `mirrored_at` "ADVISORY ONLY. It is a control-plane column, so a
+ * compromised control plane can set it freely; nothing depends on it." `30 §5.1a` accepts
+ * that for this operand and states why: the condition it raises is strictly an ESCALATION,
+ * so a control plane understating its own lag suppresses an alarm rather than obtaining
+ * authority. The unforgeable detector for the understated case is the audit plane's own
+ * attestation-absence check (`§5.4`) and `I17f(b)`.
+ *
+ * NOTHING HERE FEEDS THE STATE MACHINE. `evaluateStateOn` does not call this function and
+ * `resolveMirrorState` has no parameter it could be passed through, and
+ * `mirror-lag-critical.test.ts` asserts both as properties of the resolved state and of the
+ * durable tables rather than of these signatures.
+ * ---------------------------------------------------------------------------------
+ */
+export async function mirrorLagMsOn(
+  client: Client,
+  companyId: string,
+  now: Date,
+): Promise<number> {
+  const result = await client.query<{ oldest: Date | null }>(
+    `SELECT min(occurred_at) AS oldest
+       FROM effect_journal
+      WHERE company_id = $1 AND mirrored_at IS NULL`,
+    [companyId],
+  );
+  const oldest = result.rows[0]?.oldest ?? null;
+  if (oldest === null) return 0;
+  return now.getTime() - oldest.getTime();
+}
+
+/** The same, in its own connection. */
+export async function mirrorLagMs(
+  control: Pool,
+  companyId: string,
+  now: Date,
+): Promise<number> {
+  const client = await control.connect();
+  try {
+    return await mirrorLagMsOn(client, companyId, now);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * `30 §5.1` item 5's first rule, evaluated from the durable operand.
+ *
+ * Returns the CONDITION and nothing else — no state, no signal, no override, no limit. The
+ * caller raises `AUDIT_MIRROR_DEGRADED` at CRITICAL on `'CRITICAL'`, which is `30 §5.1a`'s
+ * "escalation and state input" and the whole of what this condition does.
+ */
+export async function mirrorLagCondition(
+  control: Pool,
+  companyId: string,
+  now: Date,
+): Promise<{ readonly lagMs: number; readonly condition: MirrorLagCondition }> {
+  const lagMs = await mirrorLagMs(control, companyId, now);
+  return { lagMs, condition: classifyMirrorLag(lagMs) };
+}
+
+/**
+ * The two `PrecedenceOperands` fields the durable mirror tables own, read together so a
+ * caller cannot assemble an incoherent pair by hand.
+ *
+ * `classifyDispatchPrecedence` throws on `mirrorState !== 'NORMAL'` with a null
+ * `unreachableSince` and on the converse, and this is the function that makes the coherent
+ * pair the easy thing to pass: the state and the declaration instant are read in ONE
+ * transaction, from the same two tables, at the same instant.
+ */
+export async function mirrorDispatchOperandsOn(
+  client: Client,
+  companyId: string,
+  now: Date,
+): Promise<{ readonly mirrorState: MirrorState; readonly unreachableSince: Date | null }> {
+  const resolution = await evaluateStateOn(client, companyId, now);
+  const openedAt = await openDeclarationOpenedAt(client, companyId);
+  return {
+    mirrorState: resolution.state,
+    // `resolveMirrorState` returns `NORMAL` exactly when no declaration is open, so this is
+    // already the coherent pair; the `null` coalescing is not a fallback, it is the NORMAL
+    // case's declared value (`30 §5.1a`: "0 when no declaration is open").
+    unreachableSince: resolution.state === 'NORMAL' ? null : openedAt,
+  };
+}
+
+/** The same, in its own transaction. */
+export async function mirrorDispatchOperands(
+  control: Pool,
+  companyId: string,
+  now: Date,
+): Promise<{ readonly mirrorState: MirrorState; readonly unreachableSince: Date | null }> {
+  const client = await control.connect();
+  try {
+    return await inTransaction(client, 'READ COMMITTED', (tx) =>
+      mirrorDispatchOperandsOn(tx, companyId, now),
+    );
   } finally {
     client.release();
   }

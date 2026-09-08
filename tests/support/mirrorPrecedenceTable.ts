@@ -40,6 +40,19 @@
  *
  * `36 §6`, for the tag: "`CORROBORATED_DEGRADED`: as `NORMAL`, **with every dispatch tagged
  * `DISPATCHED_UNMIRRORED`**."
+ *
+ * ---------------------------------------------------------------------------------
+ * v1.3.3 — WHAT THIS FILE GAINED, AND WHY IT IS STILL AN INDEPENDENT ORACLE.
+ *
+ * `51 §3.7` declares the approval floor at `$20.00` against `total_exposure`, and `51 §3.8`
+ * declares the two timing thresholds. All three are TRANSCRIBED BY HAND below and none is
+ * imported: `ORACLE_APPROVAL_FLOOR_MINOR_UNITS`, `ORACLE_MIRROR_LAG_CRITICAL_MS` and
+ * `ORACLE_FULL_HALT_MS`. `degraded-mode-thresholds.test.ts` compares each against
+ * production's constant, so a drift is a failure rather than a silent agreement.
+ *
+ * `OracleCase`'s above-floor dimension is now the MONEY rather than a boolean, and
+ * `expectedUnderFullHalt` is the hand-authored expectation for `30 §5.1a`'s posture.
+ * ---------------------------------------------------------------------------------
  */
 
 /** Transcribed, not imported. */
@@ -50,8 +63,55 @@ export type OracleDisposition = 'DISPATCH_ELIGIBLE' | 'SUSPEND' | 'HALT';
 export interface OracleCase {
   readonly recoverability: OracleRecoverability;
   readonly clockBearing: boolean;
-  readonly aboveApprovalFloor: boolean;
+  /**
+   * `effect.request.exposure.total_exposure`, as a fixed-scale decimal literal.
+   *
+   * v1.3.3: this dimension WAS a boolean `aboveApprovalFloor`, which is what
+   * `S1H-C1` reported PARTIAL — v1.3.2 declared no floor, so the operand was
+   * caller-supplied on both sides of the wall. `51 §3.7` declares it now, so the oracle
+   * carries the MONEY and derives the predicate itself, from its own transcription below.
+   * The suite therefore proves the derivation as well as the truth table.
+   */
+  readonly totalExposure: string;
   readonly hasRecordedApproval: boolean;
+}
+
+/**
+ * `51 §3.7`'s declared floor, TRANSCRIBED BY HAND INTO THIS FILE, in minor units.
+ *
+ * > `degraded_per_action_approval_floor_monetary` | **USD 20.00**
+ *
+ * NOT imported from `src/kernel/mirror/degradedModeThresholds.ts`. `36 §0`: "Independent
+ * validation must not call the same production function twice and call agreement proof." A
+ * seeded edit to production's constant must fail this suite, and it cannot if the suite
+ * reads production's constant.
+ */
+export const ORACLE_APPROVAL_FLOOR_MINOR_UNITS = 2000n;
+
+/**
+ * `51 §3.8`'s two declared thresholds, transcribed by hand for the same reason.
+ *
+ * > `mirror_lag_critical_threshold` | **15 minutes** | `PT15M`
+ * > `audit_unreachable_full_halt_threshold` | **30 minutes** | `PT30M`
+ */
+export const ORACLE_MIRROR_LAG_CRITICAL_MS = 900_000;
+export const ORACLE_FULL_HALT_MS = 1_800_000;
+
+/**
+ * `51 §3.7`'s STRICT comparison, applied to the oracle's own transcription.
+ *
+ * Parsed here rather than imported, so this file still imports nothing. The parse is
+ * deliberately trivial and total over the literals `allOracleCases` and the boundary suites
+ * use: a sign-free decimal with exactly two fractional digits.
+ */
+export function oracleIsAboveApprovalFloor(totalExposure: string): boolean {
+  const match = /^(\d+)\.(\d\d)$/.exec(totalExposure);
+  if (match === null) {
+    throw new Error(`the oracle only accepts scale-2 decimals: ${totalExposure}`);
+  }
+  const minorUnits = BigInt(match[1]!) * 100n + BigInt(match[2]!);
+  // `total_exposure > 20.00` is ABOVE. Strict, so `20.00` is not.
+  return minorUnits > ORACLE_APPROVAL_FLOOR_MINOR_UNITS;
 }
 
 export interface OracleExpectation {
@@ -72,9 +132,14 @@ export function allOracleCases(): readonly OracleCase[] {
   const cases: OracleCase[] = [];
   for (const recoverability of ['REVERSIBLE', 'COMPENSABLE', 'IRRECOVERABLE'] as const) {
     for (const clockBearing of [false, true]) {
-      for (const aboveApprovalFloor of [false, true]) {
+      // The two sides of `51 §3.7`'s declared floor, one minor unit either side of it, so
+      // the above-floor dimension is exercised through the DECLARED OPERAND rather than
+      // through a boolean. `$25.00` is admitted by `per_action_max` and `$25.01` is not, so
+      // the band's own edges are asserted separately in
+      // `dispatch-precedence-approval-floor.test.ts` rather than multiplied through here.
+      for (const totalExposure of ['19.99', '20.01']) {
         for (const hasRecordedApproval of [false, true]) {
-          cases.push({ recoverability, clockBearing, aboveApprovalFloor, hasRecordedApproval });
+          cases.push({ recoverability, clockBearing, totalExposure, hasRecordedApproval });
         }
       }
     }
@@ -108,7 +173,7 @@ export function expectedFor(state: OracleState, c: OracleCase): OracleExpectatio
 
   // Row 2 — "Above the per-action approval floor and not clock-bearing | Halt", less the
   // approval carve-out: an effect carrying a recorded approval is never evaluated at row 2.
-  if (c.aboveApprovalFloor && !c.clockBearing && !c.hasRecordedApproval) {
+  if (oracleIsAboveApprovalFloor(c.totalExposure) && !c.clockBearing && !c.hasRecordedApproval) {
     return { row: 2, disposition: 'HALT', requiresUnmirroredTag: false };
   }
 
@@ -137,6 +202,44 @@ export function expectedFor(state: OracleState, c: OracleCase): OracleExpectatio
     disposition: 'DISPATCH_ELIGIBLE',
     requiresUnmirroredTag: state === 'CORROBORATED_DEGRADED',
   };
+}
+
+
+/**
+ * `30 §5.1a`'s FULL-HALT POSTURE, HAND-AUTHORED FROM THE ARCHITECTURE TEXT (v1.3.3).
+ *
+ * `30 §5.1` item 5: "Mirror unreachable continuously for at or beyond
+ * `audit_unreachable_full_halt_threshold` (**30 minutes**, `51 §3.8`) halts **all** classes
+ * including REVERSIBLE — the point at which the company stops."
+ *
+ * `30 §5.1a`, the posture:
+ *
+ *   "In the posture, item 4's ordered list is evaluated and then every disposition is
+ *    reduced to Halt, for **every** recoverability class including REVERSIBLE."
+ *
+ *   "**Therefore, in the posture: rows 3 and 4 are restorable by an in-scope override; rows
+ *    1, 2 and 5 are not.**"
+ *
+ * So the posture's expectation is a FUNCTION of the ordinary one: same matched row, and
+ * `HALT` unless an in-scope override restored rows 3 or 4. `overrideInScope` is the caller's
+ * statement about the GRANT, not about the outcome — the suite that uses it grants a real
+ * owner-signed override against real PostgreSQL and passes `true`.
+ *
+ * WRITTEN FROM THE TEXT, NOT FROM `classifyDispatchPrecedence`. This file still imports
+ * nothing, so a production reduction that spared REVERSIBLE would fail here.
+ */
+export function expectedUnderFullHalt(
+  state: OracleState,
+  c: OracleCase,
+  overrideInScope = false,
+): OracleExpectation {
+  const ordinary = expectedFor(state, c);
+  const restorable = ordinary.row === 3 || ordinary.row === 4;
+  if (overrideInScope && restorable) {
+    // The declared escape. `30 §5.7.2` item 5 tags every dispatch under an override.
+    return { row: ordinary.row, disposition: 'DISPATCH_ELIGIBLE', requiresUnmirroredTag: true };
+  }
+  return { row: ordinary.row, disposition: 'HALT', requiresUnmirroredTag: false };
 }
 
 /**

@@ -264,22 +264,35 @@ describe('VC-A1d — the residual is recorded where it is owned', () => {
         `SELECT table_name FROM information_schema.tables
           WHERE table_schema = 'public' ORDER BY table_name`,
       );
-      // FIVE tables the evaluator can see, and every one of them is written from the
+      // SIX tables the evaluator can see, and every one of them is written from the
       // transport or by the audit plane's own checks. THERE IS NO VENDOR TABLE, NO REPLICA
       // AND NO CONTROL READ — which is the property, and it is unchanged.
       //
-      // S1G had three. S1H adds `audit_mirror_stall_interval` and
+      // S1G had three. S1H added `audit_mirror_stall_interval` and
       // `audit_mirror_input_stall_signal`, both written by the audit plane's OWN evaluator
       // from its OWN holdings (`30 §5.7.1`), and both closed to the control plane's
       // replication principal — `audit-signal-ownership.test.ts` attempts every write as
-      // that role. Neither is an input ABOUT the control journal, so neither settles the
-      // `§5.5` case 2b residual and the assertion below still holds.
+      // that role.
+      //
+      // v1.3.3 adds `audit_store_write_failure`, and it is the same kind of table for the
+      // same reason. `30 §5.7.1a` makes it the audit plane's record of ITS OWN OBSERVATION
+      // of ITS OWN ingress: it is written only by `audit_record_store_write_failure`, which
+      // the ingest entry point calls under `SECURITY DEFINER`, it is append-only, and the
+      // replication principal holds no SELECT, INSERT, UPDATE, DELETE or EXECUTE on it —
+      // `store-write-availability.test.ts` attempts every one of those as that role.
+      //
+      // NONE OF THE THREE IS AN INPUT *ABOUT* THE CONTROL JOURNAL, so none settles the
+      // `§5.5` case 2b residual and the assertion below still holds. A store-write failure
+      // records that a row the control plane SENT could not be stored; it says nothing
+      // whatever about a row the control plane WITHHELD, which is the attack this suite
+      // builds.
       expect(tables.rows.map((r) => r.table_name)).toEqual([
         'audit_incident',
         'audit_insert_quota',
         'audit_journal',
         'audit_mirror_input_stall_signal',
         'audit_mirror_stall_interval',
+        'audit_store_write_failure',
       ]);
     } finally {
       client.release();

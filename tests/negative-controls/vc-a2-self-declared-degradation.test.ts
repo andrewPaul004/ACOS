@@ -5,6 +5,7 @@ import {
   type PrecedenceOperands,
 } from '../../src/kernel/mirror/dispatchPrecedence.js';
 import { resolveMirrorState } from '../../src/kernel/mirror/mirrorState.js';
+import { money } from '../../src/kernel/exposure/money.js';
 import { unsafeSelfDeclaredResolver } from './unsafe-mirror-state-machine.js';
 import { PERMISSIVENESS, allOracleCases, expectedFor } from '../support/mirrorPrecedenceTable.js';
 
@@ -40,15 +41,25 @@ const CLOCK_BEARING_REFUND = {
   actionClass: 'refund.create',
   recoverability: 'COMPENSABLE',
   clockBearing: true,
-  aboveApprovalFloor: false,
+  // v1.3.3: below `51 §3.7`'s declared `$20.00` floor, so row 2 cannot intercept and the
+  // fixture still lands on row 3 — which is what this control discriminates on.
+  totalExposure: '19.99',
   hasRecordedApproval: true,
 } as const;
 
 function operandsFor(state: 'NORMAL' | 'UNCORROBORATED_STALL' | 'CORROBORATED_DEGRADED') {
   return {
     mirrorState: state,
-    ...CLOCK_BEARING_REFUND,
+    actionClass: CLOCK_BEARING_REFUND.actionClass,
+    recoverability: CLOCK_BEARING_REFUND.recoverability,
+    clockBearing: CLOCK_BEARING_REFUND.clockBearing,
+    totalExposure: money(CLOCK_BEARING_REFUND.totalExposure),
+    hasRecordedApproval: CLOCK_BEARING_REFUND.hasRecordedApproval,
     activeOverride: null,
+    // The declaration IS open in this fixture — that is the whole subject — and it opened
+    // one minute ago, well inside `51 §3.8`'s 30-minute FULL-HALT threshold. Admitting the
+    // posture here would halt both machines and destroy the discrimination.
+    unreachableSince: state === 'NORMAL' ? null : new Date(T0.getTime() - 60_000),
     now: T0,
   } satisfies PrecedenceOperands;
 }
@@ -177,28 +188,43 @@ describe('THE ATTACK, REPEATED — and it never accumulates', () => {
     let unsafeLooserSomewhere = false;
 
     for (const c of allOracleCases()) {
-      const base = { actionClass: 'refund.create' as const, activeOverride: null, now: T0 };
-      const normal = classifyDispatchPrecedence({ mirrorState: 'NORMAL', ...base, ...c });
-      const production = classifyDispatchPrecedence({
-        mirrorState: resolveMirrorState({
-          companyId: COMPANY,
-          declarationOpen: true,
-          heldCorroboration: null,
-          now: T0,
-        }).state,
-        ...base,
-        ...c,
+      // v1.3.3: the oracle case carries `total_exposure` as a decimal literal, so it is
+      // parsed into `Money` here and the above-floor predicate is derived by production.
+      // `unreachableSince` is one minute, well inside `51 §3.8`'s FULL-HALT threshold.
+      const operandsOf = (
+        state: 'NORMAL' | 'UNCORROBORATED_STALL' | 'CORROBORATED_DEGRADED',
+      ): PrecedenceOperands => ({
+        mirrorState: state,
+        actionClass: 'refund.create',
+        recoverability: c.recoverability,
+        clockBearing: c.clockBearing,
+        totalExposure: money(c.totalExposure),
+        hasRecordedApproval: c.hasRecordedApproval,
+        activeOverride: null,
+        unreachableSince: state === 'NORMAL' ? null : new Date(T0.getTime() - 60_000),
+        now: T0,
       });
-      const unsafe = classifyDispatchPrecedence({
-        mirrorState: unsafeSelfDeclaredResolver({
-          companyId: COMPANY,
-          declarationOpen: true,
-          heldCorroboration: null,
-          now: T0,
-        }),
-        ...base,
-        ...c,
-      });
+      const normal = classifyDispatchPrecedence(operandsOf('NORMAL'));
+      const production = classifyDispatchPrecedence(
+        operandsOf(
+          resolveMirrorState({
+            companyId: COMPANY,
+            declarationOpen: true,
+            heldCorroboration: null,
+            now: T0,
+          }).state,
+        ),
+      );
+      const unsafe = classifyDispatchPrecedence(
+        operandsOf(
+          unsafeSelfDeclaredResolver({
+            companyId: COMPANY,
+            declarationOpen: true,
+            heldCorroboration: null,
+            now: T0,
+          }),
+        ),
+      );
 
       expect(
         PERMISSIVENESS[production.disposition],

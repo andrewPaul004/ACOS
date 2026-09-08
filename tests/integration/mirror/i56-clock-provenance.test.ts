@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { money } from '../../../src/kernel/exposure/money.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { COMPANY_ID } from '../../support/fixture.js';
@@ -313,9 +314,12 @@ describe('THE NEGATIVE CONTROL — A TRIAGE WORKER THAT CLASSIFIES EVERYTHING AS
       actionClass: 'refund.create',
       recoverability: 'COMPENSABLE',
       clockBearing,
-      aboveApprovalFloor: false,
+      // v1.3.3: below `51 §3.7`'s `$20.00` floor, so row 2 cannot intercept and the case
+      // still falls to row 4 — which is what this assertion is about.
+      totalExposure: money('19.99'),
       hasRecordedApproval: true,
       activeOverride: null,
+      unreachableSince: new Date(T0.getTime() - 60_000),
       now: T0,
     });
     // Row 4, not row 3 — the discretionary COMPENSABLE row, which suspends in every state.

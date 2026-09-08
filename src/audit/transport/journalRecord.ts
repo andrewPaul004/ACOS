@@ -148,7 +148,18 @@ export type AuditIngestOutcome =
   | 'AUDIT_SEQUENCE_COLLISION'
   | 'AUDIT_CANONICAL_MISMATCH'
   | 'AUDIT_CHAIN_BREAK'
-  | 'AUDIT_QUOTA_SATURATED';
+  | 'AUDIT_QUOTA_SATURATED'
+  /**
+   * `30 §5.7.1a`, v1.3.3, SWR-01. The row was authenticated, admissible, canonical,
+   * correctly chained, non-colliding, not a duplicate and in quota, and the audit storage
+   * layer could not durably accept it.
+   *
+   * IT IS NOT `AUDIT_QUOTA_SATURATED` and reusing that member would have been the exact
+   * confusion `§5.7.1a` excludes normatively. The row is NOT stored, so this is not an
+   * acknowledgement and `mirrored_at` stays NULL — `30 §5.2`'s re-push semantics apply
+   * unchanged.
+   */
+  | 'AUDIT_STORE_WRITE_UNAVAILABLE';
 
 /** The two outcomes after which the control plane may record its advisory `mirrored_at`. */
 export function isAcknowledgement(outcome: AuditIngestOutcome): boolean {

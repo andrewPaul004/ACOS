@@ -298,9 +298,13 @@ describe('THE SCOPE RULE — rows 3 and 4 only, `IRRECOVERABLE` structurally una
         actionClass: 'refund.create',
         recoverability: 'COMPENSABLE',
         clockBearing: true,
-        aboveApprovalFloor: false,
+        totalExposure: money('19.99'),
         hasRecordedApproval: true,
         activeOverride: scope,
+        // v1.3.3: `30 §5.1a`'s operand. One minute of continuous unreachability —
+        // inside `51 §3.8`'s 30-minute FULL-HALT threshold, which `full-halt-posture.
+        // test.ts` covers separately and which is not this suite's subject.
+        unreachableSince: new Date(T0.getTime() - 60_000),
         now: T0,
       });
       expect(row3.matchedRow).toBe(3);
@@ -314,9 +318,13 @@ describe('THE SCOPE RULE — rows 3 and 4 only, `IRRECOVERABLE` structurally una
         actionClass: 'fulfilment.reship',
         recoverability: 'IRRECOVERABLE',
         clockBearing: true,
-        aboveApprovalFloor: false,
+        totalExposure: money('19.99'),
         hasRecordedApproval: true,
         activeOverride: scope,
+        // v1.3.3: `30 §5.1a`'s operand. One minute of continuous unreachability —
+        // inside `51 §3.8`'s 30-minute FULL-HALT threshold, which `full-halt-posture.
+        // test.ts` covers separately and which is not this suite's subject.
+        unreachableSince: new Date(T0.getTime() - 60_000),
         now: T0,
       });
       expect(row1.matchedRow).toBe(1);
@@ -329,9 +337,13 @@ describe('THE SCOPE RULE — rows 3 and 4 only, `IRRECOVERABLE` structurally una
         actionClass: 'refund.create',
         recoverability: 'COMPENSABLE',
         clockBearing: false,
-        aboveApprovalFloor: true,
+        totalExposure: money('22.00'),
         hasRecordedApproval: false,
         activeOverride: scope,
+        // v1.3.3: `30 §5.1a`'s operand. One minute of continuous unreachability —
+        // inside `51 §3.8`'s 30-minute FULL-HALT threshold, which `full-halt-posture.
+        // test.ts` covers separately and which is not this suite's subject.
+        unreachableSince: new Date(T0.getTime() - 60_000),
         now: T0,
       });
       expect(row2.matchedRow).toBe(2);
@@ -354,9 +366,13 @@ describe('THE SCOPE RULE — rows 3 and 4 only, `IRRECOVERABLE` structurally una
         actionClass: 'refund.create',
         recoverability: 'COMPENSABLE',
         clockBearing: false,
-        aboveApprovalFloor: false,
+        totalExposure: money('19.99'),
         hasRecordedApproval: false,
         activeOverride: scope,
+        // v1.3.3: `30 §5.1a`'s operand. One minute of continuous unreachability —
+        // inside `51 §3.8`'s 30-minute FULL-HALT threshold, which `full-halt-posture.
+        // test.ts` covers separately and which is not this suite's subject.
+        unreachableSince: new Date(T0.getTime() - 60_000),
         now: T0,
       });
       expect(row4.matchedRow).toBe(4);
@@ -376,9 +392,13 @@ describe('THE SCOPE RULE — rows 3 and 4 only, `IRRECOVERABLE` structurally una
         actionClass: 'refund.create',
         recoverability: 'COMPENSABLE',
         clockBearing: true,
-        aboveApprovalFloor: false,
+        totalExposure: money('19.99'),
         hasRecordedApproval: true,
         activeOverride: scope,
+        // v1.3.3: `30 §5.1a`'s operand. One minute of continuous unreachability —
+        // inside `51 §3.8`'s 30-minute FULL-HALT threshold, which `full-halt-posture.
+        // test.ts` covers separately and which is not this suite's subject.
+        unreachableSince: new Date(T0.getTime() - 60_000),
         now: T0,
       });
       expect(decision.disposition).toBe('SUSPEND');
@@ -575,9 +595,14 @@ describe('AUTO-EXPIRY IS TO THE RESTRICTIVE STATE, NEVER TO `NORMAL`', () => {
         actionClass: 'refund.create',
         recoverability: 'COMPENSABLE',
         clockBearing: true,
-        aboveApprovalFloor: false,
+        totalExposure: money('19.99'),
         hasRecordedApproval: true,
         activeOverride: null,
+        // v1.3.3: the posture is held OUT OF SCOPE here, as everywhere else in this suite —
+        // one minute of continuous unreachability, inside `51 §3.8`'s 30-minute threshold.
+        // The expiry-under-the-posture case is asserted ADDITIVELY in
+        // `full-halt-posture.test.ts`, so this accepted assertion stands unchanged.
+        unreachableSince: new Date(past.getTime() - 60_000),
         now: past,
       });
       expect(decision.disposition).toBe('SUSPEND');

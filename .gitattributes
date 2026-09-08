@@ -6,9 +6,10 @@
 # line-ending conversion on it in either direction. A checkout on a machine with
 # core.autocrlf=true would otherwise rewrite every file in it and break that property.
 #
-# `v1.3.2` is a repository-authored package issue (phase2-v1.3.2-errata.md, JCS-01) rather
-# than an extracted zip, so it has no round-trip target of its own. It is held under the
-# same rule so that a diff against v1.3.1 shows the normative delta and nothing else; its
+# `v1.3.2` (phase2-v1.3.2-errata.md, JCS-01) and `v1.3.3` (phase2-v1.3.3-errata.md, APF-01 /
+# MLT-01 / FHT-01 / SWR-01) are repository-authored package issues rather than extracted
+# zips, so neither has a round-trip target of its own. Both are held under the same rule so
+# that a diff against the previous issue shows the normative delta and nothing else; their
 # files are committed LF, like v1.3.1's.
 docs/architecture/** -text
 

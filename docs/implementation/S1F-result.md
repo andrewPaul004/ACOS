@@ -35,6 +35,8 @@ exit code 0.
 | Baseline worktree | clean (`git status --porcelain` empty) |
 | Baseline verify | **green**, exit 0 — 66 test files, 901 tests, 901 passed, 0 failed, 0 skipped |
 | Branch | `feature/s1f-atomic-authorisation-commit`, created from `5d289ab` |
+| Final commit | `1d3702b` |
+| Worktree clean at that commit | yes |
 | Architecture files modified | **0** (`git diff 5d289ab --name-only -- docs/architecture/` is empty) |
 
 ---

@@ -412,7 +412,24 @@ describe('I55 — a live StandingAuthorization cannot emerge without its revocat
         // deliberately NOT one of them: it is a member of `26 §3`'s principal-kind enum and
         // appears in `principal.ts` and `types.ts` as schema vocabulary, which is a
         // declaration rather than a path.
-        for (const pattern of [/'REVOKED'/, /cessation_verified_at/]) {
+        //
+        // NARROWED BY S1H, AND THE NARROWING IS NAMED. `30 §5.7.2`'s
+        // `DegradedModeOverride.status` has its own declared `REVOKED` member — a bounded
+        // owner override being withdrawn — and `src/kernel/mirror/degradedModeOverride.ts`
+        // writes it. That is a DIFFERENT entity from `StandingAuthorization`, and the
+        // property this test protects is about STANDING: `I23`/`I62`'s transition to
+        // `REVOKED`, `I54`'s cessation verification, and the pause dispatch. So the mirror
+        // directory is exempt from the bare literal and is held to a SHARPER rule instead:
+        // it may not name `'REVOKED'` together with any standing relation at all.
+        const isMirror = path.includes(join('kernel', 'mirror'));
+        for (const pattern of isMirror
+          ? [
+              /cessation_verified_at/,
+              /standing_authorization/,
+              /standing_revocation_authority/,
+              /standing_window_exposure/,
+            ]
+          : [/'REVOKED'/, /cessation_verified_at/]) {
           if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
         }
       }

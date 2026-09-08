@@ -343,3 +343,135 @@ export function attestationFields(row: AttestationRow): readonly OracleField[] {
     { kind: 'bytes', value: row.prevHash },
   ];
 }
+
+// =====================================================================================
+// S1H — THE THREE NEW JOURNAL ROW KINDS, AND THE CORROBORATION SIGNAL.
+//
+// FOUR READINGS, NOT TWO. The control database transcribes these orders in
+// `src/db/migrations/0009__mirror_state.sql`; the audit database transcribes them
+// independently in `src/audit/db/migrations/A0002__mirror_input_stall.sql`; the
+// TypeScript `ACOS_JCS-1` module builds the signal's bytes a third time in
+// `src/kernel/mirror/corroborationSignal.ts`. These functions are the fourth, and they
+// are what `mirror-journal-rows.test.ts` and
+// `corroboration-signal-cross-implementation.test.ts` judge the others against.
+//
+// `36 §0`: a test that asserted only that two production implementations agree would pass
+// if both were wrong in the same way, which a transcription-from-one-source pair is prone
+// to. The declared orders these reproduce are stated in `docs/implementation/
+// S1H-contract.md §4` and `§5`.
+// =====================================================================================
+
+export interface MirrorDeclarationRow {
+  readonly companyId: string;
+  readonly journalSeq: bigint;
+  readonly declarationId: string;
+  readonly event: string;
+  readonly observedReason: string;
+  readonly occurredAt: Date;
+  readonly prevHash: Buffer | null;
+}
+
+export function mirrorDeclarationFields(
+  row: MirrorDeclarationRow,
+): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.journal.audit_mirror_degraded.v1' },
+    { kind: 'text', value: row.companyId },
+    { kind: 'int', value: row.journalSeq },
+    { kind: 'text', value: 'AUDIT_MIRROR_DEGRADED' },
+    { kind: 'text', value: row.declarationId },
+    { kind: 'text', value: row.event },
+    { kind: 'text', value: row.observedReason },
+    { kind: 'ts', value: row.occurredAt },
+    { kind: 'bytes', value: row.prevHash },
+  ];
+}
+
+export interface CorroborationConsumedRow {
+  readonly companyId: string;
+  readonly journalSeq: bigint;
+  readonly signalId: string;
+  readonly intervalStart: Date;
+  readonly observedAt: Date;
+  readonly expiresAt: Date;
+  readonly reason: string;
+  readonly occurredAt: Date;
+  readonly prevHash: Buffer | null;
+}
+
+export function corroborationConsumedFields(
+  row: CorroborationConsumedRow,
+): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.journal.mirror_corroboration_consumed.v1' },
+    { kind: 'text', value: row.companyId },
+    { kind: 'int', value: row.journalSeq },
+    { kind: 'text', value: 'MIRROR_CORROBORATION_CONSUMED' },
+    { kind: 'text', value: row.signalId },
+    { kind: 'ts', value: row.intervalStart },
+    { kind: 'ts', value: row.observedAt },
+    { kind: 'ts', value: row.expiresAt },
+    { kind: 'text', value: row.reason },
+    { kind: 'ts', value: row.occurredAt },
+    { kind: 'bytes', value: row.prevHash },
+  ];
+}
+
+export interface OverrideEventRow {
+  readonly companyId: string;
+  readonly journalSeq: bigint;
+  readonly overrideId: string;
+  readonly event: string;
+  readonly actor: string;
+  readonly occurredAt: Date;
+  readonly prevHash: Buffer | null;
+}
+
+export function overrideEventFields(row: OverrideEventRow): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.journal.degraded_mode_override_event.v1' },
+    { kind: 'text', value: row.companyId },
+    { kind: 'int', value: row.journalSeq },
+    { kind: 'text', value: 'DEGRADED_MODE_OVERRIDE_EVENT' },
+    { kind: 'text', value: row.overrideId },
+    { kind: 'text', value: row.event },
+    { kind: 'text', value: row.actor },
+    { kind: 'ts', value: row.occurredAt },
+    { kind: 'bytes', value: row.prevHash },
+  ];
+}
+
+/**
+ * `30 §5.7.1`'s signed artifact. NOT a journal row — it lives in the audit store and
+ * travels over the fetch path — but it is `ACOS-JCS-1` bytes under the same rules, and its
+ * declared order is `S1H-contract.md §5`.
+ *
+ * `signature` is NOT a member: `§5.7.1` says "Ed25519 over `ACOS-JCS-1` canonical bytes OF
+ * THE FIELDS ABOVE", and a signature over itself is not a construction.
+ */
+export interface StallSignalFields {
+  readonly signalId: string;
+  readonly companyId: string;
+  readonly observedAt: Date;
+  readonly intervalStart: Date;
+  readonly lastAttestationSeq: bigint;
+  readonly lastAttestationReceivedAt: Date | null;
+  readonly reason: string;
+  readonly expiresAt: Date;
+  readonly auditInstanceId: string;
+}
+
+export function stallSignalFields(row: StallSignalFields): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.mirror_input_stall_signal.v1' },
+    { kind: 'text', value: row.signalId },
+    { kind: 'text', value: row.companyId },
+    { kind: 'ts', value: row.observedAt },
+    { kind: 'ts', value: row.intervalStart },
+    { kind: 'int', value: row.lastAttestationSeq },
+    { kind: 'ts', value: row.lastAttestationReceivedAt },
+    { kind: 'text', value: row.reason },
+    { kind: 'ts', value: row.expiresAt },
+    { kind: 'text', value: row.auditInstanceId },
+  ];
+}

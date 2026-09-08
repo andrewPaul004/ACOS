@@ -43,8 +43,24 @@
  * checks it against the row it actually holds at `journalSeq - 1` rather than believing it.
  */
 
-/** `30 §5.4`'s two row kinds, both on one chain and one transport. */
-export type JournalRowKind = 'EFFECT_AUTHORISATION' | 'JOURNAL_ATTESTATION';
+/**
+ * The declared row kinds, all on ONE chain and ONE transport.
+ *
+ * S1G carried two. S1H adds three — `30 §5.7`'s `AUDIT_MIRROR_DEGRADED` declaration,
+ * `30 §5.7.1`'s consumed-signal record, and `30 §5.7.2` item 7's override lifecycle events.
+ * All three travel this path for the reason 0008 gave for the attestation: a second table
+ * or a second transport would be `30 §5.4`'s "second unverified channel".
+ *
+ * `I17f(b)` in particular REQUIRES `AUDIT_MIRROR_DEGRADED` to arrive here, because the
+ * audit plane evaluates that clause from its own holdings and the declaration is one of its
+ * two operands.
+ */
+export type JournalRowKind =
+  | 'EFFECT_AUTHORISATION'
+  | 'JOURNAL_ATTESTATION'
+  | 'AUDIT_MIRROR_DEGRADED'
+  | 'MIRROR_CORROBORATION_CONSUMED'
+  | 'DEGRADED_MODE_OVERRIDE_EVENT';
 
 /**
  * The structured fields of one journal row.
@@ -86,6 +102,23 @@ export interface JournalRowFields {
   readonly attestedMaxJournalSeq: bigint | null;
   readonly attestedRowCount: bigint | null;
   readonly attestedHeadHash: Uint8Array | null;
+
+  /** `30 §5.7`'s declaration row. `AUDIT_MIRROR_DEGRADED` only. */
+  readonly mirrorDeclarationId: string | null;
+  readonly mirrorDeclarationEvent: string | null;
+  readonly mirrorObservedReason: string | null;
+
+  /** `30 §5.7.1`'s consumed-signal record. `MIRROR_CORROBORATION_CONSUMED` only. */
+  readonly corroborationSignalId: string | null;
+  readonly corroborationIntervalStart: Date | null;
+  readonly corroborationObservedAt: Date | null;
+  readonly corroborationExpiresAt: Date | null;
+  readonly corroborationReason: string | null;
+
+  /** `30 §5.7.2` item 7's lifecycle events. `DEGRADED_MODE_OVERRIDE_EVENT` only. */
+  readonly overrideId: string | null;
+  readonly overrideEvent: string | null;
+  readonly overrideActor: string | null;
 
   /** `30 §5.4`'s `attested_at` on an attestation row; the effect's instant otherwise. */
   readonly occurredAt: Date;

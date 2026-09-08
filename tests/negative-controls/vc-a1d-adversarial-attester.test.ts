@@ -264,12 +264,22 @@ describe('VC-A1d — the residual is recorded where it is owned', () => {
         `SELECT table_name FROM information_schema.tables
           WHERE table_schema = 'public' ORDER BY table_name`,
       );
-      // Three tables, and every one of them is written from the transport or by the audit
-      // plane's own checks. There is no vendor table, no replica, and no control read.
+      // FIVE tables the evaluator can see, and every one of them is written from the
+      // transport or by the audit plane's own checks. THERE IS NO VENDOR TABLE, NO REPLICA
+      // AND NO CONTROL READ — which is the property, and it is unchanged.
+      //
+      // S1G had three. S1H adds `audit_mirror_stall_interval` and
+      // `audit_mirror_input_stall_signal`, both written by the audit plane's OWN evaluator
+      // from its OWN holdings (`30 §5.7.1`), and both closed to the control plane's
+      // replication principal — `audit-signal-ownership.test.ts` attempts every write as
+      // that role. Neither is an input ABOUT the control journal, so neither settles the
+      // `§5.5` case 2b residual and the assertion below still holds.
       expect(tables.rows.map((r) => r.table_name)).toEqual([
         'audit_incident',
         'audit_insert_quota',
         'audit_journal',
+        'audit_mirror_input_stall_signal',
+        'audit_mirror_stall_interval',
       ]);
     } finally {
       client.release();

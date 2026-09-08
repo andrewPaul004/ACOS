@@ -103,6 +103,19 @@ interface BacklogRow {
   readonly attested_max_journal_seq: string | null;
   readonly attested_row_count: string | null;
   readonly attested_head_hash: Buffer | null;
+  // S1H's three new row kinds. `SELECT j.*` already returned these columns the moment 0009
+  // added them; naming them here is what puts them on the wire.
+  readonly mirror_declaration_id: string | null;
+  readonly mirror_declaration_event: string | null;
+  readonly mirror_observed_reason: string | null;
+  readonly corroboration_signal_id: string | null;
+  readonly corroboration_interval_start: Date | null;
+  readonly corroboration_observed_at: Date | null;
+  readonly corroboration_expires_at: Date | null;
+  readonly corroboration_reason: string | null;
+  readonly override_id: string | null;
+  readonly override_event: string | null;
+  readonly override_actor: string | null;
   readonly occurred_at: Date;
   readonly prev_hash: Buffer | null;
   readonly row_hash: Buffer;
@@ -148,6 +161,17 @@ function toRecord(row: BacklogRow): JournalTransportRecord {
       totalExposure: row.total_exposure,
       forwardIntegral: row.forward_integral,
       isRateClass: row.is_rate_class,
+      mirrorDeclarationId: row.mirror_declaration_id,
+      mirrorDeclarationEvent: row.mirror_declaration_event,
+      mirrorObservedReason: row.mirror_observed_reason,
+      corroborationSignalId: row.corroboration_signal_id,
+      corroborationIntervalStart: row.corroboration_interval_start,
+      corroborationObservedAt: row.corroboration_observed_at,
+      corroborationExpiresAt: row.corroboration_expires_at,
+      corroborationReason: row.corroboration_reason,
+      overrideId: row.override_id,
+      overrideEvent: row.override_event,
+      overrideActor: row.override_actor,
       dispatchPayloadHash: row.dispatch_payload_hash,
       constructorSemanticMajor: row.constructor_semantic_major,
       constructorNonSemanticMinor: row.constructor_non_semantic_minor,

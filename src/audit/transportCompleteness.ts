@@ -51,11 +51,19 @@ import type { Client, Pool } from '../db/pool.js';
  */
 export const ATTESTATION_STALL_BOUND_MS = 15 * 60 * 1000;
 
-/** The findings S1G's detectors can produce. `24 §3` K11 owns all of them. */
+/**
+ * The findings the audit plane's detectors can produce. `24 §3` K11 owns all of them.
+ *
+ * S1G declared the first three. S1H adds `ATTESTATION_DIVERGENCE`, registry `I17f(b)`'s
+ * detector, written by `attestationDivergence.ts`. The union lives here rather than beside
+ * that module because `recordFindings` is the single write path to `audit_incident` and a
+ * second `AuditFinding` shape would be a second write path.
+ */
 export type AuditFindingKind =
   | 'AUDIT_COMPLETENESS_GAP'
   | 'ATTESTATION_INCONSISTENT'
-  | 'ATTESTATION_STALL';
+  | 'ATTESTATION_STALL'
+  | 'ATTESTATION_DIVERGENCE';
 
 export interface AuditFinding {
   readonly kind: AuditFindingKind;

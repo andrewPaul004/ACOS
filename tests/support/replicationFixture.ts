@@ -184,7 +184,7 @@ export function recordFromControlRow(row: Record<string, unknown>): JournalTrans
     fields: {
       companyId: row['company_id'] as string,
       journalSeq: BigInt(row['journal_seq'] as string),
-      journalRowKind: row['journal_row_kind'] as 'EFFECT_AUTHORISATION' | 'JOURNAL_ATTESTATION',
+      journalRowKind: row['journal_row_kind'] as JournalTransportRecord['fields']['journalRowKind'],
       effectId: (row['effect_id'] as string | null) ?? null,
       authorisationId: (row['authorisation_id'] as string | null) ?? null,
       decisionId: (row['decision_id'] as string | null) ?? null,
@@ -210,6 +210,18 @@ export function recordFromControlRow(row: Record<string, unknown>): JournalTrans
       attestedRowCount:
         row['attested_row_count'] === null ? null : BigInt(row['attested_row_count'] as string),
       attestedHeadHash: (row['attested_head_hash'] as Buffer | null) ?? null,
+      mirrorDeclarationId: (row['mirror_declaration_id'] as string | null) ?? null,
+      mirrorDeclarationEvent: (row['mirror_declaration_event'] as string | null) ?? null,
+      mirrorObservedReason: (row['mirror_observed_reason'] as string | null) ?? null,
+      corroborationSignalId: (row['corroboration_signal_id'] as string | null) ?? null,
+      corroborationIntervalStart:
+        (row['corroboration_interval_start'] as Date | null) ?? null,
+      corroborationObservedAt: (row['corroboration_observed_at'] as Date | null) ?? null,
+      corroborationExpiresAt: (row['corroboration_expires_at'] as Date | null) ?? null,
+      corroborationReason: (row['corroboration_reason'] as string | null) ?? null,
+      overrideId: (row['override_id'] as string | null) ?? null,
+      overrideEvent: (row['override_event'] as string | null) ?? null,
+      overrideActor: (row['override_actor'] as string | null) ?? null,
       occurredAt: row['occurred_at'] as Date,
       prevHash: (row['prev_hash'] as Buffer | null) ?? null,
     },

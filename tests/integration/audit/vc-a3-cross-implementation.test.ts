@@ -94,7 +94,12 @@ async function controlBytes(row: Record<string, unknown>): Promise<Buffer> {
                   $1, $2::BIGINT, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
                   $13::NUMERIC, $14::NUMERIC, $15::NUMERIC, $16::BOOLEAN, $17,
                   $18::INTEGER, $19::INTEGER, $20, $21::TIMESTAMPTZ,
-                  $22::BYTEA, NULL, NULL, $23::BIGINT, $24::BIGINT, $25::BYTEA
+                  $22::BYTEA, NULL, NULL, $23::BIGINT, $24::BIGINT, $25::BYTEA,
+                  -- S1H's eleven columns (0009). A positional ROW cast must match the
+                  -- table's arity, and these are NULL because an EFFECT_AUTHORISATION row
+                  -- REQUIRES them absent (journal_row_shape_per_kind). They are listed
+                  -- rather than omitted so a future column cannot silently shift a field.
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
                 )::effect_journal
               ) AS bytes`,
       compositeParams(row),
@@ -116,7 +121,9 @@ async function auditBytes(row: Record<string, unknown>): Promise<Buffer> {
                   $13::NUMERIC, $14::NUMERIC, $15::NUMERIC, $16::BOOLEAN, $17,
                   $18::INTEGER, $19::INTEGER, $20, $23::BIGINT, $24::BIGINT, $25::BYTEA,
                   $21::TIMESTAMPTZ, $22::BYTEA,
-                  '\\x00'::BYTEA, '\\x00'::BYTEA, NULL, NULL, NULL, NULL, NULL
+                  '\\x00'::BYTEA, '\\x00'::BYTEA, NULL, NULL, NULL, NULL, NULL,
+                  -- S1H's eleven columns (A0002), for the same reason as above.
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
                 )::audit_journal
               ) AS bytes`,
       compositeParams(row),

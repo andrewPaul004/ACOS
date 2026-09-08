@@ -528,27 +528,57 @@ describe('the excluded future steps are absent from `src/`', () => {
     }
   });
 
-  it('THE MIRROR STATE MACHINE, THE OVERRIDE AND THE ANCHOR ARE STILL ABSENT', async () => {
-    // Unchanged from S1F, and still true: `30 §5.6`'s three states, `§5.7.1`'s
-    // `MirrorInputStallSignal`, `§5.7.2`'s `DegradedModeOverride` and `I17b`'s external
-    // anchor (`§5.8`) are all OUT OF S1G's scope. Held over the WHOLE of `src/`, audit
-    // plane included.
+  it('THE EXTERNAL ANCHOR IS STILL ABSENT, and the AUTHORITY PATH still cannot see the mirror', async () => {
+    // AMENDED BY S1H, AND THE AMENDMENT IS AN ADDITION RATHER THAN A RELAXATION.
+    //
+    // S1F and S1G asserted that `30 §5.6`'s three states, `§5.7.1`'s `MirrorInputStallSignal`
+    // and `§5.7.2`'s `DegradedModeOverride` were ABSENT FROM ALL OF `src/`. **S1H builds
+    // exactly those three**, which `37` S1 puts in this slice: "the three-state mirror machine
+    // (VC-A2) [...] the corroboration-signal contract [...] and the override with its
+    // composition bound (VC-A2e, VC-A2f, TA-05, `I63`)."
+    //
+    // So the mirror half of the assertion MOVES to `no-dispatch-boundary.test.ts`, where it
+    // becomes CONFINEMENT — the mechanism exists, and it exists only under
+    // `src/kernel/mirror/`, `src/kernel/clocks/`, `src/audit/` and `src/replication/`. What
+    // STAYS here, unweakened, is what S1H does NOT build:
+    //
+    //   `I17b`'s EXTERNAL ANCHOR (`30 §5.8`), which is `37` S3's; and
+    //   the property this file exists for — the AUTHORITY PATH cannot reach the mirror at all.
     const files = await sourceOf();
     const offenders: string[] = [];
     for (const { path, code } of files) {
+      for (const pattern of [/externalAnchor/i, /anchorHead/i, /hourlyAnchor/i, /\bI17b\b/]) {
+        if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
+      }
+    }
+    expect(offenders, `deferred mechanism in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
+
+    // And the pre-R authority path — steps B through P — knows nothing about the mirror.
+    // `30 §5.1`'s ordering puts the precedence evaluation AFTER the COMMIT and after the
+    // audit push, so no authorisation decision may depend on the mirror state.
+    const authorityPath = files.filter(
+      ({ path }) =>
+        path.includes(join('kernel', 'authority')) ||
+        path.includes(join('kernel', 'policy')) ||
+        path.includes(join('kernel', 'exposure')) ||
+        path.includes(join('kernel', 'canonicalisation')),
+    );
+    expect(authorityPath.length).toBeGreaterThan(20);
+    const leaks: string[] = [];
+    for (const { path, code } of authorityPath) {
       for (const pattern of [
         /mirrorState/i,
         /MirrorInputStall/,
         /CORROBORATED_DEGRADED/,
         /UNCORROBORATED_STALL/,
         /DegradedModeOverride/,
-        /anchor/i,
         /DISPATCHED_UNMIRRORED/,
+        /classifyDispatchPrecedence/,
       ]) {
-        if (pattern.test(code)) offenders.push(`${path} (${String(pattern)})`);
+        if (pattern.test(code)) leaks.push(`${path} (${String(pattern)})`);
       }
     }
-    expect(offenders, `deferred mechanism in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
+    expect(leaks, `the mirror reached the authority path:\n  ${leaks.join('\n  ')}`).toEqual([]);
   });
 
   it('there is no SETTLEMENT, RECONCILIATION or EXTERNAL CLAIM path', async () => {

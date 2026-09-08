@@ -217,7 +217,19 @@ describe('no audit-plane module can read the control database', () => {
     // `src/db/pool.ts` is generic infrastructure — `createPool`, `inTransaction`, and the
     // NUMERIC-as-string guard. The audit plane uses it for its OWN url. That is the whole
     // dependency, and it is asserted so a later import cannot slip in beside it.
-    const permitted = new Set(['createPool', 'auditUrl', 'Client', 'Pool']);
+    // `inTransaction` is added by S1H and is named in this test's OWN comment above as part
+    // of what makes `pool.ts` generic infrastructure. `src/audit/mirrorInputStall.ts` uses it
+    // to open ONE AUDIT transaction — `30 §5.7.1`'s issuance — and `inTransaction` takes a
+    // client, so it cannot introduce a connection to anything. The property this test
+    // protects is that the audit plane opens no CONTROL connection, and `controlUrl`,
+    // `ACOS_CONTROL_PG_URL` and every control repository remain absent, asserted above.
+    const permitted = new Set([
+      'createPool',
+      'auditUrl',
+      'inTransaction',
+      'Client',
+      'Pool',
+    ]);
     const offenders: string[] = [];
     const walk = async (dir: string): Promise<void> => {
       for (const entry of await readdir(dir, { withFileTypes: true })) {

@@ -10,9 +10,11 @@ import {
   EXPECTED_RATE_WINDOWS,
   RATE_RESOURCE_REF,
   S1F_EXPECTED,
+  S1F_TABLES,
   authoriseRateLocally,
   countOf,
   expectedInstanceKey,
+  freshAuthorisationRef,
   makeLocalAuthorityHarness,
   rateExtension,
   rateFacts,
@@ -20,6 +22,10 @@ import {
   scalar,
   type LocalAuthorityHarness,
 } from '../../support/localAuthorisationFixture.js';
+import { nonAuthorityContext, s1eSpec, workerSession } from '../../support/authorityFixture.js';
+import { rawIntent } from '../../support/enumerationFixture.js';
+import { parseProposedIntent } from '../../../src/kernel/canonicalisation/intent.js';
+import { CanonicalisationDenied } from '../../../src/kernel/canonicalisation/errors.js';
 import {
   unsafeRateOmitsReservationRow,
   unsafeRateReservesForwardIntegral,
@@ -645,5 +651,163 @@ describe('a rate class still denies when a referenced instance lacks headroom', 
         },
       }),
     ).rejects.toThrow('total_exposure = 0.00');
+  });
+});
+
+// =====================================================================================
+// THE RATE C′ BOUNDARY — the fixture is a TEST SEAM, and the worker path is shut
+// =====================================================================================
+
+/**
+ * OWNER-RESOLUTION REVIEW, S1F-C3. The clarification is accepted as a bounded test/internal
+ * step-R seam, on condition that it creates NO production authority bypass. That condition
+ * is asserted here rather than argued: a worker-originated `campaign.budget.set` is refused
+ * at BOTH doors of the real path, and nothing economic exists afterwards.
+ *
+ *   door 1  `enumerate_effects` — `26 §7` step C2 / `26 §11.2`: "Any class with no
+ *           registered constructor | DENY: NOT_CANONICALISABLE at step C2". So no
+ *           `EnumeratedOptionSet` for the class can ever exist in kernel state.
+ *
+ *   door 2  the propose path — `26 §2.0.1` makes `enumeration_id` name "one
+ *           EnumeratedOptionSet the kernel computed", and C′ looks it up rather than
+ *           trusting it. With door 1 shut there is nothing to name, so a fabricated
+ *           selector denies at C′ and the sequence never reaches D–N, let alone R.
+ *
+ * The fixture's kernel-built exposure block therefore reaches step R only through
+ * `commitLocalAuthorisation`, whose single production caller is gated by an S1E
+ * `PRE_RESERVATION_PASS` — asserted in
+ * `tests/integration/authority/local-authorisation-boundary.test.ts`.
+ */
+describe('THE RATE C′ BOUNDARY — `campaign.budget.set` is unreachable on the worker path', () => {
+  const RATE_SPEC = () => s1eSpec({ admittedResourceRefs: [RATE_RESOURCE_REF] });
+  const RATE_KEY = { companyId: COMPANY_ID, entityType: 'campaign', entityId: 'CMP-S1F-1' };
+
+  it('door 1 — enumerate_effects denies NOT_CANONICALISABLE, so no enumeration can exist', async () => {
+    // The resource IS admitted by the context_spec, so the denial is the constructor
+    // registry's and not a scope artifact: `26 §11.2`'s exclusion fires at step C2, before
+    // any authoritative state is read.
+    const error = await kernel.leases
+      .withEntityLease(RATE_KEY, (lease) =>
+        kernel.enumerator.enumerate(lease, {
+          actionClass: 'campaign.budget.set',
+          resourceRef: RATE_RESOURCE_REF,
+          spec: RATE_SPEC(),
+        }),
+      )
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(CanonicalisationDenied);
+    expect((error as CanonicalisationDenied).code).toBe('NOT_CANONICALISABLE');
+    expect((error as CanonicalisationDenied).detail).toBe('NO_REGISTERED_CONSTRUCTOR');
+
+    // And kernel state holds no option set for the class, so door 2 has nothing to name.
+    await withClient(async (client) => {
+      expect(
+        await scalar(
+          client,
+          `SELECT count(*)::TEXT FROM enumeration_record WHERE action_class = 'campaign.budget.set'`,
+        ),
+      ).toBe('0');
+    });
+  });
+
+  it('door 2 — a fabricated rate proposal denies at C′ and never reaches R', async () => {
+    // The most public production-reachable S1F API: the composed pipeline method. The
+    // selector is FABRICATED — a plausible-looking pair no kernel enumeration produced —
+    // which is exactly the shape a worker able to forge a rate step-R input would have to
+    // present.
+    const outcome = await kernel.leases.withEntityLease(RATE_KEY, (lease) =>
+      kernel.pipeline.authoriseLocallyUnderLease(
+        lease,
+        workerSession(),
+        parseProposedIntent(
+          rawIntent({
+            actionClass: 'campaign.budget.set',
+            resourceRef: RATE_RESOURCE_REF,
+            enumerationId: 'enum:FORGED-RATE-0001',
+            optionId: 'opt:FORGED-RATE-0001',
+          }),
+        ),
+        RATE_SPEC(),
+        { ...nonAuthorityContext(), authorisationRef: freshAuthorisationRef() },
+        kernel.commitOptions(),
+      ),
+    );
+
+    expect(outcome.outcome, json(outcome)).toBe('DENIED');
+    if (outcome.outcome !== 'DENIED') return;
+    expect(outcome.step).toBe('C′');
+    expect(outcome.code).toBe('SELECTOR_INVALID');
+    // The pipeline's own trace begins at D — B and C are `parseProposedIntent`'s, and both
+    // PASSED, because the class IS in the closed catalogue. C′ is therefore the first gate
+    // that could refuse it, and it did. Not one gate after C′ ran, so no grant was matched,
+    // no Cedar decision was taken and no step of the local sequence was entered.
+    expect(outcome.stepsEvaluated).toEqual(['D']);
+    for (const step of ['I', 'M', 'N', 'R', 'S', 'T', 'U', 'V', 'W']) {
+      expect(outcome.stepsEvaluated).not.toContain(step);
+    }
+  });
+
+  it('and NOTHING economic is persisted by either attempt', async () => {
+    await kernel.leases
+      .withEntityLease(RATE_KEY, (lease) =>
+        kernel.enumerator.enumerate(lease, {
+          actionClass: 'campaign.budget.set',
+          resourceRef: RATE_RESOURCE_REF,
+          spec: RATE_SPEC(),
+        }),
+      )
+      .catch(() => undefined);
+    await kernel.leases.withEntityLease(RATE_KEY, (lease) =>
+      kernel.pipeline.authoriseLocallyUnderLease(
+        lease,
+        workerSession(),
+        parseProposedIntent(
+          rawIntent({
+            actionClass: 'campaign.budget.set',
+            resourceRef: RATE_RESOURCE_REF,
+            enumerationId: 'enum:FORGED-RATE-0002',
+            optionId: 'opt:FORGED-RATE-0002',
+          }),
+        ),
+        RATE_SPEC(),
+        { ...nonAuthorityContext(), authorisationRef: freshAuthorisationRef() },
+        kernel.commitOptions(),
+      ),
+    );
+
+    await withClient(async (client) => {
+      // Every table the transaction writes — the reservation, the standing authorisation,
+      // its revocation authority, the standing exposure rows, the authorisation, the
+      // effect, the decision and the journal row.
+      for (const table of S1F_TABLES) {
+        expect(await countOf(client, table), table).toBe(0);
+      }
+      // And no headroom moved on either rate window instance.
+      const balances = await rowsOf<{
+        window_id: string;
+        reserved_monetary: string;
+        standing_monetary: string;
+        presumed_monetary: string;
+        realised_monetary: string;
+        reserved_count: string;
+      }>(
+        client,
+        `SELECT window_id, reserved_monetary, standing_monetary, presumed_monetary,
+                realised_monetary, reserved_count
+           FROM window_balance
+          WHERE company_id = $1 AND window_id = ANY($2)`,
+        [COMPANY_ID, [...EXPECTED_RATE_WINDOWS]],
+      );
+      for (const row of balances) {
+        expect(row.reserved_monetary, row.window_id).toBe('0.00');
+        expect(row.standing_monetary, row.window_id).toBe('0.00');
+        expect(row.presumed_monetary, row.window_id).toBe('0.00');
+        expect(row.realised_monetary, row.window_id).toBe('0.00');
+        expect(row.reserved_count, row.window_id).toBe('0');
+      }
+    });
   });
 });

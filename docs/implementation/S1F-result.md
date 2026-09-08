@@ -21,8 +21,9 @@ database and a duplicate cannot consume exposure twice; the journal is gap-free 
 rollback, concurrency and `40001`; `40P01` is never retried; the entity lease is held from
 before C′ to after `COMMIT`; and nothing anywhere dispatches.
 
-`npm run verify` is green: **76 test files, 1047 tests, 1047 passed, 0 failed, 0 skipped**,
-exit code 0.
+`npm run verify` is green: **76 test files, 1052 tests, 1052 passed, 0 failed, 0 skipped**,
+exit code 0. (`5d23faa` measured 1047; the owner-resolution pass added five tests and
+changed no production code — see `S1F-owner-resolution.md` §10.)
 
 ---
 
@@ -35,8 +36,9 @@ exit code 0.
 | Baseline worktree | clean (`git status --porcelain` empty) |
 | Baseline verify | **green**, exit 0 — 66 test files, 901 tests, 901 passed, 0 failed, 0 skipped |
 | Branch | `feature/s1f-atomic-authorisation-commit`, created from `5d289ab` |
-| Final commit | `1d3702b` |
+| Final commit | `1d3702b` (implementation), `5d23faa` (the result record) |
 | Worktree clean at that commit | yes |
+| Owner-resolution pass | reviewed `5d23faa`; test-only additions; no production or migration change; `S1F-owner-resolution.md` |
 | Architecture files modified | **0** (`git diff 5d289ab --name-only -- docs/architecture/` is empty) |
 
 ---
@@ -380,6 +382,7 @@ tests: **146**.
 | Accepted tests **deleted** | **0** |
 | Accepted tests **skipped** | **0** |
 | Accepted assertions **weakened** | **0** |
+| Owner-resolution additions | 5 tests, all additive, all asserting properties `5d23faa` already had — 3 in `rate-class-local-authorisation.test.ts` (the C′ boundary negative proof) and 2 in `local-authorisation-boundary.test.ts` (the single gated production entry point) |
 | Accepted lists widened | 2, both additively and both with the reason stated in place — `i21-type-boundary.test.ts`'s fixture list (fourteen → fifteen, exactness preserved) and a new `describe` block in `authority-type-boundary.test.ts`. Details in `S1F-owner-clarifications.md` §S1F-C9 |
 | Accepted-test comment rewordings | 2 source-rule greps flagged prose in migration `0007`; the COMMENTS were reworded and the rules left untouched |
 
@@ -393,13 +396,13 @@ tests: **146**.
 | `typecheck` | clean |
 | `lint` | zero warnings (`eslint . --max-warnings 0`) |
 | Test files | **76** (baseline 66) |
-| Tests | **1047** (baseline 901) |
-| Passed | **1047** |
+| Tests | **1052** (baseline 901; `5d23faa` was 1047, plus the five owner-resolution additions) |
+| Passed | **1052** |
 | Failed | **0** |
 | Skipped | **0** |
 | `.only` / focused filtering | none |
-| Focused S1F tests | **146** |
-| Real-Postgres S1F tests | **129** |
+| Focused S1F tests | **151** |
+| Real-Postgres S1F tests | **134** |
 | Vulnerable negative controls | **7** named defects, 9 attack rows discriminated |
 | Worktree clean at the S1F commit | yes |
 
@@ -483,6 +486,13 @@ Eight further clarifications record where S1F chose something the architecture d
 append-only by trigger, the database clock, the `ACOS-JCS-1` null question, the module
 placement, and the two widened accepted lists. All are in
 `S1F-owner-clarifications.md`.
+
+**All nine are now dispositioned.** `S1F-owner-resolution.md` records each one's category —
+`OWNER CLARIFICATION — ACCEPTED`, `IMPLEMENTATION DETAIL — NON-SEMANTIC` or `DEFERRED
+RESIDUAL` — with the evidence it was checked against. None resolved to DEFECT and none to
+OWNER DECISION STILL REQUIRED. `S1F-C2` is classification **B**, minimal representation.
+`S1F-C3` is `RATE C′ BOUNDARY — TEST SEAM ONLY / SAFE`, and the owner's required negative
+proof was added. No production source file and no migration changed in that pass.
 
 ---
 

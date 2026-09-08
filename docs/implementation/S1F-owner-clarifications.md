@@ -7,12 +7,22 @@ the difference, the choice, and what it would take to change it.
 **None of these is an architecture amendment.** No file under `docs/architecture/` is
 modified by this slice.
 
+> **OWNER RESOLUTION — RECORDED.** All nine items have been dispositioned by the owner.
+> The dispositions, the evidence each was checked against, and the two test-only
+> conformance additions the review required are in
+> [`S1F-owner-resolution.md`](./S1F-owner-resolution.md). No production source file and no
+> migration changed in that pass, and no item resolved to DEFECT or to OWNER DECISION
+> STILL REQUIRED.
+
 ---
 
 ## S1F-C1 — the write order of the effect row relative to the reservation row
 
-**REQUIRES OWNER DISPOSITION? No — reconciled from the passages themselves. Recorded for
-visibility.**
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED`.** The owner accepts the current
+logical order: `26 §7` decides gate/denial precedence, `30 §5.1` continues to govern the
+single transaction, the lock discipline and the post-`COMMIT` boundary, and the physical
+`INSERT` order inside one transaction is not itself an authority rule. No production
+change. Recorded in `S1F-owner-resolution.md` §1.
 
 ### The two passages
 
@@ -71,8 +81,13 @@ ALSO lacks headroom denies WINDOW_EXHAUSTED"*.
 
 ## S1F-C2 — what "the resulting state transition" is at the local authorisation boundary
 
-**REQUIRES OWNER DISPOSITION? No — but the reading is recorded because `33 §1` names four
-things and S1F commits the fourth in a narrower form than the sentence might suggest.**
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED`, classification B — MINIMAL
+REPRESENTATION.** The architecture requires a resulting transition atomically but does not
+prescribe its storage representation; S1F records the minimum non-authority-widening local
+state that represents the committed decision, in the column `30 §5.1` already names. No new
+business or authority transition was invented, so it is not classification C. Full field-by-
+field statement, including the kill-point evidence and every "does it change X" answer, in
+`S1F-owner-resolution.md` §2. No production change.
 
 ### The passage
 
@@ -121,8 +136,15 @@ the kill-point matrix would extend by one point.
 
 ## S1F-C3 — the rate class reaches step R without traversing C′
 
-**REQUIRES OWNER DISPOSITION? No — it follows from the excluded scope, and it is reported
-rather than elided.**
+**OWNER DISPOSITION: `RATE C′ BOUNDARY — TEST SEAM ONLY / SAFE`.** Accepted as a bounded
+test/internal step-R seam, on the verified condition that it creates no production authority
+bypass. The negative proof the owner required — a fabricated rate proposal through the most
+public production-reachable S1F API, refused at C′, with zero rows in all eleven tables and
+no headroom moved — was ADDED by the resolution pass and is in
+`tests/integration/authority/rate-class-local-authorisation.test.ts`. The primitive's single
+gated caller is asserted in `local-authorisation-boundary.test.ts`. `campaign.budget.set`
+remains NOT CANONICALISABLE on the worker path and its constructor remains OPEN. Full
+statement in `S1F-owner-resolution.md` §3. No production change.
 
 `campaign.budget.set` IS in the closed catalogue (`actionCatalogue.ts`, `rateBased: true`)
 and has NO registered constructor. `26 §7` step C2 therefore denies it
@@ -146,6 +168,10 @@ versioned constructor.
 
 ## S1F-C4 — `I60`'s partial index is structurally redundant, and is installed as declared
 
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`. `OWNER CLARIFICATION —
+ACCEPTED; I60 REMAINS PARTIAL`.** No new transition, no widened approval authority, and the
+transition-state enforcement stays deferred. `S1F-owner-resolution.md` §4.
+
 `26 §12.2`: *"`RESUMING` carries a unique partial index on `(approval_id)` (I60), so a
 second resume cannot start."*
 
@@ -165,6 +191,10 @@ stated fact rather than something a reader has to notice.
 ---
 
 ## S1F-C5 — append-only is enforced by a trigger, not by a withheld GRANT
+
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** Accepted as the S1 local
+enforcement MECHANISM, not as an architecture amendment. It claims no audit-plane
+independence and no `VC-A3`/`I41`. `S1F-owner-resolution.md` §5.
 
 `33 §6` requires append-only tables to have *"no `UPDATE` or `DELETE` grant for any
 application role"*.
@@ -187,6 +217,12 @@ only"*. Its trigger permits exactly that column and refuses every other change a
 ---
 
 ## S1F-C6 — `24 §3.1`'s "on the database clock" is still the injected kernel clock
+
+**OWNER DISPOSITION: `DEFERRED RESIDUAL`. The `24 §3.1` database-clock residual remains
+OPEN.** The current conservative use is accepted for S1F; no new external clock mechanism is
+invented. The exact timestamp source for window-instance derivation, reservation
+creation/expiry, approval timestamps and standing-authorisation timestamps is tabulated in
+`S1F-owner-resolution.md` §6. No production change.
 
 **Unchanged from S1A. Restated because S1F is the first slice where the instant decides a
 COMMITTED window instance on the live authority path.**
@@ -216,6 +252,13 @@ so no caller and no model can choose the instance its commitment lands in.
 ---
 
 ## S1F-C7 — the `ACOS-JCS-1` null question did NOT need reopening
+
+**OWNER DISPOSITION: `OWNER CLARIFICATION — ACCEPTED`. S1F uses the existing specification;
+it does not close `VC-A3`.** No representation was invented. The generic `VC-A3`
+representation obligation — cross-instance re-chaining, proof over structured fields, null
+versus empty at both independent implementations, and any generic nullable `bytes` / JSON
+literal-null integration issue — stays OPEN until the dedicated audit validation slice.
+`S1F-owner-resolution.md` §7.
 
 **Recorded because the S1F mandate asks explicitly whether it did.**
 
@@ -248,6 +291,11 @@ builds the control trigger only and claims nothing about VC-A3.
 
 ## S1F-C8 — the money-path modules are not in `src/kernel/authority/`
 
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** No authority surface changed:
+no model-facing export, no worker-facing authority field, no alternate Cedar route, no
+alternate DB credential or path around the effect-path discipline, and no test helper
+imported into production. `S1F-owner-resolution.md` §8.
+
 The accepted `tests/authority/authority-channel-attacks.test.ts` asserts that the authority
 tree contains no `window_balance`, `exposure_reservation`, `FOR UPDATE`, `INSERT INTO` or
 `UPDATE `. That assertion is correct — `src/kernel/authority/` is `24 §3` K3, the gates — and
@@ -268,6 +316,11 @@ and that their concatenation is `26 §7`'s whole flowchart.
 ---
 
 ## S1F-C9 — accepted-test lists widened by exactly one entry each
+
+**OWNER DISPOSITION: `IMPLEMENTATION DETAIL — NON-SEMANTIC`.** Strictly additive: every
+previously enumerated fixture remains, the new file exists because S1F legitimately added a
+new negative fixture, no previous negative source rule stopped executing, and the exact
+allowlist is still an exact allowlist. `S1F-owner-resolution.md` §9.
 
 Two accepted tests pin CARDINALITIES that any new fixture necessarily changes. Both were
 widened following the precedent S1D and S1E set — with the reason stated in the list — and no

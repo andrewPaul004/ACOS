@@ -514,3 +514,79 @@ describe('the excluded future steps are absent from `src/`', () => {
     expect(perAction.map((f) => f.path.replace(`${process.cwd()}${sep}`, ''))).toEqual([]);
   });
 });
+
+// =====================================================================================
+// The one production entry point into the money transaction
+// =====================================================================================
+
+/**
+ * OWNER-RESOLUTION REVIEW, S1F-C3. The rate-class fixture supplies a KERNEL-BUILT exposure
+ * block straight to `commitLocalAuthorisation`, which is a bounded TEST/INTERNAL step-R
+ * seam. What makes it a seam rather than a production authority bypass is that the
+ * primitive has exactly ONE production caller, and that caller reaches it only from an
+ * S1E `PRE_RESERVATION_PASS` whose economics it did not receive from its own caller.
+ *
+ * Both halves are asserted from the SOURCE, because both are refactor-reachable: a second
+ * `src/` module importing the transaction module, or a `commitLocalAuthorisation` call that
+ * stopped being gated by the pass check, would each turn the seam into a bypass without
+ * failing any behavioural test.
+ */
+describe('the local authorisation transaction has exactly ONE production entry point', () => {
+  async function sourceOf(): Promise<{ path: string; code: string }[]> {
+    const files: { path: string; code: string }[] = [];
+    async function walk(dir: string): Promise<void> {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(path);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts')) continue;
+        files.push({ path, code: await readFile(path, 'utf8') });
+      }
+    }
+    await walk(join(process.cwd(), 'src'));
+    return files;
+  }
+
+  it('exactly one module in `src/` imports the transaction, and it is the pipeline', async () => {
+    const files = await sourceOf();
+    const importers = files.filter(
+      ({ path, code }) =>
+        !path.includes(`${sep}authorisation${sep}`) &&
+        /from '[^']*authorisation\/localAuthorisation\.js'/.test(code),
+    );
+    expect(importers.map((f) => f.path.replace(`${process.cwd()}${sep}`, ''))).toEqual([
+      join('src', 'kernel', 'authority', 'preReservation.ts'),
+    ]);
+  });
+
+  it('and its only call is gated by a PRE_RESERVATION_PASS and the sealed continuation', async () => {
+    const code = await readFile(
+      join(process.cwd(), 'src', 'kernel', 'authority', 'preReservation.ts'),
+      'utf8',
+    );
+    // One call site, not two.
+    expect(code.match(/\n\s*(?:return |await )?commitLocalAuthorisation\(/g)).toHaveLength(1);
+    // And the guard between the pipeline's entry and that call: a non-PASS outcome returns
+    // verbatim, and the facts come from the module-scoped WeakMap rather than a parameter.
+    const guarded =
+      /if \(outcome\.outcome !== 'PRE_RESERVATION_PASS'\) \{[\s\S]*?return outcome;[\s\S]*?\}[\s\S]*?SEALED_CONTINUATIONS\.get\(outcome\)[\s\S]*?commitLocalAuthorisation\(/;
+    expect(guarded.test(code)).toBe(true);
+    // The economics are the frozen S1E ones: the composing method takes no exposure, no
+    // reservation amount, no window list and no lineage of its own. Read from the
+    // COMMENT-STRIPPED source, so the prose explaining each omission cannot satisfy it.
+    const bare = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const signature = bare.slice(
+      bare.indexOf('async authoriseLocallyUnderLease('),
+      bare.indexOf('): Promise<LocalAuthorisationOutcome> {'),
+    );
+    expect(signature.length).toBeGreaterThan(0);
+    for (const forbidden of ['exposure', 'ExposureBlock', 'windowRefs', 'RateClassFacts', 'Money']) {
+      expect(signature.includes(forbidden), `${forbidden} is a parameter`).toBe(false);
+    }
+    // `lineage` appears exactly once, as the thing the options type OMITS.
+    expect(signature).toContain("Omit<LocalAuthorisationOptions, 'lineage'>");
+    expect(signature.match(/lineage/g)).toHaveLength(1);
+  });
+});

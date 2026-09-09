@@ -87,7 +87,7 @@ blindly retryable (`outcome-classes.test.ts`).
 | **required** | `e5b356a` |
 | **actual** | `e5b356ae4d0d647eb7bad9167df55517a278d773` |
 | **branch** | `feature/s1j-mock-dispatch-outcomes` |
-| **final commit** | see `§19` |
+| **final commit** | `06514b4` — `feat(s1j): the Effect Gateway's mock dispatch composition and the unknown-outcome state machine` |
 | **worktree clean at start** | YES |
 | **worktree clean at end** | YES |
 | baseline gate | 48 PASS / 0 FAIL |

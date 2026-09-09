@@ -183,11 +183,26 @@ describe('NO EXTERNAL CALL SURFACE EXISTS ANYWHERE IN `src/`', () => {
       // EVERY OTHER PATTERN IS UNCHANGED AND STILL GLOBAL. S1I builds no adapter module,
       // no vendor read, no anchor and no settlement, and `no-transport-boundary.test.ts`
       // adds the transport absences the outbox directory has to satisfy on top.
+      //
+      // S1J NARROWS THIS LIST BY EXACTLY ONE PATTERN: `/\.dispatch\s*\(/`.
+      //
+      // `phase2-v1.3.4-errata.md` SEQ-01 assigns "the real adapter and the HTTP or
+      // vendor-SDK call" to a LATER slice and the kernel-semantics half to this one, and
+      // `36 §7` states the property that replaces the absence: "Every adapter method is
+      // reachable **only** through the Effect Gateway. Verified by a static check that no
+      // adapter method is exported to any other caller." So the invocation's ABSENCE is no
+      // longer the property; its CONFINEMENT TO ONE FILE is, and it is asserted immediately
+      // below AND again in `no-real-transport-boundary.test.ts` against a hand-authored
+      // caller list.
+      //
+      // `/from ...adapters?\//`, `/callAdapter/i` and `/adapterClient/i` STAY GLOBAL, so an
+      // adapter MODULE or an adapter CLIENT anywhere in `src/` still fails — and S1J adds
+      // neither: `src/` holds no `ExternalEffectAdapter` implementation at all, and
+      // production's own registry is empty.
       for (const pattern of [
         /from\s+['"][^'"]*adapters?\//,
         /callAdapter/i,
         /adapterClient/i,
-        /\.dispatch\s*\(/,
         /vendorQuery/i,
         /vendorRead/i,
         /externalAnchor/i,
@@ -201,6 +216,22 @@ describe('NO EXTERNAL CALL SURFACE EXISTS ANYWHERE IN `src/`', () => {
       }
     }
     expect(offenders, `dispatch machinery in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
+
+    /*
+     * THE CONFINEMENT THAT REPLACES THE WITHDRAWN PATTERN — `36 §7`, `48 §1`.
+     *
+     * `48 §1`: "'The only permitted path' is a policy. 'The only capable path' is an
+     * architecture." Exactly one production file may call `.dispatch(` on an adapter, and
+     * `adapterPort.ts` is exempted because the interface MEMBER is the declaration this
+     * assertion is about rather than a call.
+     */
+    const callers = files
+      .filter(({ path }) => !path.endsWith(join('gateway', 'adapterPort.ts')))
+      .filter(({ code }) => /\.dispatch\s*\(/.test(code))
+      .map(({ path }) => path.replace(`${process.cwd()}${sep}`, ''));
+    expect(callers, 'the adapter invocation surface is not confined to one file').toEqual([
+      join('src', 'kernel', 'gateway', 'effectGateway.ts'),
+    ]);
   });
 
   it('and `DISPATCHED` is not a state of anything', async () => {
@@ -312,7 +343,23 @@ describe('NEITHER DATABASE HAS A DISPATCH SURFACE', () => {
       const tables = await client.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
       );
-      const declaredOutboxRelations = ['dispatch_outbox', 'dispatch_outbox_missing'];
+      /*
+       * S1J WIDENS THE ALLOWLIST BY EXACTLY ONE RELATION, and the allowlist is still the
+       * point: `effect_dispatch_outcome` is the local outcome row `phase2-v1.3.4-errata.md`
+       * SEQ-01 assigns to the execution/adapter slice — "the unknown-outcome runtime
+       * transition" — and `0012`'s header records why it is a SEPARATE relation rather than
+       * a column on `dispatch_outbox`: `25 §7` OBX-01 admits "no transition out of
+       * `CLAIMED`", so an outcome column would need a second transition.
+       *
+       * WHAT MUST STILL BE TRUE, AND STILL IS: the ONLY relations matching `outbox` or
+       * `dispatch` are the three declared here, and NO ADAPTER OR VENDOR RELATION EXISTS AT
+       * ALL — that assertion is unchanged and still global.
+       */
+      const declaredOutboxRelations = [
+        'dispatch_outbox',
+        'dispatch_outbox_missing',
+        'effect_dispatch_outcome',
+      ];
       for (const row of tables.rows) {
         // No adapter and no vendor relation, in any slice. Unchanged and still global.
         expect(row.table_name).not.toMatch(/adapter|vendor/i);
@@ -333,11 +380,29 @@ describe('NEITHER DATABASE HAS A DISPATCH SURFACE', () => {
       //   `monetary_dispatched`    transaction that WOULD dispatch. `§18` of the S1H mandate
       //                            calls it "the pre-dispatch override allowance".
       //
+      //   `dispatch_adapter`       S1J. The `DISPATCH_OUTCOME` journal row's field 14 — WHICH
+      //   `dispatch_outcome_kind`  trusted adapter was invoked, the TYPED result it returned,
+      //   `dispatch_effect_status` and the local status `25 §10`'s policy produced. All three
+      //                            are facts about a LOCAL state machine and an IN-PROCESS
+      //                            mock; none is a provider fact, and `A0007`'s own domain
+      //                            CHECKs refuse a kind or a status neither plane declares.
+      //
       // NOTHING ELSE. In particular no `dispatched_at` and no `dispatched` status column,
-      // either of which would be a record of a send — `§41` of the S1I mandate.
+      // either of which would be a record of a send — `§41` of the S1I mandate. And
+      // `dispatch_effect_status`'s DOMAIN is what keeps that true: `0012` constrains it to
+      // `DISPATCHED_AWAITING_VERIFICATION` and `DISPATCHED_OUTCOME_UNKNOWN`, so `DISPATCHED`,
+      // `EXECUTED`, `VERIFIED`, `PRESUMED_EXECUTED` and `NEVER_SENT` remain unrepresentable —
+      // asserted by the next case in this suite, unchanged.
       for (const row of columns.rows) {
         expect(
-          ['dispatch_payload_hash', 'effects_dispatched', 'monetary_dispatched'],
+          [
+            'dispatch_payload_hash',
+            'effects_dispatched',
+            'monetary_dispatched',
+            'dispatch_adapter',
+            'dispatch_outcome_kind',
+            'dispatch_effect_status',
+          ],
           `${row.table_name}.${row.column_name}`,
         ).toContain(row.column_name);
       }
@@ -353,14 +418,37 @@ describe('NEITHER DATABASE HAS A DISPATCH SURFACE', () => {
         `SELECT column_name FROM information_schema.columns
           WHERE table_schema = 'public' AND column_name ~ 'dispatch'`,
       );
-      // The audit store mirrors the control journal, so it carries the payload HASH and
-      // nothing else — no override counters, because the override is control-plane state.
+      /*
+       * The audit store mirrors the control journal, so it carries the payload HASH and the
+       * three `DISPATCH_OUTCOME` fields — and NO override counters, because the override is
+       * control-plane state and `A0002`'s header says so.
+       *
+       * S1J WIDENS THIS BY EXACTLY THREE COLUMNS, and they are here because `I17` REQUIRES
+       * them: `I17` is a two-sided diff over `journal_seq`, and `30 §5.2` gives a gap
+       * "exactly one interpretation" — suppression. A control-side row kind this store could
+       * not ingest would be a permanent false suppression signal. `§38` of the S1J mandate is
+       * the second reason: the audit plane must be able to determine from ITS OWN holdings
+       * that a dispatch requiring `DISPATCHED_UNMIRRORED` carried the requirement.
+       *
+       * NONE OF THE THREE IS A PROVIDER FACT. At S1J the adapter is a deterministic
+       * in-process mock, so what the audit plane learns is a local state-machine fact.
+       * `I20`'s provider-reported accepted count needs this plane's own ESP read credential,
+       * which is not provisioned, and `I20` stays OPEN.
+       */
       for (const row of columns.rows) {
-        expect(row.column_name).toBe('dispatch_payload_hash');
+        expect([
+          'dispatch_payload_hash',
+          'dispatch_adapter',
+          'dispatch_outcome_kind',
+          'dispatch_effect_status',
+        ]).toContain(row.column_name);
       }
       const tables = await client.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
       );
+      // UNCHANGED AND STILL ABSOLUTE. The audit plane has no outbox, no outcome row, no
+      // adapter and no vendor RELATION of its own: it holds journal rows and nothing else,
+      // and S1J adds no table to it.
       for (const row of tables.rows) {
         expect(row.table_name).not.toMatch(/outbox|dispatch|adapter|vendor/i);
       }

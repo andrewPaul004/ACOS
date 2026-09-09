@@ -162,6 +162,26 @@ const OUTBOX_FILES: readonly string[] = [
   join('src', 'audit', 'transport', 'journalRecord.ts'),
   join('src', 'audit', 'ingress.ts'),
   join('src', 'replication', 'journalPusher.ts'),
+  // S1J. WIDENED BY EXACTLY FOUR, and every existing entry is untouched.
+  //
+  // `25 §7` (OBX-03) prints the chain the dispatch composition runs on: "current claim-time
+  // authority evaluation -> exclusive durable claim -> COMMIT -> transport". A composition
+  // that could not name the CLAIMED outbox row it dispatches could not read the persisted
+  // payload, the correlation tag or the degraded-state requirement off it.
+  //
+  // EVERY TRANSPORT PATTERN ABOVE REMAINS UNCHANGED AND STILL GLOBAL, and S1J adds none of
+  // them: no `fetch`, no `XMLHttpRequest`, no `node:https`, no `node:net`, no `node:dgram`,
+  // no `axios`, no `undici`. `tests/integration/gateway/no-real-transport-boundary.test.ts`
+  // adds thirty further absences over the gateway directory on top of these — including
+  // every vendor name, every credential shape and every URL form.
+  //
+  // AND THE PROPERTY THIS SUITE IS ABOUT IS UNTOUCHED: the assertion below still reads
+  // `localAuthorisation.ts` directly and requires it to contain neither `outbox` nor
+  // `CLAIMED`, so no outbox or outcome write can join the S1F commit point.
+  join('src', 'kernel', 'gateway', 'effectGateway.ts'),
+  join('src', 'kernel', 'gateway', 'dispatchEnvelope.ts'),
+  join('src', 'kernel', 'gateway', 'dispatchCapability.ts'),
+  join('src', 'kernel', 'gateway', 'outcomeTransaction.ts'),
 ];
 
 describe('the declared point list covers the whole production sequence', () => {

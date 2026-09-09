@@ -514,6 +514,84 @@ export function outboxClaimedFields(row: OutboxClaimedRow): readonly OracleField
   ];
 }
 
+export interface DispatchOutcomeRow {
+  readonly companyId: string;
+  readonly journalSeq: bigint;
+  readonly outboxId: string;
+  readonly claimId: string;
+  readonly correlationTag: string;
+  readonly effectId: string;
+  readonly authorisationId: string;
+  readonly idempotencyKey: string;
+  readonly actionClass: string;
+  readonly resourceRef: string;
+  readonly dispatchPayloadHash: string;
+  readonly adapter: string;
+  readonly outcomeKind: string;
+  readonly effectStatus: string;
+  readonly requiresUnmirroredTag: boolean;
+  readonly overrideId: string | null;
+  readonly occurredAt: Date;
+  readonly prevHash: Buffer | null;
+}
+
+/**
+ * `acos.journal.dispatch_outcome.v1`, transcribed by hand from
+ * `docs/implementation/S1J-contract.md §5`.
+ *
+ * THE SOURCE IS AN IMPLEMENTATION DECLARATION, AND THAT IS RECORDED RATHER THAN HIDDEN —
+ * `S1J-C5`. `30 §5.3` requires a hashed row's column order to be "Fixed, declared per row
+ * kind, **in the specification**", and `30 §5.3a` — v1.3.4's answer to `S1I-C4` — declares
+ * one for `acos.journal.outbox_claimed.v1` and for NO OTHER KIND, while saying that "a row
+ * kind in service without one there is a defect of this class". S1J puts a second kind in
+ * service, so its order is declared in the S1J contract and offered to the owner exactly as
+ * S1I offered the claim row's order before `§5.3a` existed.
+ *
+ * THE FOURTH READING, and the independence discipline is unchanged. The control plane
+ * declares this order in `src/db/migrations/0012__dispatch_outcome.sql` and the audit plane
+ * declares it INDEPENDENTLY in `src/audit/db/migrations/A0007__dispatch_outcome.sql`.
+ * `dispatch-outcome-journal-rows.test.ts` compares BOTH against this function, never
+ * against each other — `36 §0`.
+ *
+ * WHAT IS DELIBERATELY ABSENT, AND WHY. `outbox_matched_row`, `outbox_mirror_state` and
+ * `outbox_claim_clock_ref` are facts about the CLAIM and are already in the chained
+ * `OUTBOX_CLAIMED` row this one joins to on `outbox_id`. `30 §5.3a`'s own rule:
+ * "duplicating an authority-bearing value into a second chained row creates a second place
+ * it can disagree with itself." The authorisation block is absent for the same reason, one
+ * row further back.
+ *
+ * FIELD 17 IS PRESENT AND NON-NULLABLE ON PURPOSE. `§38` of the S1J mandate requires the
+ * audit plane to be able to determine that a dispatch requiring `DISPATCHED_UNMIRRORED`
+ * carried the requirement across the port; a row that could omit it would make that
+ * determination impossible from the audit plane's own holdings. Field 18 is `30 §5.7.2`
+ * item 5's `override_id`, NULLABLE, framed as the reserved `FF FF FF FF` word when absent
+ * (v1.3.2, JCS-01).
+ */
+export function dispatchOutcomeFields(row: DispatchOutcomeRow): readonly OracleField[] {
+  return [
+    { kind: 'text', value: 'acos.journal.dispatch_outcome.v1' },
+    { kind: 'text', value: row.companyId },
+    { kind: 'int', value: row.journalSeq },
+    { kind: 'text', value: 'DISPATCH_OUTCOME' },
+    { kind: 'text', value: row.outboxId },
+    { kind: 'text', value: row.claimId },
+    { kind: 'text', value: row.correlationTag },
+    { kind: 'text', value: row.effectId },
+    { kind: 'text', value: row.authorisationId },
+    { kind: 'text', value: row.idempotencyKey },
+    { kind: 'text', value: row.actionClass },
+    { kind: 'text', value: row.resourceRef },
+    { kind: 'text', value: row.dispatchPayloadHash },
+    { kind: 'text', value: row.adapter },
+    { kind: 'text', value: row.outcomeKind },
+    { kind: 'text', value: row.effectStatus },
+    { kind: 'bool', value: row.requiresUnmirroredTag },
+    { kind: 'text', value: row.overrideId },
+    { kind: 'ts', value: row.occurredAt },
+    { kind: 'bytes', value: row.prevHash },
+  ];
+}
+
 /**
  * `30 §5.7.1`'s signed artifact. NOT a journal row — it lives in the audit store and
  * travels over the fetch path — but it is `ACOS-JCS-1` bytes under the same rules, and its

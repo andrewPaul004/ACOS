@@ -232,6 +232,10 @@ export function recordFromControlRow(row: Record<string, unknown>): JournalTrans
         (row['outbox_requires_unmirrored_tag'] as boolean | null) ?? null,
       // `30 §5.3a` field 18, v1.3.4 (CSB-01, JCS-02).
       outboxClaimClockRef: (row['outbox_claim_clock_ref'] as string | null) ?? null,
+      // S1J's `DISPATCH_OUTCOME`. Read off `j.*` exactly as every other kind's columns are.
+      dispatchAdapter: (row['dispatch_adapter'] as string | null) ?? null,
+      dispatchOutcomeKind: (row['dispatch_outcome_kind'] as string | null) ?? null,
+      dispatchEffectStatus: (row['dispatch_effect_status'] as string | null) ?? null,
       occurredAt: row['occurred_at'] as Date,
       prevHash: (row['prev_hash'] as Buffer | null) ?? null,
     },

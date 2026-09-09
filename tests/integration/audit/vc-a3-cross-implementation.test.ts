@@ -110,7 +110,14 @@ async function controlBytes(row: Record<string, unknown>): Promise<Buffer> {
                   -- 18. Absent on this row kind, and listed for the same reason -- this
                   -- cast is exactly the mechanism that catches a shifted field, and it
                   -- caught this one. (No backticks: this is inside a template literal.)
-                  NULL
+                  NULL,
+                  -- S1J's three columns (0012): dispatch_adapter,
+                  -- dispatch_outcome_kind, dispatch_effect_status -- the DISPATCH_OUTCOME
+                  -- row kind's own fields. Absent on this row kind, and listed for the
+                  -- reason every predecessor gave: the arity moved, so the literal moves
+                  -- with it, and 0012's extension of journal_row_shape_per_kind REQUIRES
+                  -- all three absent on EFFECT_AUTHORISATION.
+                  NULL, NULL, NULL
                 )::effect_journal
               ) AS bytes`,
       compositeParams(row),
@@ -138,7 +145,9 @@ async function auditBytes(row: Record<string, unknown>): Promise<Buffer> {
                   -- S1I's six columns (A0005), for the same reason again.
                   NULL, NULL, NULL, NULL, NULL, NULL,
                   -- v1.3.4's one column (A0006): outbox_claim_clock_ref.
-                  NULL
+                  NULL,
+                  -- S1J's three columns (A0007), for the same reason again.
+                  NULL, NULL, NULL
                 )::audit_journal
               ) AS bytes`,
       compositeParams(row),

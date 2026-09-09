@@ -126,6 +126,11 @@ interface BacklogRow {
   readonly outbox_requires_unmirrored_tag: boolean | null;
   // Field 18 of `30 §5.3a`, new at v1.3.4 (JCS-02 / CSB-01).
   readonly outbox_claim_clock_ref: string | null;
+  // S1J's `DISPATCH_OUTCOME`. `SELECT j.*` already returned these columns the moment 0012
+  // added them; naming them here is what puts them on the wire.
+  readonly dispatch_adapter: string | null;
+  readonly dispatch_outcome_kind: string | null;
+  readonly dispatch_effect_status: string | null;
   readonly occurred_at: Date;
   readonly prev_hash: Buffer | null;
   readonly row_hash: Buffer;
@@ -189,6 +194,9 @@ function toRecord(row: BacklogRow): JournalTransportRecord {
       outboxMirrorState: row.outbox_mirror_state,
       outboxRequiresUnmirroredTag: row.outbox_requires_unmirrored_tag,
       outboxClaimClockRef: row.outbox_claim_clock_ref,
+      dispatchAdapter: row.dispatch_adapter,
+      dispatchOutcomeKind: row.dispatch_outcome_kind,
+      dispatchEffectStatus: row.dispatch_effect_status,
       dispatchPayloadHash: row.dispatch_payload_hash,
       constructorSemanticMajor: row.constructor_semantic_major,
       constructorNonSemanticMinor: row.constructor_non_semantic_minor,

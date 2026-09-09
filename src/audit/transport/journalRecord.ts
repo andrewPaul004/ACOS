@@ -78,7 +78,26 @@ export type JournalRowKind =
    * most one external attempt. It learns nothing about whether one happened, because
    * nothing did.
    */
-  | 'OUTBOX_CLAIMED';
+  | 'OUTBOX_CLAIMED'
+  /**
+   * S1J. The typed outcome of one claimed dispatch attempt against a trusted adapter.
+   *
+   * IT TRAVELS THIS PATH FOR TWO REASONS. First, `I17` is a two-sided diff over
+   * `journal_seq` and `30 §5.2` gives a gap "exactly one interpretation" — suppression —
+   * so a control-side kind the audit store cannot ingest is a permanent false signal.
+   *
+   * Second, `§38` of the S1J mandate requires the audit plane to be able to determine,
+   * from its OWN holdings, that a dispatch which required `DISPATCHED_UNMIRRORED` actually
+   * carried the requirement to the adapter. `outboxRequiresUnmirroredTag` and `overrideId`
+   * are on this row for that, and `30 §5.10`'s additive verification list needs both.
+   *
+   * IT IS A LOCAL STATE FACT AND NOT A PROVIDER FACT. At S1J the adapter is a
+   * deterministic in-process mock, so the audit plane learns that ACOS invoked a trusted
+   * adapter and what typed result came back. It learns nothing about acceptance, delivery,
+   * verification or settlement, and `I20` — which needs this plane's own ESP read
+   * credential — stays OPEN.
+   */
+  | 'DISPATCH_OUTCOME';
 
 /**
  * The structured fields of one journal row.
@@ -162,6 +181,21 @@ export interface JournalRowFields {
    * audit needs, and it is the narrower disclosure."
    */
   readonly outboxClaimClockRef: string | null;
+
+  /**
+   * S1J. `DISPATCH_OUTCOME` only.
+   *
+   * `dispatchAdapter` is the catalogue-assigned adapter identity that was invoked;
+   * `dispatchOutcomeKind` is the typed result it returned; `dispatchEffectStatus` is the
+   * post-dispatch local status that followed from `25 §10`'s recoverability-keyed policy.
+   *
+   * NONE OF THE THREE IS A PROVIDER CLAIM, and the audit plane's own CHECKs in `A0007`
+   * refuse a kind or a status it has not been told about — the fail-closed direction
+   * `30 §5.1` item 2 asks of a replicating verifier.
+   */
+  readonly dispatchAdapter: string | null;
+  readonly dispatchOutcomeKind: string | null;
+  readonly dispatchEffectStatus: string | null;
 
   /** `30 §5.4`'s `attested_at` on an attestation row; the effect's instant otherwise. */
   readonly occurredAt: Date;

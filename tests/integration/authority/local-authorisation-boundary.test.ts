@@ -639,6 +639,26 @@ describe('the excluded future steps are absent from `src/`', () => {
       join('src', 'replication', 'journalPusher.ts'),
       // The ACCEPTED S1H module whose comment names the literal in order to disclaim it.
       join('src', 'kernel', 'mirror', 'degradedModeOverride.ts'),
+      // S1J. WIDENED BY EXACTLY FIVE, and every existing entry is untouched.
+      //
+      // `phase2-v1.3.4-errata.md` SEQ-01 assigns "the unknown-outcome runtime transition"
+      // to the execution/adapter slice, and `25 §7` (OBX-03) prints the chain it runs on:
+      // "current claim-time authority evaluation -> exclusive durable claim -> COMMIT ->
+      // transport". A dispatch composition that could not name the CLAIMED row it dispatches
+      // could not read the payload, the correlation tag or the degraded-state requirement
+      // off it — so the vocabulary REACHING these five files is the slice, not a leak.
+      //
+      // WHAT THE ASSERTION STILL PROVES IS THE PROPERTY IT WAS WRITTEN FOR, unchanged:
+      // clause 3 below is untouched, and the MONEY PATH — `kernel/authority`,
+      // `kernel/policy`, `kernel/exposure`, `kernel/canonicalisation` — still contains no
+      // `CLAIMED`, no `outbox` and no `claimForExternalDispatch`. `30 §5.1`'s ordering puts
+      // the precedence evaluation and the dispatch AFTER the COMMIT, so no authorisation
+      // decision may depend on either, and none can.
+      join('src', 'kernel', 'gateway', 'effectGateway.ts'),
+      join('src', 'kernel', 'gateway', 'dispatchEnvelope.ts'),
+      join('src', 'kernel', 'gateway', 'dispatchCapability.ts'),
+      join('src', 'kernel', 'gateway', 'outcomeTransaction.ts'),
+      join('src', 'kernel', 'gateway', 'outcomePolicy.ts'),
     ];
     const unexpected: string[] = [];
     for (const { path, code } of files) {

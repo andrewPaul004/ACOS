@@ -1,0 +1,41 @@
+flowchart TD
+    A[EffectProposal received] --> B{Schema valid?}
+    B -->|no| D1[DENY: MALFORMED]
+    B -->|yes| C{action_class in closed catalogue?}
+    C -->|no| D2[DENY: UNKNOWN_ACTION]
+    C -->|yes| D{Principal authenticated<br/>chain signature valid<br/>depth ≤ 3?}
+    D -->|no| D3[DENY: PRINCIPAL]
+    D -->|yes| E{Categorical prohibition?}
+    E -->|yes| D4[DENY: PROHIBITED — unappealable]
+    E -->|no| F{Agent profile / platform status OK?<br/>kill switch not set}
+    F -->|no| D5[DENY: PLATFORM_SUSPENDED]
+    F -->|yes| G[Fetch preconditions from state store<br/>engine fetches; proposer does not supply]
+    G --> H{All preconditions RECORD/OBSERVATION<br/>and within max_age?}
+    H -->|no| D6[DENY: PRECONDITION or STALE]
+    H -->|yes| I{Matching grant exists<br/>after subset intersection?}
+    I -->|no| D7[DENY: NO_GRANT]
+    I -->|yes| J{recoverability ≤ grant.recoverability_max?}
+    J -->|no| D8[DENY: RECOVERABILITY]
+    J -->|yes| K{counterparty.novelty ≤ grant limit?}
+    K -->|no| D9[DENY: NOVEL_COUNTERPARTY]
+    K -->|yes| L{Evidence requirements met?<br/>corroboration, tier, freshness, coverage}
+    L -->|no| D10[DENY: EVIDENCE]
+    L -->|yes| M{per_action_max satisfied?}
+    M -->|no| D11[DENY: PER_ACTION]
+    M -->|yes| N{Autonomy ledger permits<br/>this key at this level?}
+    N -->|no| O1[REQUIRE_APPROVAL: PROBATION]
+    N -->|yes| P{Channel set?}
+    P -->|yes| Q[Utterance policy evaluation §9]
+    Q -->|fail| D12[DENY or ESCALATE]
+    Q -->|pass| R
+    P -->|no| R[RESERVE exposure atomically<br/>money and irrecoverable-count]
+    R -->|insufficient headroom| D13[DENY: WINDOW_EXHAUSTED]
+    R -->|reserved| S{approval_requirement?}
+    S -->|NONE| T[Mint/verify idempotency key]
+    S -->|tier| O2[REQUIRE_APPROVAL — reservation held]
+    T --> U{Prior effect with this key?}
+    U -->|yes, terminal| V[RETURN PRIOR RESULT — no new effect]
+    U -->|no| W[PERMIT + emit signed AuthorizationDecision]
+    W --> X[Audit write]
+    O2 --> X
+    D1 & D2 & D3 & D4 & D5 & D6 & D7 & D8 & D9 & D10 & D11 & D12 & D13 --> X

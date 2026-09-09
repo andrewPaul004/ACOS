@@ -1,0 +1,93 @@
+graph TB
+    subgraph OWNERIF["Owner interface"]
+      CC["Control Centre<br/>read models + approve/deny"]
+      GRANTS["Grant & Policy Administration<br/>owner-only, change-controlled"]
+    end
+
+    subgraph REASON["REASONING PLANE — untrusted, stateless, no credentials"]
+      CEO["CEO role<br/>scheduled · snapshot-driven"]
+      WRK["Task workers<br/>research · analysis · drafting · triage"]
+      QUAR["Quarantined ingestion workers<br/>no creds · no PII · no propose · no free egress"]
+      AUDR["Audit reviewer<br/>separate model binding"]
+    end
+
+    subgraph CONTROL["CONTROL PLANE — deterministic kernel"]
+      direction TB
+      CTX["Context Assembler"]
+      ORCH["Work Orchestrator<br/>durable execution · budgets · DLQ"]
+      EG["★ EFFECT GATEWAY<br/>the single external-effect chokepoint"]
+      POL["Policy & Authority Engine"]
+      PRIN["Principal & Grant Registry"]
+      APROF["Agent Profile Registry<br/>platform identity · trust tier · kill switch"]
+      EXP["Exposure & Budget Ledger"]
+      STATE["Company State Store<br/>graded · bitemporal · append-only"]
+      EVID["Evidence Store"]
+      FIN["Financial Truth Service<br/>model-free"]
+      DEC["Decision & Approval Registry"]
+      ESC["Escalation & Incident Queue<br/>statutory clocks"]
+      EXPT["Experiment Registry<br/>frozen pre-registration"]
+      METR["Metric Layer<br/>deterministic computation"]
+      ING["Ingress: webhook verify · dedupe · reconcilers · watchdog"]
+    end
+
+    subgraph INTEGRATION["INTEGRATION PLANE — credential-holding adapters"]
+      ADP["Adapters: commerce · payments · fulfilment · ads · email/SMS · social · data"]
+      CRED["Credential Broker<br/>short-TTL · audience-bound · action-scoped"]
+    end
+
+    subgraph AUDITP["AUDIT PLANE — separate store, independent writer"]
+      INV["Continuous invariant checks"]
+      CNTR["Counter-metrics"]
+      FIND["Append-only findings store"]
+    end
+
+    EXTW[("External systems")]
+    EXTU[("Untrusted content")]
+
+    CC --- STATE
+    CC --- FIN
+    CC --- ESC
+    CC --- METR
+    GRANTS --> PRIN
+
+    ORCH --> CTX --> CEO
+    CTX --> WRK
+    CEO -->|typed task orders| ORCH
+    WRK -->|propose_intent| EG
+    CEO -->|propose_intent| EG
+    QUAR -->|schema-validated claims| EVID
+
+    EG --> POL
+    POL --> PRIN
+    POL --> STATE
+    EG --> EXP
+    EG --> DEC
+    EG --> ADP
+    EG --> APROF
+    ADP --> CRED
+    ADP --> EXTW
+    EXTU --> QUAR
+
+    EXTW --> ING --> STATE
+    ING --> FIN
+    FIN --> STATE
+    STATE --> METR
+    EVID --> DEC
+    DEC --> ESC
+    ESC --> CC
+    EXPT --> METR
+
+    EG --> AUDITP
+    POL --> AUDITP
+    STATE --> INV
+    FIN --> INV
+    INV --> FIND
+    CNTR --> FIND
+    FIND --> CC
+    FIND --> AUDR
+    AUDR --> FIND
+
+    style EG fill:#4a2f00,stroke:#fa0,stroke-width:3px,color:#fff
+    style POL fill:#2f2f4a,stroke:#88f,color:#fff
+    style AUDITP fill:#1f3a1f,stroke:#3a3,color:#eee
+    style REASON fill:#3a1f1f,stroke:#a33,color:#eee

@@ -1,0 +1,12 @@
+graph LR
+    D["Discovery task<br/>model M1"] -->|report + citations| ES[("K8 Evidence Store")]
+    R["Research task<br/>model M2<br/>context_spec excludes<br/>discovery rationale"] -->|corroboration| ES
+    ES --> EV["Evaluation task<br/>model M3<br/>context_spec: evidence only,<br/>NO proposer identity"]
+    EV -->|scored candidate| K9["K9 Decision Registry"]
+    K9 --> OWN["Owner or bounded CEO authority"]
+    OWN --> EXEC["Execution — separate task"]
+    EXEC --> MEAS["Measurement — deterministic,<br/>K6/K12, no model"]
+    MEAS --> AUD["Audit — K11, adverse facts"]
+
+    classDef nochan fill:#1f2937,color:#fff
+    class D,R,EV,EXEC nochan

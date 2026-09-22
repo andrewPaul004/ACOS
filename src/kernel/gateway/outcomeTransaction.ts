@@ -1,11 +1,21 @@
 import { inTransaction, type Client, type Pool } from '../../db/pool.js';
 import type { Recoverability } from '../canonicalisation/actionCatalogue.js';
 import {
+  applyIrrecoverablePresumption,
+  readBoundReservationWindows,
+  releaseIrrecoverableReservation,
+  releaseMonetaryReservation,
+  type BoundReservationWindow,
+} from '../exposure/ledger.js';
+import { acquireMoneyPathLocks } from '../exposure/lockOrder.js';
+import { withSerialisationRetry } from '../exposure/retry.js';
+import {
   readDispatchAttestation,
   type DispatchAttestation,
   type DispatchIdentity,
 } from './dispatchCapability.js';
 import {
+  movesLedger,
   outcomePolicyFor,
   type EconomicMovement,
   type PostDispatchEffectStatus,
@@ -14,13 +24,20 @@ import {
 import type { AdapterOutcomeKind } from './adapterPort.js';
 
 /**
- * THE LOCAL OUTCOME TRANSACTION — `§20` OF THE S1J MANDATE.
+ * THE LOCAL OUTCOME TRANSACTION — `§20` OF THE S1J MANDATE, COMPLETED BY v1.3.5.
  *
  * =================================================================================
  * ONE TRANSACTION, AND EXACTLY WHAT IS IN IT
  *
  * "All local consequences of ONE adapter result must commit atomically where architecture
  *  requires. [...] Use ONE PostgreSQL transaction for mutually dependent local state."
+ *
+ * `25 §10.1` names the contents for the irrecoverable case and requires them to share a
+ * commit point, verbatim:
+ *
+ *   "It is `reserved → presumed` for every bound window instance, performed **exactly once**
+ *    per outbox identity, **in the same serializable local transaction as the effect state,
+ *    the outbox outcome state, the outcome journal row and the claim/outcome evidence.**"
  *
  * The contents, and the architecture that puts each one there:
  *
@@ -31,67 +48,105 @@ import type { AdapterOutcomeKind } from './adapterPort.js';
  *
  *   the journal row          `DISPATCH_OUTCOME`. `23 §6` B8 — "no effect originating in
  *                            reasoning can occur that is not recorded" — read one step
- *                            past the claim: the claim was the last record before an
- *                            effect could leave, this is the first after one may have.
+ *                            past the claim.
  *
- *   the outbox row           NOT WRITTEN. `0010`'s trigger refuses every UPDATE to a
- *                            `CLAIMED` row, and `§26` — "every outcome branch remains
- *                            non-reclaimable" — is therefore true because nothing here
- *                            touches it.
+ *   the MIE ledger           `25 §10.1`'s PRESUME row, or its confirmed-not-sent RELEASE
+ *                            row. WRITTEN HERE, in this transaction, on every bound window
+ *                            instance. This is what v1.3.5 added and what the accepted S1J
+ *                            returned PARTIAL for.
  *
- *   the reservation          NOT WRITTEN. `35 §4`: "The exposure reservation **remains
- *                            held**. It is not released on timeout". Holding is the
- *                            absence of a write, so the strongest implementation of it is
- *                            an absent statement — and `economic-state.test.ts` asserts
- *                            the ledger rows byte for byte across the transaction.
+ *   the money reservation    RELEASED on `NOT_SENT_CONFIRMED` and on nothing else
+ *                            (`25 §7.2`). On every other branch NOT WRITTEN — `35 §4`:
+ *                            "The exposure reservation **remains held**. It is not released
+ *                            on timeout". Holding is the absence of a write.
  *
- *   the MIE ledger           NOT WRITTEN, AND THE SLICE IS PARTIAL BECAUSE OF IT. See
- *                            `outcomePolicy.ts`'s `IRRECOVERABLE_UNKNOWN_MIE_TRANSITION_
- *                            UNDECLARED` and `S1J-C1`.
- *
- * SO THE TRANSACTION MOVES NO MONEY AND NO COUNT, AND THAT IS AN ARCHITECTURE RESULT
- * RATHER THAN A SIMPLIFICATION. `§43`'s conditional — "IF outcome-state transactions touch
- * money/MIE rows: assert SERIALIZABLE where current architecture requires it" — does not
- * fire, and `33 §6` scopes the serialisable requirement to the exposure ledger, "the only
- * table with a serialisable-isolation requirement". `READ COMMITTED` with the outbox row
- * lock is therefore the correct isolation, for the same reason the ACCEPTED S1I claim uses
- * it: at `REPEATABLE READ` the loser of a race would raise `40001` instead of reading the
- * committed prior outcome, which converts a determinate answer into a retryable error.
+ *   the outbox row           NOT WRITTEN, ON ANY BRANCH. `0010`'s trigger refuses every
+ *                            UPDATE to a `CLAIMED` row, and `25 §7.1`'s "**ONCE A ROW IS
+ *                            `CLAIMED`, THE SAME OUTBOX IDENTITY IS NEVER RETRIED OR
+ *                            REDISPATCHED, ON ANY OUTCOME**" is therefore true because
+ *                            nothing here touches it.
  * =================================================================================
  *
  * =================================================================================
- * THE LOCK ORDER — `30 §5.2`, AS RESOLVED IN `src/kernel/exposure/lockOrder.ts`
+ * THE ISOLATION IS CHOSEN BY THE MOVEMENT, AND ASSERTED AT THE CONNECTION
  *
- *   1. window_balance            — not touched. No money moves.
- *   2. standing_window_exposure  — not touched.
- *   3. dispatch_outbox row       FOR UPDATE
- *   4. journal_counter           FOR UPDATE, LAST, inside `emit_dispatch_outcome`
+ * `33 §6` scopes the serialisable requirement to the exposure ledger, "the only table with
+ * a serialisable-isolation requirement", and `25 §10.1` requires the PRESUME row to be in a
+ * "serializable local transaction". So:
  *
- * Two locks, in the declared total order, with the counter last. No inversion against the
- * S1I claim transaction exists because that transaction takes the same two in the same
- * order, and none against the S1F authorising transaction because that one never touches
- * `dispatch_outbox`. `§21`: there is no second money-path lock discipline here, because
- * there is no money-path lock here at all.
+ *   moves the ledger   SERIALIZABLE, with `30 §5.2`'s lock order and bounded `40001` retry
+ *   moves nothing      READ COMMITTED, exactly as the ACCEPTED S1J outcome transaction
+ *
+ * READ COMMITTED IS RETAINED FOR THE NON-MOVING BRANCHES DELIBERATELY, for the reason the
+ * accepted implementation gave: "at `REPEATABLE READ` the loser of a race would raise
+ * `40001` instead of reading the committed prior outcome, which converts a determinate
+ * answer into a retryable error." A branch that moves no ledger term has no write skew to
+ * prevent, and a determinate `alreadyResolved` is worth more than an isolation level it
+ * does not need.
+ *
+ * `33 §6`, verbatim, on why the assertion exists at all: "isolation is set and asserted at
+ * the connection", because "@transaction at default isolation silently reintroduces write
+ * skew on the SUM". `assertSerialisable` below is that assertion, and it is the same one
+ * the accepted S1F local-authorisation transaction makes.
  * =================================================================================
  *
  * =================================================================================
- * `§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE ATTEMPT
+ * THE LOCK ORDER — `30 §5.2`, AND `30 §5.1`'s OWN BLOCK FOR THIS TRANSACTION
+ *
+ * `30 §5.1` (v1.3.5) prints the outcome transaction's locks:
+ *
+ *     BEGIN
+ *       SELECT ... FOR UPDATE on window_balance rows, ascending window_id   -- §5.2, where
+ *                                         -- the outcome moves the MIE ledger (25 §10.1)
+ *       SELECT ... FOR UPDATE on journal_counter(company_id)                -- last
+ *       outcome row + journal row (DISPATCH_OUTCOME) + the declared ledger movement
+ *     COMMIT
+ *
+ * and states the rule: "**The outcome transaction takes the money-path lock order where —
+ * and only where — it moves the ledger.** [...] **There is one lock order in the system and
+ * the outcome transaction obeys it.** An outcome reaching an awaiting-verification or
+ * outcome-unknown state moves no ledger term and takes no balance lock."
+ *
+ * The implemented order is therefore:
+ *
+ *   1. window_balance rows      FOR UPDATE, ascending (window_id, window_instance_key)
+ *                               — ONLY where the movement is non-`NONE`
+ *   2. standing_window_exposure — not touched. No standing term moves on any outcome.
+ *   3. dispatch_outbox row      FOR UPDATE      — `30 §5.2`'s "everything else"
+ *   4. journal_counter          FOR UPDATE, LAST, inside `emit_dispatch_outcome`
+ *
+ * NO INVERSION EXISTS AGAINST EITHER OTHER WRITER. The S1I claim transaction takes
+ * `dispatch_outbox` then the counter and never takes `window_balance`; the S1F authorising
+ * transaction takes `window_balance` then the counter and never takes `dispatch_outbox`.
+ * So no cycle is constructible, and `40P01` from this path remains an INVARIANT DEFECT that
+ * `retry.ts` propagates rather than retries (S1A-H2).
+ * =================================================================================
+ *
+ * =================================================================================
+ * `§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE ATTEMPT, AND THE MIE HALF OF IT
  *
  * "At most one may perform state/economic movement. The second must observe prior
  *  terminal/unresolved state; return deterministic prior result or deny; never
- *  double-realise money; never double-consume MIE; never create duplicate journal
+ *  double-realise money; **never double-consume MIE**; never create duplicate journal
  *  authority."
  *
- * TWO MECHANISMS, AND THE SECOND SURVIVES THE FIRST BEING WRONG:
+ * THREE MECHANISMS, AND THE LATER ONES SURVIVE THE EARLIER ONES BEING WRONG:
  *
  *   1. `SELECT ... FOR UPDATE` on the outbox row. A second transaction BLOCKS there until
  *      the first commits, then reads the committed outcome row and returns it as
- *      `alreadyResolved`. No second journal row, no second outcome row.
+ *      `alreadyResolved` — HAVING MOVED NOTHING, because the prior-outcome check happens
+ *      before any ledger statement.
  *
  *   2. `effect_dispatch_outcome`'s PRIMARY KEY on `(company_id, idempotency_key)`. If a
  *      path ever reached the INSERT without the lock — which is precisely what
  *      `tests/negative-controls/unsafe-read-then-write-outcome.ts` does — the database
- *      refuses the duplicate. `36 §0`'s single-mechanism rule, honoured.
+ *      refuses the duplicate, and because the INSERT shares this transaction with the
+ *      ledger movement, the refusal rolls the movement back too.
+ *
+ *   3. `0002`'s `window_balance_irrecoverable_non_negative` CHECK. A second PRESUME for the
+ *      same effect would drive `reserved_irrecoverable` below zero on a window holding one
+ *      unit, and the database refuses it. `36 §0`'s single-mechanism rule, honoured three
+ *      times over — and the third is the one that would catch a bug in the first two.
  * =================================================================================
  */
 
@@ -117,16 +172,32 @@ export const OUTCOME_REFUSALS = [
    */
   'OUTBOX_ROW_NOT_CLAIMED',
   /**
-   * `25 §10`'s table has no declared row for this `(recoverability, outcome kind)` pair, or
-   * the row it has requires a ledger movement v1.3.4 does not define.
+   * `25 §7.1`'s taxonomy declares no local state for this outcome kind.
    *
-   * NOTHING IS WRITTEN. No outcome row, no journal row, no ledger movement — and the claim
-   * stays committed and non-reclaimable, so the no-re-dispatch property is unaffected.
-   * `outcomePolicy.ts`'s `UNDECLARED_POLICY_REASONS` name which artifact leaves each case
-   * open (`S1J-C1`, `S1J-C2`), and `§47` of the mandate is why this is a refusal rather
-   * than a best guess.
+   * The ONLY member that reaches it is `ADAPTER_FAILED`, and v1.3.5 declares that it
+   * reaches none: "Retained for diagnostics only. **It carries no local outcome policy and
+   * reaches no local state.**" NOTHING IS WRITTEN — no outcome row, no journal row, no
+   * ledger movement — and the claim stays committed and non-reclaimable, so the
+   * no-re-dispatch property is unaffected.
    */
   'OUTCOME_POLICY_UNDECLARED',
+  /**
+   * An IRRECOVERABLE effect whose committed reservation holds no irrecoverable unit —
+   * v1.3.5 (MIE-01), FAIL-CLOSED.
+   *
+   * `25 §10.1` makes the PRESUME row a movement of units that step R reserved: "`reserved
+   * -= units`, `presumed += units`". An effect with no reserved unit has nothing to move,
+   * and moving one anyway would either drive `reserved_irrecoverable` negative — refused by
+   * `0002`'s CHECK — or create a `presumed` unit with no authorising reservation behind it,
+   * which is the shape `phase2-v1.3.5-errata.md §1` calls "there was no unit to consume".
+   *
+   * REFUSING IS THE SAFE DIRECTION AND IT DOES NOT WEAKEN THE NO-DISPATCH PROPERTY. The
+   * claim stays committed and the row stays non-reclaimable, so the effect is exactly where
+   * a crash between claim and outcome leaves it: `I9`'s detector's subject. What is refused
+   * is the ACCOUNTING, and an accounting that cannot be performed correctly must not be
+   * performed approximately.
+   */
+  'MIE_UNITS_NOT_RESERVED',
 ] as const;
 
 export type OutcomeRefusal = (typeof OUTCOME_REFUSALS)[number];
@@ -163,9 +234,20 @@ export type OutcomeResult =
        *
        * `§25`: "return deterministic prior result or deny". The prior result is returned,
        * which is `26 §7` load-bearing property 8's shape — "a duplicate proposal returns
-       * the prior result" — applied one stage later.
+       * the prior result" — applied one stage later. AND NO LEDGER TERM MOVED: the check
+       * runs under the outbox row lock and before every ledger statement, which is the
+       * "never double-consume MIE" half of `§25`.
        */
       readonly alreadyResolved: boolean;
+      /**
+       * The window instances this outcome's ledger movement touched, in the declared lock
+       * order. EMPTY where the movement was `NONE` and empty on `alreadyResolved`.
+       *
+       * Present so `25 §10.1`'s "against **every** applicable MIE window instance — not the
+       * first, not a primary, not the most permissive" is a value a test asserts rather than
+       * a claim about the body.
+       */
+      readonly movedWindows: readonly { readonly windowId: string; readonly windowInstanceKey: string }[];
     }
   | {
       readonly kind: 'REFUSED';
@@ -258,6 +340,78 @@ interface OutcomeOperandRow {
 }
 
 /**
+ * The authoritative recoverability, read OUTSIDE any lock, to choose the isolation level.
+ *
+ * =================================================================================
+ * WHY AN UNLOCKED PRE-READ IS SOUND HERE, AND WHY IT DECIDES NOTHING
+ *
+ * The isolation level must be chosen before `BEGIN`, so something must be known before the
+ * transaction opens. What is read here is `effect.recoverability`, and the `effect` table
+ * carries `0007`'s `acos_append_only` trigger: the value is immutable from the instant the
+ * S1F transaction committed it. An immutable value read without a lock is the same value a
+ * locked read would return.
+ *
+ * AND IT IS NOT THE AUTHORITY OPERAND. `processAdapterOutcomeOn` reads recoverability AGAIN,
+ * inside the transaction, under the outbox row lock, and decides the policy from THAT read.
+ * This pre-read only picks an isolation level; a wrong answer here would produce a
+ * transaction that is more strictly isolated than it needed to be, or one that asserts
+ * SERIALIZABLE and refuses — never one that moves a ledger term it should not have.
+ * =================================================================================
+ */
+export async function outcomeIsolationFor(
+  control: Pool,
+  identity: DispatchIdentity,
+  outcomeKind: AdapterOutcomeKind,
+): Promise<'SERIALIZABLE' | 'READ COMMITTED'> {
+  const result = await control.query<{ recoverability: Recoverability }>(
+    `SELECT e.recoverability
+       FROM dispatch_outbox o
+       JOIN effect e ON e.effect_id = o.effect_id AND e.company_id = o.company_id
+      WHERE o.company_id = $1 AND o.idempotency_key = $2`,
+    [identity.companyId, identity.idempotencyKey],
+  );
+  const recoverability = result.rows[0]?.recoverability;
+  if (recoverability === undefined) return 'READ COMMITTED';
+  const policy = outcomePolicyFor(recoverability, outcomeKind);
+  return policy.kind === 'RESOLVE' && movesLedger(policy.economicMovement)
+    ? 'SERIALIZABLE'
+    : 'READ COMMITTED';
+}
+
+/**
+ * `33 §6`'s connection-level assertion, for the branches that move the ledger.
+ *
+ * "isolation is set and asserted at the connection", because "@transaction at default
+ * isolation silently reintroduces write skew on the SUM". The same assertion the accepted
+ * S1F local-authorisation transaction makes, at the one other place a ledger term moves.
+ */
+async function assertSerialisable(client: Client, movement: EconomicMovement): Promise<void> {
+  const isolation = await client.query<{ level: string }>(
+    `SELECT current_setting('transaction_isolation') AS level`,
+  );
+  const level = isolation.rows[0]?.level ?? 'unknown';
+  if (level !== 'serializable') {
+    throw new Error(
+      `an outcome transaction performing ${movement} requires SERIALIZABLE isolation ` +
+        `(33 §6, 25 §10.1); the connection reports ${level}`,
+    );
+  }
+}
+
+export interface OutcomeHooks {
+  /** TEST-ONLY interleaving point, after the row lock and before any write. */
+  readonly afterLock?: () => Promise<void>;
+  /** TEST-ONLY kill point — after the balance locks, before the ledger movement. */
+  readonly beforeLedgerMovement?: () => Promise<void>;
+  /** TEST-ONLY kill point — after the ledger movement, before the journal row. */
+  readonly afterLedgerMovement?: () => Promise<void>;
+  /** TEST-ONLY kill point — after the journal sequence, before the outcome row. */
+  readonly afterJournalRow?: () => Promise<void>;
+  /** TEST-ONLY kill point, after every write and before the caller's COMMIT. */
+  readonly beforeReturn?: () => Promise<void>;
+}
+
+/**
  * Process one adapter outcome, inside the caller's transaction.
  *
  * =================================================================================
@@ -268,8 +422,13 @@ interface OutcomeOperandRow {
  * parameter. `26 §5`: "Assigned per action class in the catalogue, not per request, and
  * never by a model." The query below joins `effect` explicitly rather than trusting
  * `dispatch_outbox.recoverability`, even though `0010`'s composite foreign key already
- * makes the two equal: the point of `§17`'s attack is that the authoritative source is
- * the effect, and reading it says so at the call site.
+ * makes the two equal.
+ *
+ * `irrecoverable_units` COMES FROM THE COMMITTED `reservation_window_instance` ROWS AND
+ * FROM NOWHERE ELSE. Not from the catalogue at the outcome instant, not from a parameter,
+ * not from the adapter. `25 §10.1`'s PRESUME row moves the units THAT WERE RESERVED, and
+ * those rows are append-only as of `0013` — so a catalogue edited during the asynchronous
+ * gap cannot change how many units a committed reservation moves, in either direction.
  *
  * The correlation tag, the payload hash, the action class, the resource, the adapter, the
  * degraded-state requirement and the override are read from the same committed rows. The
@@ -285,12 +444,7 @@ export async function processAdapterOutcomeOn(
     readonly identity: DispatchIdentity;
     readonly now: Date;
   },
-  hooks?: {
-    /** TEST-ONLY interleaving point, after the row lock and before any write. */
-    readonly afterLock?: () => Promise<void>;
-    /** TEST-ONLY kill point, after both writes and before the caller's COMMIT. */
-    readonly beforeReturn?: () => Promise<void>;
-  },
+  hooks?: OutcomeHooks,
 ): Promise<OutcomeResult> {
   const attested = readDispatchAttestation(input.attestation);
   if (attested === undefined) {
@@ -318,7 +472,79 @@ export async function processAdapterOutcomeOn(
     };
   }
 
-  // Step 3 of the lock order. The exclusion for `§25`'s race.
+  // ---------------------------------------------------------------------------------
+  // THE OPERANDS AND THE BOUND WINDOWS, READ BEFORE THE LOCKS ARE TAKEN.
+  //
+  // Both reads are of IMMUTABLE committed rows — `effect` and `authorisation` carry
+  // `acos_append_only`, and `0013` makes `reservation_window_instance` append-only — so
+  // reading them before step 1 of the lock order cannot observe a value that a locked read
+  // would contradict. What the reads decide is WHICH ROWS TO LOCK, and `30 §5.2`'s order
+  // cannot be obeyed without first knowing that.
+  //
+  // This is the same shape the accepted S1F transaction uses: `resolveReferencedWindowInstances`
+  // and `ensureWindowInstance` both run BEFORE `acquireMoneyPathLocks`, and the accepted
+  // `ledger.ts` says why in those words — "deliberately NOT a lock acquisition: it runs
+  // before the declared lock order is entered".
+  // ---------------------------------------------------------------------------------
+  const preRead = await client.query<{
+    recoverability: Recoverability;
+    authorisation_id: string;
+  }>(
+    `SELECT e.recoverability, e.authorisation_id
+       FROM dispatch_outbox o
+       JOIN effect e ON e.effect_id = o.effect_id AND e.company_id = o.company_id
+      WHERE o.company_id = $1 AND o.idempotency_key = $2`,
+    [input.identity.companyId, input.identity.idempotencyKey],
+  );
+  const pre = preRead.rows[0];
+  if (pre === undefined) {
+    return {
+      kind: 'REFUSED',
+      reason: 'OUTBOX_ROW_NOT_FOUND',
+      detail: `no outbox row for ${input.identity.companyId}/${input.identity.idempotencyKey}`,
+    };
+  }
+
+  const provisional = outcomePolicyFor(
+    pre.recoverability,
+    attested.outcomeKind as AdapterOutcomeKind,
+  );
+  const willMoveLedger =
+    provisional.kind === 'RESOLVE' && movesLedger(provisional.economicMovement);
+
+  let bound: readonly BoundReservationWindow[] = [];
+  if (willMoveLedger) {
+    bound = await readBoundReservationWindows(
+      client,
+      input.identity.companyId,
+      pre.authorisation_id,
+    );
+    // `33 §6` / `25 §10.1`. Asserted before the first balance lock, so a misconfigured
+    // caller fails before it holds anything.
+    await assertSerialisable(client, provisional.economicMovement);
+
+    // STEP 1 OF `30 §5.2` — the balance rows, FOR UPDATE, in the declared total order.
+    // `acquireMoneyPathLocks` is the SINGLE acquisition site in `src/`, imported and not
+    // reimplemented, and `tests/integration/exposure/lock-order.test.ts` reads the source
+    // tree and fails if a second one appears.
+    await acquireMoneyPathLocks(client, {
+      companyId: input.identity.companyId,
+      windowInstances: bound.map((w) => ({
+        windowId: w.windowId,
+        windowInstanceKey: w.windowInstanceKey,
+      })),
+      // No standing term moves on any outcome — `25 §10.1`'s five transitions touch
+      // `reserved`, `presumed` and `realised` only, and the irrecoverable ledger has no
+      // standing column at all (`24 §3` K5's printed schema).
+      includeStandingRows: false,
+      // The counter is allocated LAST, inside `emit_dispatch_outcome`, beside the journal
+      // row it numbers. Taking it here would hold the most contended row across the
+      // outcome's whole evaluation, which `30 §5.2` names as the reason it is last.
+      includeJournalCounter: false,
+    });
+  }
+
+  // STEP 3 OF THE LOCK ORDER. The exclusion for `§25`'s race.
   const locked = await client.query<OutcomeOperandRow>(
     `SELECT o.status,
             e.recoverability AS effect_recoverability,
@@ -355,8 +581,12 @@ export async function processAdapterOutcomeOn(
   }
 
   // `§25`'s second transaction, and the idempotent re-entry of `§18` and `§22` point 6.
-  // Read UNDER THE ROW LOCK, so a concurrent writer has either committed and is visible or
-  // has not started.
+  //
+  // READ UNDER THE ROW LOCK AND BEFORE EVERY LEDGER STATEMENT, so a concurrent writer has
+  // either committed and is visible or has not started — and so the loser of the race
+  // returns the prior result HAVING MOVED NO UNIT. This is the "never double-consume MIE"
+  // half of `§25`, and `mie-outcome-duplicate.test.ts` asserts the balance rows are
+  // byte-identical across the second processing.
   const existing = await client.query<OutcomeDbRow>(
     `SELECT ${OUTCOME_COLUMNS} FROM effect_dispatch_outcome
       WHERE company_id = $1 AND idempotency_key = $2`,
@@ -364,10 +594,15 @@ export async function processAdapterOutcomeOn(
   );
   const prior = existing.rows[0];
   if (prior !== undefined) {
-    return { kind: 'RESOLVED', record: toRecord(prior), alreadyResolved: true };
+    return {
+      kind: 'RESOLVED',
+      record: toRecord(prior),
+      alreadyResolved: true,
+      movedWindows: [],
+    };
   }
 
-  // `25 §10`'s table, over the AUTHORITATIVE recoverability and the TYPED outcome.
+  // `25 §7.1`'s table, over the AUTHORITATIVE recoverability and the TYPED outcome.
   const policy = outcomePolicyFor(
     operands.effect_recoverability,
     attested.outcomeKind as AdapterOutcomeKind,
@@ -381,9 +616,100 @@ export async function processAdapterOutcomeOn(
     };
   }
 
+  // ---------------------------------------------------------------------------------
+  // THE DECLARED LEDGER MOVEMENT — `25 §10.1` and `25 §7.2`.
+  //
+  // AGAINST EVERY BOUND WINDOW INSTANCE, in the declared lock order, and never against a
+  // primary or a first match. The set is the immutable one step R committed.
+  // ---------------------------------------------------------------------------------
+  const movedWindows: { windowId: string; windowInstanceKey: string }[] = [];
+  if (movesLedger(policy.economicMovement)) {
+    if (hooks?.beforeLedgerMovement !== undefined) await hooks.beforeLedgerMovement();
+
+    const totalUnits = bound.reduce((sum, w) => sum + w.irrecoverableUnits, 0n);
+    if (operands.effect_recoverability === 'IRRECOVERABLE' && totalUnits === 0n) {
+      return {
+        kind: 'REFUSED',
+        reason: 'MIE_UNITS_NOT_RESERVED',
+        detail:
+          `effect ${operands.effect_id} is IRRECOVERABLE and its committed reservation ` +
+          'holds no irrecoverable unit; 25 §10.1 moves units that step R reserved and ' +
+          'there is nothing to move',
+      };
+    }
+
+    for (const window of bound) {
+      switch (policy.economicMovement) {
+        case 'MIE_RESERVED_TO_PRESUMED':
+          await applyIrrecoverablePresumption(
+            client,
+            input.identity.companyId,
+            window.windowId,
+            window.windowInstanceKey,
+            window.irrecoverableUnits,
+          );
+          break;
+        case 'MIE_RESERVED_RELEASED':
+          await releaseIrrecoverableReservation(
+            client,
+            input.identity.companyId,
+            window.windowId,
+            window.windowInstanceKey,
+            window.irrecoverableUnits,
+          );
+          break;
+        case 'RESERVATION_RELEASED':
+          // `25 §7.2`'s money branch. The same two terms step R moved, by the same
+          // amounts, on the same instances. `26 §7` property 8's release, performed
+          // against a COMMITTED reservation for the first time in this codebase — see
+          // `ledger.ts`'s `releaseMonetaryReservation` header and the S1J owner
+          // clarification it cites.
+          await releaseMonetaryReservation(
+            client,
+            input.identity.companyId,
+            window.windowId,
+            window.windowInstanceKey,
+            window.amount,
+            // The count units step R consumed against this instance. One authorised
+            // effect is one unit against `I3`'s count ledger (`51 §2`), which is the
+            // figure the accepted `preReservation.ts` seals into the facts.
+            1n,
+          );
+          break;
+        case 'NONE':
+          // Unreachable: `movesLedger` excluded it. An assertion, not a fallback.
+          throw new Error('a NONE movement reached the ledger branch');
+      }
+      movedWindows.push({
+        windowId: window.windowId,
+        windowInstanceKey: window.windowInstanceKey,
+      });
+    }
+
+    // The reservation row is stamped in the SAME transaction, so `I3` term 1 stays
+    // reconstructable as the sum over UNRELEASED reservations and a released reservation is
+    // identifiable afterwards. `0013`'s `reservation_release_is_paired` CHECK and its
+    // no-unrelease trigger are what make the stamp one-way.
+    if (
+      policy.economicMovement === 'RESERVATION_RELEASED' ||
+      policy.economicMovement === 'MIE_RESERVED_RELEASED'
+    ) {
+      await client.query(
+        `UPDATE exposure_reservation
+            SET released_at = $2, released_reason = 'DISPATCH_NOT_SENT_CONFIRMED'
+          WHERE authorisation_id = $1 AND released_at IS NULL`,
+        [operands.authorisation_id, input.now],
+      );
+    }
+
+    if (hooks?.afterLedgerMovement !== undefined) await hooks.afterLedgerMovement();
+  }
+
   // `23 §6` B8. Journaled BEFORE the outcome row is written, in the same transaction, so
   // the two are one durable fact — the ordering the ACCEPTED S1I claim uses, for the same
   // reason: the record must not be able to lag the state it records.
+  //
+  // `emit_dispatch_outcome` takes `journal_counter` FOR UPDATE, which is step 4 and LAST.
   const emitted = await client.query<{ emit_dispatch_outcome: string }>(
     `SELECT emit_dispatch_outcome($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                                   $14, $15, $16)`,
@@ -407,6 +733,7 @@ export async function processAdapterOutcomeOn(
     ],
   );
   const journalSeq = emitted.rows[0]!.emit_dispatch_outcome;
+  if (hooks?.afterJournalRow !== undefined) await hooks.afterJournalRow();
 
   const inserted = await client.query<OutcomeDbRow>(
     `INSERT INTO effect_dispatch_outcome (
@@ -445,14 +772,56 @@ export async function processAdapterOutcomeOn(
 
   if (hooks?.beforeReturn !== undefined) await hooks.beforeReturn();
 
-  return { kind: 'RESOLVED', record: toRecord(inserted.rows[0]!), alreadyResolved: false };
+  return {
+    kind: 'RESOLVED',
+    record: toRecord(inserted.rows[0]!),
+    alreadyResolved: false,
+    movedWindows,
+  };
 }
 
 /**
- * Process one adapter outcome in its own transaction.
+ * Process one adapter outcome in its own transaction, ON A GIVEN CLIENT.
  *
- * `READ COMMITTED`, for the reason the header gives: this transaction moves no money, and
- * a determinate `alreadyResolved` beats a retryable `40001` for the loser of a race.
+ * THE CLIENT MATTERS AND IS NOT AN OPTIMISATION. `25 §14.1` requires Epoch B's dispatch
+ * lease to be held continuously "across [...] **6. local adapter-outcome transaction → 7.
+ * OUTCOME COMMIT**", and the lease is a SESSION-level advisory lock living in one
+ * connection. A transaction opened on a different pooled connection would be a transaction
+ * the lock does not cover, so `effectGateway.ts` passes the lease's own client here.
+ *
+ * The isolation is the movement's — SERIALIZABLE where a ledger term moves, READ COMMITTED
+ * where none does — and the `40001` retry is the accepted bounded one, which propagates
+ * `40P01` immediately because a deadlock on this path is an invariant defect (S1A-H2).
+ */
+export async function processAdapterOutcomeOnClient(
+  client: Client,
+  isolation: 'SERIALIZABLE' | 'READ COMMITTED',
+  input: {
+    readonly attestation: DispatchAttestation;
+    readonly identity: DispatchIdentity;
+    readonly now: Date;
+  },
+  hooks?: OutcomeHooks,
+): Promise<OutcomeResult> {
+  if (isolation === 'READ COMMITTED') {
+    return inTransaction(client, 'READ COMMITTED', (tx) =>
+      processAdapterOutcomeOn(tx, input, hooks),
+    );
+  }
+  const retried = await withSerialisationRetry(
+    client,
+    (tx) => processAdapterOutcomeOn(tx, input, hooks),
+    { isolation: 'SERIALIZABLE' },
+  );
+  return retried.value;
+}
+
+/**
+ * Process one adapter outcome in its own transaction, on a pooled connection.
+ *
+ * Retained for callers outside Epoch B — tests that process a second outcome for `§25`'s
+ * race, and the accepted suites. The gateway does NOT use it: it must run on the dispatch
+ * lease's connection.
  */
 export async function processAdapterOutcome(
   control: Pool,
@@ -461,16 +830,20 @@ export async function processAdapterOutcome(
     readonly identity: DispatchIdentity;
     readonly now: Date;
   },
-  hooks?: {
-    readonly afterLock?: () => Promise<void>;
-    readonly beforeReturn?: () => Promise<void>;
-  },
+  hooks?: OutcomeHooks,
 ): Promise<OutcomeResult> {
+  const attested = readDispatchAttestation(input.attestation);
+  const isolation =
+    attested === undefined
+      ? ('READ COMMITTED' as const)
+      : await outcomeIsolationFor(
+          control,
+          input.identity,
+          attested.outcomeKind as AdapterOutcomeKind,
+        );
   const client = await control.connect();
   try {
-    return await inTransaction(client, 'READ COMMITTED', (tx) =>
-      processAdapterOutcomeOn(tx, input, hooks),
-    );
+    return await processAdapterOutcomeOnClient(client, isolation, input, hooks);
   } finally {
     client.release();
   }

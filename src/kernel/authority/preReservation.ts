@@ -409,6 +409,13 @@ export class PreReservationAuthorityPipeline {
         valueDirection: catalogueEntry.valueDirection,
         adapter: catalogueEntry.adapter,
         idempotencyKey: effect.dispatchPayload.idempotencyKey,
+        // `25 §14.1`'s revalidation identity, taken from the CANONICAL EFFECT the gates
+        // evaluated — never from the raw intent. `request.enumerationRef` is the record C′
+        // looked up in kernel state, and `request.selectedOption.optionId` is the identity
+        // the accepted canonicaliser RECOMPUTED and `liveSelector.ts` step 9 checked against
+        // the live set. So what is persisted is what passed C′, not what a proposal claimed.
+        enumerationId: request.enumerationRef.enumerationId,
+        optionId: request.selectedOption.optionId,
         windowRefs: authority.windowRefs,
         approvalRequirement: authority.approvalRequirement,
         autonomyLevel: autonomy.level,

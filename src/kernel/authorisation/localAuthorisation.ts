@@ -174,6 +174,37 @@ export interface LocalAuthorisationRequestFacts {
   readonly adapter: string;
   /** `25 §7`'s effect key, computed by the kernel BEFORE this transaction. */
   readonly idempotencyKey: string;
+  /**
+   * `26 §2.1`'s `enumeration_ref` and `selected_option.option_id`, PERSISTED — v1.3.5
+   * (SER-01).
+   *
+   * =================================================================================
+   * WHY THEY ARE HERE, AND WHAT THEY ARE NOT
+   *
+   * `25 §14.1` makes dispatch-time revalidation MANDATORY and specifies its operands: "the
+   * original `action_class`, the original resource identity, **the original
+   * enumeration/option identity** and the original constructor/version identity". Three of
+   * the four were already on the committed `authorisation` row; the enumeration/option pair
+   * was not, so a dispatch one epoch later had nothing to revalidate against.
+   *
+   * `26 §2.1` HAD ALWAYS REQUIRED THEM ON THE REQUEST — "enumeration_ref — the
+   * enumeration_id and its computed_at, for lineage" and "the enumerated option whose
+   * option_id the selector names" — so persisting them closes a conformance gap in the row
+   * rather than adding a new authority fact.
+   *
+   * THEY ARE NOT AUTHORITY OPERANDS OF THIS TRANSACTION. Nothing at steps R through W reads
+   * either: the gates already ran at C′, under the Epoch-A lease, against these exact
+   * values. What they are is EVIDENCE, written once and read one epoch later.
+   *
+   * NULLABLE, AND THE NULL CASE IS THE RATE BRANCH. `campaign.budget.set` is entered
+   * through `commitLocalAuthorisation` directly and never traverses C′ (`26 §7` step C2, no
+   * registered constructor), so it has no enumeration and no option. `dispatchRevalidation.ts`
+   * refuses to dispatch an effect whose identity is absent rather than treating absence as a
+   * pass — the fail-closed direction, recorded in the S1J owner resolution.
+   * =================================================================================
+   */
+  readonly enumerationId: string | null;
+  readonly optionId: string | null;
   /** The UNION the matching grants reference (S1E-C4). Every entry constrains the effect. */
   readonly windowRefs: readonly string[];
   /** `26 §4`, intersected at its highest across matching grants by the accepted S1E resolver. */
@@ -438,9 +469,10 @@ export async function commitLocalAuthorisation(
              constructor_id, constructor_semantic_major, constructor_non_semantic_minor,
              policy_version,
              vendor_amount, total_exposure, forward_integral, is_rate_class,
-             recoverability, value_direction, autonomy_level, gate_class, created_at)
+             recoverability, value_direction, autonomy_level, gate_class, created_at,
+             enumeration_id, option_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                   $16::NUMERIC,$17::NUMERIC,$18::NUMERIC,$19,$20,$21,$22,$23,$24)`,
+                   $16::NUMERIC,$17::NUMERIC,$18::NUMERIC,$19,$20,$21,$22,$23,$24,$25,$26)`,
           [
             ids.authorisationId,
             facts.companyId,
@@ -468,6 +500,10 @@ export async function commitLocalAuthorisation(
             facts.autonomyLevel,
             facts.gateClass,
             at,
+            // `25 §14.1`'s revalidation identity. Evidence, not an operand of this
+            // transaction — see the facts type's own header.
+            facts.enumerationId,
+            facts.optionId,
           ],
         );
         for (const window of referenced) {

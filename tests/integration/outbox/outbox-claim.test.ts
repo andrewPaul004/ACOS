@@ -184,26 +184,32 @@ describe('ONE CLAIM, AND WHAT IT RECORDS', () => {
     expect(after).toEqual(before);
   });
 
-  it('`§24` — the IRRECOVERABLE EXECUTION UNIT IS NOT CONSUMED, at enqueue or at claim', async () => {
+  it('`§24` — the IRRECOVERABLE UNIT IS RESERVED AT STEP R, AND MOVED BY NEITHER ENQUEUE NOR CLAIM', async () => {
     /*
      * `§24` OF THE MANDATE: "Do not consume an irrecoverable-effect execution unit merely
      * because the row is enqueued. Do not consume it merely because a claim exists unless
      * current architecture explicitly defines claim as the consumption point."
      *
-     * v1.3.3 defines the consumption point and it is NOT the claim. `35 §4`: on recovery
-     * the row "is `CLAIMED` and is never re-dispatched by any path (I36). **It is marked
-     * `PRESUMED_EXECUTED`, the irrecoverable unit is consumed**, and the provider's
-     * delivery event [...] resolves it." ADR-026 item 3 says the same: for IRRECOVERABLE,
-     * on an unknown outcome, "Mark `PRESUMED_EXECUTED`, **consume the irrecoverable
-     * unit**, resolve later from the provider's delivery event."
+     * =============================================================================
+     * WHAT v1.3.5 CHANGED HERE, AND WHY THE PROPERTY GOT STRONGER
      *
-     * So the unit is consumed at `PRESUMED_EXECUTED`, which requires a real request
-     * uncertainty, which requires a request. S1I has none, and `§23` forbids
-     * manufacturing one.
+     * Until MIE-01 there was no unit to consume at all: `phase2-v1.3.5-errata.md §1` records
+     * that "**no artifact declared a reservation of an irrecoverable unit at all**", so this
+     * case asserted three zeros and proved only that nothing had invented a counter.
      *
-     * ASSERTED AS A ZERO RATHER THAN AS AN EQUALITY. The snapshot comparison above proves
-     * "unchanged"; this proves the value is actually zero, so a fixture that had
-     * pre-consumed a unit could not make the case pass.
+     * `25 §10.1` now declares the whole lifecycle, and the claim is not a point in it:
+     *
+     *   RESERVE   at local authorisation, `26 §7` step R          — BEFORE the enqueue
+     *   PRESUME   at `PRESUMED_EXECUTED`                          — AFTER the adapter
+     *   REALISE   at provider-evidenced `VERIFIED`                — later
+     *   RELEASE   at `DISPATCH_NOT_SENT_CONFIRMED` / `NEVER_SENT` — later
+     *
+     * So `§24`'s question — "Do not consume it merely because a claim exists unless current
+     * architecture explicitly defines claim as the consumption point" — has the same answer
+     * and a better test: the unit is now REALLY RESERVED, and the claim must leave it
+     * exactly where it is. A claim that moved it would now be observable, where before there
+     * was nothing for it to move.
+     * ==============================================================================
      */
     const reversible = await enqueuedPause('CMP-MIE-REVERSIBLE');
     const irrecoverable = await authoriseReship(h, { resourceId: 'ORD-MIE' });
@@ -272,7 +278,13 @@ describe('ONE CLAIM, AND WHAT IT RECORDS', () => {
       );
       expect(ledger.rows.length).toBeGreaterThan(0);
       for (const row of ledger.rows) {
-        expect(row.reserved_irrecoverable, row.window_id).toBe('0');
+        // THE MIE WINDOWS HOLD THE RESERVED UNIT — `25 §10.1`'s RESERVE row, written by step
+        // R before this effect was ever enqueued. Every other window is untouched, because
+        // `51 §2.3` gives the irrecoverable ledger one contributor and it is this class.
+        const expectedReserved = row.window_id.endsWith('_MIE') ? '1' : '0';
+        expect(row.reserved_irrecoverable, row.window_id).toBe(expectedReserved);
+        // AND NEITHER THE ENQUEUE NOR THE CLAIM MOVED IT. `presumed` is reached only at
+        // `PRESUMED_EXECUTED`, which requires an adapter outcome, and S1I has no adapter.
         expect(row.presumed_irrecoverable, row.window_id).toBe('0');
         expect(row.realised_irrecoverable, row.window_id).toBe('0');
       }

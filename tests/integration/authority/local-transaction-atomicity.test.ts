@@ -179,9 +179,27 @@ const OUTBOX_FILES: readonly string[] = [
   // `localAuthorisation.ts` directly and requires it to contain neither `outbox` nor
   // `CLAIMED`, so no outbox or outcome write can join the S1F commit point.
   join('src', 'kernel', 'gateway', 'effectGateway.ts'),
+  // v1.3.5 (SER-01). TWO MORE, and both for the same reason the four above were added:
+  // `25 §14.1`'s Epoch B is defined in terms of the outbox row it is about to claim.
+  //
+  //   dispatchLease.ts        derives the entity advisory-lock key from the committed
+  //                           `dispatch_outbox.resource_ref`, because `25 §14.1` requires
+  //                           "the **same architecture entity advisory-lock key**" as Epoch A
+  //                           and that key is only recoverable from immutable committed
+  //                           identity.
+  //   dispatchRevalidation.ts reads the ORIGINAL identity off the same row, which
+  //                           `25 §14.1` names operand by operand.
+  //
+  // NEITHER ADDS A TRANSPORT PATTERN. No `fetch`, no `XMLHttpRequest`, no `node:https`, no
+  // `node:net`, no `node:dgram`, no `axios`, no `undici` — every pattern above stays global
+  // and unchanged. And the property this suite is about is untouched: the assertion at the
+  // end still reads `localAuthorisation.ts` directly and requires it to contain neither
+  // `outbox` nor `CLAIMED`, so nothing here can join the S1F commit point.
   join('src', 'kernel', 'gateway', 'dispatchEnvelope.ts'),
   join('src', 'kernel', 'gateway', 'dispatchCapability.ts'),
   join('src', 'kernel', 'gateway', 'outcomeTransaction.ts'),
+  join('src', 'kernel', 'gateway', 'dispatchLease.ts'),
+  join('src', 'kernel', 'gateway', 'dispatchRevalidation.ts'),
 ];
 
 describe('the declared point list covers the whole production sequence', () => {

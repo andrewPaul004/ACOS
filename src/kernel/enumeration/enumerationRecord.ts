@@ -2,6 +2,11 @@ import type { Client } from '../../db/pool.js';
 import { canonicalHash, hex } from '../canonicalisation/canonicalBytes.js';
 import type { ActionClass } from '../canonicalisation/actionCatalogue.js';
 import type { ConstructorVersionIdentity } from '../canonicalisation/constructorVersion.js';
+import {
+  deserialiseContextSpec,
+  serialiseContextSpec,
+  type TaskContextSpec,
+} from './contextSpec.js';
 import type { EnumeratedOption } from './enumeratedOptionSet.js';
 
 /**
@@ -61,6 +66,24 @@ export interface EnumerationRecord {
    * step 9.
    */
   readonly options: readonly EnumeratedOption[];
+  /**
+   * The KERNEL-OWNED task scope this enumeration was computed under — v1.3.5 (SER-01).
+   *
+   * `25 §14.1`'s dispatch-time revalidation re-enumerates the CURRENT permissible effects
+   * one epoch later and asks whether the original `option_id` is still among them. That
+   * re-enumeration must run under THE SAME SCOPE, because `24 §3` K4 bounds an enumeration
+   * by the task's `context_spec` and `26 §2.2` puts the task's `reasonCodeScope` inside
+   * `refund.create`'s `semantic_option_digest` — a different scope computes different
+   * `option_id`s and the comparison would be meaningless.
+   *
+   * PERSISTED HERE SO NO DISPATCH-TIME CALLER SUPPLIES ONE. See `contextSpec.ts`'s
+   * serialisation header for the two attacks that closes.
+   *
+   * NULLABLE, because rows written before `0013` have none. `dispatchRevalidation.ts`
+   * treats an absent scope as STALE and refuses the dispatch rather than substituting a
+   * default — `51 §2.3`'s "no implicit default may widen authority", applied to a scope.
+   */
+  readonly contextSpec: TaskContextSpec | null;
 }
 
 /**
@@ -152,6 +175,7 @@ interface RecordRow {
   constructor_non_semantic_minor: number;
   constructor_record_hash: string;
   options: unknown;
+  context_spec: unknown;
 }
 
 export async function insertEnumerationRecord(
@@ -163,8 +187,8 @@ export async function insertEnumerationRecord(
        company_id, enumeration_id, task_id, principal_id, action_class,
        resource_ref, resource_id, computed_at,
        constructor_id, constructor_semantic_major, constructor_non_semantic_minor,
-       constructor_record_hash, options)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)
+       constructor_record_hash, options, context_spec)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb)
      ON CONFLICT (company_id, enumeration_id) DO NOTHING`,
     [
       record.companyId,
@@ -185,6 +209,11 @@ export async function insertEnumerationRecord(
           description: option.description,
         })),
       ),
+      // `25 §14.1`. NOT part of the `enumeration_id` preimage, deliberately: the id already
+      // commits to the ORDERED OPTIONS the scope produced, so committing to the scope as
+      // well would change every accepted id for no additional binding. What the column adds
+      // is the ability to REPRODUCE that set later, which the id alone cannot give.
+      record.contextSpec === null ? null : JSON.stringify(serialiseContextSpec(record.contextSpec)),
     ],
   );
   // `ON CONFLICT DO NOTHING` is safe precisely BECAUSE the id is content-addressed: a
@@ -202,7 +231,7 @@ export async function findEnumerationRecord(
     `SELECT enumeration_id, task_id, principal_id, action_class,
             resource_ref, resource_id, computed_at,
             constructor_id, constructor_semantic_major, constructor_non_semantic_minor,
-            constructor_record_hash, options
+            constructor_record_hash, options, context_spec
        FROM enumeration_record
       WHERE company_id = $1 AND enumeration_id = $2`,
     [companyId, enumerationId],
@@ -236,5 +265,6 @@ export async function findEnumerationRecord(
     constructorNonSemanticMinor: row.constructor_non_semantic_minor,
     constructorRecordHash: row.constructor_record_hash,
     options,
+    contextSpec: deserialiseContextSpec(companyId, row.context_spec),
   };
 }

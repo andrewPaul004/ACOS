@@ -1,4 +1,7 @@
 import type { Pool } from '../../src/db/pool.js';
+import type { EffectEnumerator } from '../../src/kernel/enumeration/enumerateEffects.js';
+import { DispatchLeaseManager } from '../../src/kernel/gateway/dispatchLease.js';
+import type { DispatchEnvironment } from '../../src/kernel/gateway/effectGateway.js';
 import {
   createAdapterRegistry,
   type AdapterRegistry,
@@ -28,6 +31,53 @@ export const ADAPTER_COMMERCE = 'mock_commerce';
 /** Build a registry from mocks. The TEST-ONLY resolver `§8` permits. */
 export function testRegistry(...adapters: readonly ExternalEffectAdapter[]): AdapterRegistry {
   return createAdapterRegistry(adapters);
+}
+
+/**
+ * The `DispatchEnvironment` `25 §14.1`'s Epoch B needs — v1.3.5 (SER-01).
+ *
+ * =================================================================================
+ * WHY THE HARNESS IS A STRUCTURAL PARAMETER AND NOT AN IMPORTED TYPE
+ *
+ * `OutboxHarness` lives in `outboxFixture.ts`, which imports THIS module. Naming the type
+ * here would close a cycle, so the parameter is the structural shape this function actually
+ * reads — the control pool and the kernel's enumerator — and nothing else.
+ *
+ * THE LEASE MANAGER IS BUILT PER CALL, ON PURPOSE. `25 §14.1` requires the dispatch lease to
+ * be "a NEW PostgreSQL session", and `DispatchLeaseManager` checks a connection out of the
+ * pool per acquisition. A manager shared across a test file is still one session per
+ * acquisition, so building one per call costs nothing and keeps each scenario's Epoch B
+ * independent of every other's.
+ * =================================================================================
+ */
+export function dispatchEnv(
+  h: { readonly control: Pool; readonly kernel: { readonly enumerator: EffectEnumerator } },
+  ...adapters: readonly ExternalEffectAdapter[]
+): DispatchEnvironment {
+  return {
+    control: h.control,
+    registry: createAdapterRegistry(adapters),
+    leases: new DispatchLeaseManager({ pool: h.control }),
+    enumerator: h.kernel.enumerator,
+  };
+}
+
+/**
+ * The same environment with a registry the caller already built.
+ *
+ * For the scenarios that keep a `registry` variable so a second dispatch can reuse the
+ * identical adapter instance and its call counters.
+ */
+export function dispatchEnvWith(
+  h: { readonly control: Pool; readonly kernel: { readonly enumerator: EffectEnumerator } },
+  registry: AdapterRegistry,
+): DispatchEnvironment {
+  return {
+    control: h.control,
+    registry,
+    leases: new DispatchLeaseManager({ pool: h.control }),
+    enumerator: h.kernel.enumerator,
+  };
 }
 
 /**

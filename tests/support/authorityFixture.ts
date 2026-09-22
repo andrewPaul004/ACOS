@@ -648,7 +648,7 @@ export interface AuthorityHarness extends EnumerationHarness {
 
 export function makeAuthorityHarness(
   harness: Harness,
-  options: { readonly at?: Date } = {},
+  options: Parameters<typeof makeEnumerationHarness>[1] = {},
 ): AuthorityHarness {
   const enumeration = makeEnumerationHarness(harness, options);
   const policyEngine = new PolicyEngine();

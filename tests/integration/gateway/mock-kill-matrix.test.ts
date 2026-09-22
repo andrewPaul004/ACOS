@@ -11,6 +11,8 @@ import {
 } from '../../support/outboxFixture.js';
 import {
   ADAPTER_ADS,
+  dispatchEnv,
+  dispatchEnvWith,
   outcomeJournalRows,
   rawOutcomeRows,
   testRegistry,
@@ -102,9 +104,9 @@ async function measure(
   point: string,
   tag: string,
   mockOptions: { readonly afterAccepted?: () => Promise<void> },
-  hooks: Parameters<typeof dispatchAuthorisedEffect>[3] extends undefined
+  hooks: Parameters<typeof dispatchAuthorisedEffect>[2] extends undefined
     ? never
-    : NonNullable<Parameters<typeof dispatchAuthorisedEffect>[3]>['hooks'],
+    : NonNullable<Parameters<typeof dispatchAuthorisedEffect>[2]>['hooks'],
   expectThrow: boolean,
 ): Promise<{ readonly row: KillRow; readonly mock: MockAdapter }> {
   const effect = await enqueuedPause(tag);
@@ -119,8 +121,8 @@ async function measure(
   const registry = testRegistry(mock);
 
   const run = dispatchAuthorisedEffect(
-    h.control,
-    registry,
+    dispatchEnvWith(h, registry),
+    
     {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
@@ -146,7 +148,7 @@ async function measure(
 
   // KILL POINT 6 — "recovery/re-entry attempt". The SAME production entry point, called
   // again, with the SAME registry, after the notional restart.
-  const recovery = await dispatchAuthorisedEffect(h.control, registry, {
+  const recovery = await dispatchAuthorisedEffect(dispatchEnvWith(h, registry),  {
     companyId: COMPANY_ID,
     idempotencyKey: effect.idempotencyKey,
     dispatchedBy: 'worker:recovered',
@@ -291,7 +293,7 @@ describe('`§22` — THE SIX POINTS, ONE ROW EACH', () => {
      */
     const points: {
       readonly tag: string;
-      readonly hooks: NonNullable<Parameters<typeof dispatchAuthorisedEffect>[3]>['hooks'];
+      readonly hooks: NonNullable<Parameters<typeof dispatchAuthorisedEffect>[2]>['hooks'];
       readonly afterAccepted?: () => Promise<void>;
       readonly expectedCalls: number;
     }[] = [
@@ -330,8 +332,8 @@ describe('`§22` — THE SIX POINTS, ONE ROW EACH', () => {
       expect(row.mockCallsAfterRecovery, point.tag).toBe(point.expectedCalls);
       // And a THIRD attempt changes nothing either.
       const third = await dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(
+        dispatchEnv(h,
+        
           createMockAdapter({
             adapterId: ADAPTER_ADS,
             resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
@@ -379,7 +381,7 @@ describe('`§22`, `§30` — WHAT THE MATRIX DOES NOT CLOSE', () => {
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: returnedOutcome(),
     });
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:open',

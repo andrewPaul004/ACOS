@@ -16,19 +16,20 @@ import {
 } from '../../support/outboxFixture.js';
 import {
   ADAPTER_PROCESSOR,
+  dispatchEnv,
+  testRegistry,
   persistedCorrelationTag,
   persistedPayloadHex,
   rawOutcomeRows,
-  testRegistry,
 } from '../../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome } from '../../support/mockAdapter.js';
+import { unsafeDispatchWithoutRevalidation } from '../../negative-controls/unsafe-dispatch-epoch.js';
 import { enqueueDispatch } from '../../../src/kernel/outbox/enqueue.js';
 import { dispatchAuthorisedEffect } from '../../../src/kernel/gateway/effectGateway.js';
 import { buildDispatchEnvelope } from '../../../src/kernel/gateway/dispatchEnvelope.js';
 import {
   unsafeMapperDroppingCorrelationTag,
   unsafeMapperDroppingUnmirroredTag,
-  unsafeReconstructedEnvelope,
 } from '../../negative-controls/unsafe-dispatch-envelope.js';
 
 /**
@@ -97,72 +98,128 @@ function processorMock(events?: string[]) {
 }
 
 describe('`§10` — THE MOCK RECEIVES THE PERSISTED PAYLOAD, NOT A RECONSTRUCTION', () => {
-  it('the mutation regression: business state moves, the dispatched bytes do not', async () => {
+  it('a gap mutation makes the authorised option STALE, and the dispatch is refused', async () => {
+    /*
+     * =================================================================================
+     * WHAT THIS TEST ASSERTED BEFORE v1.3.5, AND WHY THE ANSWER CHANGED
+     *
+     * The accepted version asserted that business state moving between enqueue and dispatch
+     * does not change the DISPATCHED BYTES — and it still does not, which the other tests in
+     * this file prove on the unmutated path. What it also asserted, implicitly, was that the
+     * dispatch PROCEEDS. `25 §14.1` (v1.3.5, SER-01) makes that wrong:
+     *
+     *   "**If the originally authorised option or effect is no longer valid, the claim is
+     *    REFUSED.** Nothing is dispatched and nothing is substituted."
+     *
+     * And this mutation does invalidate it. `refundEnumeration.ts` computes
+     * `amount = min(line.refundable_remaining, parent_transaction.refundable_remaining)`, and
+     * `26 §2.2` puts `amount` INSIDE `refund.create`'s `semantic_option_digest` — so moving
+     * the remaining balance from `$10.00` to `$3.00` gives the live option a DIFFERENT
+     * content-addressed `option_id`, and the authorised one is absent from the live set.
+     * That is `I53` at the dispatch boundary, which is the invariant `25 §14.1` names.
+     *
+     * SO THE PROPERTY IS STRONGER THAN THE ONE IT REPLACED: the bytes are still never
+     * reconstructed, and the effect they belong to is no longer dispatched at all.
+     * =================================================================================
+     */
     const effect = await enqueuedRefund('mutation');
     const persistedBefore = await persistedPayloadHex(h.control, effect.idempotencyKey);
 
-    // MUTATE THE AUTHORITATIVE BUSINESS STATE, between enqueue and dispatch. `$10.00`
-    // becomes `$3.00`, so the constructor would now compute a different refund.
+    // MUTATE THE AUTHORITATIVE BUSINESS STATE, in the asynchronous gap. `25 §14.1` is
+    // explicit that no lock is held here and that this is an architecture property rather
+    // than a missing lock.
     await mutateOrderLineRemaining(h.control, '3.00');
 
-    // And prove the mutation is real by re-running C′ and seeing DIFFERENT bytes. This is
-    // the discriminator's other half: if reconstruction produced the same bytes, the test
-    // would prove nothing.
+    // Prove the mutation is real by re-running C′ and seeing DIFFERENT bytes. Without this,
+    // a refusal could mean the fixture never moved anything.
     const reconstructed = await reconstructRefundPayload(h, `auth:AR-ENV-mutation`);
     expect(reconstructed.toString('hex')).not.toBe(persistedBefore);
 
     const mock = processorMock();
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:mutation',
       now: NOW,
     });
-    expect(result.kind).toBe('OUTCOME_RESOLVED');
 
-    // THE PRODUCTION ANSWER: the ORIGINAL persisted bytes.
-    expect(mock.observed).toHaveLength(1);
-    expect(mock.observed[0]!.payloadHex).toBe(persistedBefore);
-    expect(mock.observed[0]!.payloadHex).toBe(effect.payloadCanonicalBytes.toString('hex'));
-    // And the persisted row itself never moved: `0010`'s trigger admits no UPDATE to a
-    // `CLAIMED` row, so the bytes on disk are still the authorised ones.
+    // THE CLAIM IS REFUSED, AND THE DENIAL IS COARSE — `25 §14.1` under `26 §2.2`'s probing
+    // rule. One literal, and no option id, resource state or near-miss in the detail.
+    expect(result.kind).toBe('REVALIDATION_REFUSED');
+    if (result.kind !== 'REVALIDATION_REFUSED') return;
+    expect(result.reason).toBe('DISPATCH_EFFECT_STALE');
+    expect(result.detail).not.toContain('option');
+    expect(result.detail).not.toContain('3.00');
+
+    // NOTHING WAS DISPATCHED AND NOTHING WAS SUBSTITUTED.
+    expect(mock.callCount).toBe(0);
+    expect(mock.observed).toHaveLength(0);
+
+    // NOTHING WAS CLAIMED EITHER — the refusal precedes the claim, which is `30 §5.1`'s
+    // ordering block: "A claim that occurs before revalidation is a defect of this class."
+    expect((await outboxRows(h.control))[0]!.status).toBe('ENQUEUED');
+    expect(await rawOutcomeRows(h.control)).toHaveLength(0);
+
+    // AND THE PERSISTED BYTES NEVER MOVED. `0010`'s trigger admits no UPDATE to a claimed
+    // row and nothing here rebuilt them, so the payload on disk is still the authorised one.
     expect(await persistedPayloadHex(h.control, effect.idempotencyKey)).toBe(persistedBefore);
   });
 
-  it('THE DISCRIMINATOR — `§40` item 4: the unsafe envelope carries the reconstruction', async () => {
-    const effect = await enqueuedRefund('recon');
+  it('THE DISCRIMINATOR — `§29`: the unsafe dispatch trusts enqueue-time validity', async () => {
+    /*
+     * `§29`'s five steps, and the two implementations' answers side by side.
+     *
+     * The unsafe path is not a straw man: it is the ACCEPTED S1J composition, which claimed
+     * and invoked with no entity lease and no revalidation because no artifact declared
+     * either. `phase2-v1.3.5-errata.md §2` records that SER-01 was "the report S1J was
+     * required to make rather than route around", and this control is what the corrected
+     * protocol discriminates against.
+     */
+    // ONE effect, TWO implementations. The same authorised effect is offered to both, which
+    // is a sharper comparison than two effects: nothing about the fixture can differ between
+    // the two runs, so the only variable is the dispatch protocol.
+    //
+    // PRODUCTION GOES FIRST, AND THAT IS WHAT MAKES IT POSSIBLE. `25 §14.1` refuses BEFORE
+    // the claim, so the row is still `ENQUEUED` afterwards and the unsafe path can still
+    // claim it. A production refusal that had consumed the claim would have hidden the
+    // control's behaviour behind `ALREADY_CLAIMED`.
+    const effect = await enqueuedRefund('stale-gap');
     const persisted = await persistedPayloadHex(h.control, effect.idempotencyKey);
     await mutateOrderLineRemaining(h.control, '3.00');
-    const reconstructed = await reconstructRefundPayload(h, `auth:AR-ENV-recon`);
 
-    // Build the production envelope from the committed row, then apply the defect.
-    const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    // PRODUCTION: refused before the claim, nothing invoked, row untouched.
+    const productionMock = processorMock();
+    const production = await dispatchAuthorisedEffect(dispatchEnv(h, productionMock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
-      dispatchedBy: 'worker:recon',
+      dispatchedBy: 'worker:production-stale',
       now: NOW,
     });
-    const production = mock.observed[0]!;
+    expect(production.kind).toBe('REVALIDATION_REFUSED');
+    expect(productionMock.callCount).toBe(0);
+    expect((await outboxRows(h.control))[0]!.status).toBe('ENQUEUED');
 
-    const row = (await outboxRows(h.control))[0]!;
-    const built = buildDispatchEnvelope(row);
-    expect(built.kind).toBe('BUILT');
-    if (built.kind !== 'BUILT') return;
-    const unsafeEnvelope = unsafeReconstructedEnvelope(built.envelope, reconstructed);
+    // UNSAFE: no lease, no revalidation. It claims the SAME row and it invokes.
+    const unsafeMock = processorMock();
+    const unsafe = await unsafeDispatchWithoutRevalidation(
+      h.control,
+      testRegistry(unsafeMock),
+      {
+        companyId: COMPANY_ID,
+        idempotencyKey: effect.idempotencyKey,
+        dispatchedBy: 'worker:unsafe-stale',
+        now: NOW,
+      },
+    );
+    expect(unsafe.claim.kind).toBe('CLAIMED');
+    expect(unsafe.invoked).toBe(true);
+    expect(unsafeMock.callCount).toBe(1);
+    // AND IT DISPATCHED THE AUTHORISED BYTES FOR AN OPTION THAT NO LONGER EXISTS — which is
+    // the precise harm: not a wrong payload, a payload for a stale effect.
+    expect(unsafeMock.observed[0]!.payloadHex).toBe(persisted);
 
-    // PRODUCTION dispatched the persisted bytes; the unsafe envelope carries the rebuilt
-    // ones, and the two differ. The hash on the envelope still claims the persisted
-    // payload, so the unsafe path also DISAGREES WITH ITS OWN HASH — which is the shape a
-    // reviewer would have to notice, because nothing on the dispatch path checks it.
-    expect(production.payloadHex).toBe(persisted);
-    expect(unsafeEnvelope.payloadCanonicalBytes.toString('hex')).toBe(
-      reconstructed.toString('hex'),
-    );
-    expect(unsafeEnvelope.payloadCanonicalBytes.toString('hex')).not.toBe(
-      production.payloadHex,
-    );
-    expect(unsafeEnvelope.dispatchPayloadHash).toBe(built.envelope.dispatchPayloadHash);
+    // THE DISCRIMINATION, AS ONE COMPARISON.
+    expect(unsafeMock.callCount).not.toBe(productionMock.callCount);
   });
 });
 
@@ -174,7 +231,7 @@ describe('`§11` — THE CORRELATION TAG CROSSES THE PORT UNCHANGED', () => {
     expect(persistedTag).toMatch(/^acos-corr-/);
 
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:tag',
@@ -201,7 +258,7 @@ describe('`§11` — THE CORRELATION TAG CROSSES THE PORT UNCHANGED', () => {
     const tagAtEnqueue = await persistedCorrelationTag(h.control, effect.idempotencyKey);
 
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:tag-restart',
@@ -214,7 +271,7 @@ describe('`§11` — THE CORRELATION TAG CROSSES THE PORT UNCHANGED', () => {
   it('THE DISCRIMINATOR — `§40` item 5: the unsafe mapper blanks it', async () => {
     const effect = await enqueuedRefund('tag-drop');
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:tag-drop',
@@ -242,7 +299,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
       outcome: returnedOutcome(),
       attemptMutation: true,
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(attacker), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, attacker), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:alias',
@@ -288,7 +345,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
   it('every read of the payload returns an independent copy', async () => {
     const effect = await enqueuedRefund('copies');
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:copies',
@@ -316,7 +373,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
     // `ROW_NOT_CLAIMED` refusal, and is asserted below. Claim it properly first.
     expect(built.kind).toBe('BUILT');
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:no-alias',
@@ -346,7 +403,7 @@ describe('`§12` — THE UNMIRRORED REQUIREMENT IS CARRIED, AND CANNOT BE SUPPRE
   it('THE DISCRIMINATOR — `§40` item 6: the unsafe mapper clears it', async () => {
     const effect = await enqueuedRefund('unmirrored-drop');
     const mock = processorMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:unmirrored-drop',

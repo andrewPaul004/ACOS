@@ -37,10 +37,14 @@ const CLASSES = ['REVERSIBLE', 'COMPENSABLE', 'IRRECOVERABLE'] as const;
 
 describe('`25 §10` — the complete input space, against the hand-authored table', () => {
   it('the oracle is exhaustive: nine rows, three classes × three outcome kinds', () => {
-    expect(EXPECTED_OUTCOMES).toHaveLength(9);
+    // 3 classes x 4 outcome kinds, after v1.3.5 added `NOT_SENT_CONFIRMED` (OBX-05).
+    expect(EXPECTED_OUTCOMES).toHaveLength(12);
+    // `25 §7.1`: "A trusted adapter reports exactly one of four typed outcomes, and
+    // nothing else." Transcribed by hand, in the artifact's own order.
     expect([...ADAPTER_OUTCOME_KINDS]).toEqual([
       'ADAPTER_RETURNED',
       'OUTCOME_UNKNOWN',
+      'NOT_SENT_CONFIRMED',
       'ADAPTER_FAILED',
     ]);
   });
@@ -56,7 +60,9 @@ describe('`25 §10` — the complete input space, against the hand-authored tabl
           expect(actual.effectStatus).toBe(expected.effectStatus);
           expect(actual.economicMovement).toBe(expected.economicMovement);
           expect(actual.redispatchPermitted).toBe(false);
-          expect(actual.reservationHeld).toBe(true);
+          // `25 §7.2` releases on NOT_SENT_CONFIRMED and on nothing else, so this is the
+          // hand-authored row's own value rather than a constant.
+          expect(actual.commitmentHeld).toBe(expected.commitmentHeld);
         }
       });
     }
@@ -70,53 +76,106 @@ describe('the declared domains are exactly the architecture literals', () => {
      * from "an independent read-back". S1J performs no read-back, so no branch may produce
      * it — and the domain says so rather than a comment saying so.
      */
+    // `25 §7.1` (v1.3.5): "The declared non-terminal post-dispatch statuses are
+    // `DISPATCHED_AWAITING_VERIFICATION`, `DISPATCHED_OUTCOME_UNKNOWN` and
+    // `PRESUMED_EXECUTED`; the declared terminal one is `DISPATCH_NOT_SENT_CONFIRMED`."
+    // Four literals, hand-transcribed in that order.
     expect([...POST_DISPATCH_EFFECT_STATUSES]).toEqual([
       'DISPATCHED_AWAITING_VERIFICATION',
       'DISPATCHED_OUTCOME_UNKNOWN',
+      'PRESUMED_EXECUTED',
+      'DISPATCH_NOT_SENT_CONFIRMED',
     ]);
+    // `VERIFIED` and `NEVER_SENT` REMAIN ABSENT, and v1.3.5 does not add them: `25 §10.1`'s
+    // REALISE and never-sent RELEASE rows "are reached only from provider evidence", and
+    // `25 §7.2` keeps `DISPATCH_NOT_SENT_CONFIRMED` "deliberately NOT `NEVER_SENT`" because
+    // the two differ in the KIND of evidence behind them.
     expect(POST_DISPATCH_EFFECT_STATUSES as readonly string[]).not.toContain('VERIFIED');
     expect(POST_DISPATCH_EFFECT_STATUSES as readonly string[]).not.toContain('NEVER_SENT');
-    expect(POST_DISPATCH_EFFECT_STATUSES as readonly string[]).not.toContain(
-      'PRESUMED_EXECUTED',
-    );
     expect(POST_DISPATCH_EFFECT_STATUSES as readonly string[]).not.toContain('DISPATCHED');
   });
 
-  it('there is exactly ONE economic movement, and it is `NONE`', () => {
+  it('the four declared economic movements, and no `REALISED` among them', () => {
     /*
      * `§18`'s conditional — "if architecture says success makes it realised" — is answered
      * in the negative: `25 §5` says verification "for money [...] is the settlement
      * reconciliation, not the API response", and `24 §3` K5's realised term is fed by
      * settlement events `28 §4` owns and S1J does not build.
      *
-     * `35 §4`'s hold is likewise the ABSENCE of a movement rather than a movement into the
-     * presumed term: the registry binds `I3`'s term 3 to `PRESUMED_SETTLED`, which `I32`
-     * and `26 §10.3` define as the liquidity-override state for a money reservation.
+     * `35 §4`'s MONEY hold is likewise the ABSENCE of a movement rather than a movement into
+     * the presumed term: `24 §3` K5 (v1.3.5) gives `presumed_monetary` exactly one producer,
+     * `PRESUMED_SETTLED`, which `I32` and `26 §10.3` define as the liquidity-override state
+     * for a money reservation — a different ledger from this one.
+     *
+     * WHAT v1.3.5 ADDED IS THREE MOVEMENTS ON LEDGER 3 AND THE MONEY RELEASE, and no
+     * realisation: `25 §10.1`'s PRESUME and confirmed-not-sent RELEASE rows, plus `25 §7.2`'s
+     * money release. The REALISE row and the never-sent release stay out because both need
+     * independent provider evidence.
      */
-    expect([...ECONOMIC_MOVEMENTS]).toEqual(['NONE']);
+    expect([...ECONOMIC_MOVEMENTS]).toEqual([
+      'NONE',
+      'MIE_RESERVED_TO_PRESUMED',
+      'MIE_RESERVED_RELEASED',
+      'RESERVATION_RELEASED',
+    ]);
+    for (const movement of ECONOMIC_MOVEMENTS) {
+      expect(movement).not.toContain('REALISED');
+    }
   });
 
-  it('the two undeclared reasons name the two open architecture points', () => {
-    expect([...UNDECLARED_POLICY_REASONS]).toEqual([
+  it('ONE undeclared reason survives, and it is a DECLARATION rather than a gap', () => {
+    /*
+     * The accepted S1J carried TWO. `S1J-C1` — the irrecoverable unknown branch's MIE
+     * transition — is CLOSED by MIE-01: `25 §10.1` declares the movement, `51 §2.3` declares
+     * the units, and the branch now RESOLVES.
+     *
+     * What remains is not the second gap either. v1.3.4 left `ADAPTER_FAILED` with no state
+     * AND a retry that contradicted OBX-01; v1.3.5 corrects the retry and DECLARES that the
+     * kind reaches no state — "Retained for diagnostics only." So the member's name says
+     * what the architecture says, and not that the architecture is silent.
+     */
+    expect([...UNDECLARED_POLICY_REASONS]).toEqual(['ADAPTER_FAILED_REACHES_NO_LOCAL_STATE']);
+    expect(UNDECLARED_POLICY_REASONS as readonly string[]).not.toContain(
       'IRRECOVERABLE_UNKNOWN_MIE_TRANSITION_UNDECLARED',
-      'KNOWN_FAILURE_STATE_UNDECLARED',
-    ]);
+    );
   });
 });
 
-describe('`§16` — THE IRRECOVERABLE UNKNOWN BRANCH IS PARTIAL, AND SAYS WHY', () => {
-  it('it refuses rather than guessing, and names `S1J-C1`', () => {
+describe('MIE-01 — THE IRRECOVERABLE UNKNOWN BRANCH RESOLVES, AND MOVES ONE UNIT', () => {
+  it('`25 §10 row 2` + `25 §10.1`: PRESUMED_EXECUTED, reserved → presumed', () => {
+    /*
+     * THIS IS THE CELL THE ACCEPTED S1J RETURNED PARTIAL FOR, and the reason it can resolve
+     * now is a DECLARATION and not a decision: `phase2-v1.3.5-errata.md §1` records that the
+     * implementation "returned PARTIAL rather than inventing a counter", and MIE-01 declares
+     * the movement four artifacts required and none defined.
+     */
     const policy = outcomePolicyFor('IRRECOVERABLE', 'OUTCOME_UNKNOWN');
-    expect(policy.kind).toBe('UNDECLARED');
-    if (policy.kind !== 'UNDECLARED') return;
-    expect(policy.reason).toBe('IRRECOVERABLE_UNKNOWN_MIE_TRANSITION_UNDECLARED');
-    // The refusal carries the architecture citation, so an owner reading a refusal in a
-    // log sees which artifact is incomplete rather than an opaque code.
-    expect(policy.detail).toContain('25 §10');
-    expect(policy.detail).toContain('S1J-C1');
-    // AND IT SAYS THE SAFETY HALF STILL HOLDS. `25 §7`: a `CLAIMED` row "is never
-    // re-dispatched by any path".
-    expect(policy.detail).toContain('never re-dispatched');
+    expect(policy.kind).toBe('RESOLVE');
+    if (policy.kind !== 'RESOLVE') return;
+    expect(policy.effectStatus).toBe('PRESUMED_EXECUTED');
+    expect(policy.economicMovement).toBe('MIE_RESERVED_TO_PRESUMED');
+    // NO HEADROOM. `25 §10.1`: "The sum of the three terms does not fall, so an unknown
+    // outcome creates no headroom." The movement RELOCATES the unit; it does not release it.
+    expect(policy.commitmentHeld).toBe(true);
+    expect(policy.redispatchPermitted).toBe(false);
+    expect(policy.source).toContain('25 §10.1');
+  });
+
+  it('and `ADAPTER_RETURNED` reaches the SAME state by the SAME movement — OBX-04', () => {
+    /*
+     * `25 §7.1`: "The unit moves `reserved → presumed` **exactly once**, on whichever of the
+     * two outcomes arrives." So the two cells must agree on both columns, and this asserts
+     * the agreement rather than restating each cell.
+     */
+    const unknown = outcomePolicyFor('IRRECOVERABLE', 'OUTCOME_UNKNOWN');
+    const returned = outcomePolicyFor('IRRECOVERABLE', 'ADAPTER_RETURNED');
+    expect(unknown.kind).toBe('RESOLVE');
+    expect(returned.kind).toBe('RESOLVE');
+    if (unknown.kind !== 'RESOLVE' || returned.kind !== 'RESOLVE') return;
+    expect(returned.effectStatus).toBe(unknown.effectStatus);
+    expect(returned.economicMovement).toBe(unknown.economicMovement);
+    // AND IT IS NOT THE MONEY ANSWER. The whole point of OBX-04's second correction.
+    expect(returned.effectStatus).not.toBe('DISPATCHED_AWAITING_VERIFICATION');
   });
 
   it('and the MONEY unknown branch is NOT partial — it resolves, and holds', () => {
@@ -127,23 +186,26 @@ describe('`§16` — THE IRRECOVERABLE UNKNOWN BRANCH IS PARTIAL, AND SAYS WHY',
       expect(policy.kind).toBe('RESOLVE');
       if (policy.kind !== 'RESOLVE') return;
       expect(policy.effectStatus).toBe('DISPATCHED_OUTCOME_UNKNOWN');
-      expect(policy.reservationHeld).toBe(true);
+      expect(policy.commitmentHeld).toBe(true);
       expect(policy.economicMovement).toBe('NONE');
       expect(policy.source).toContain('25 §10 row 1');
     }
   });
 });
 
-describe('`§19` — A KNOWN ADAPTER FAILURE HAS NO DECLARED STATE, FOR ANY CLASS', () => {
+describe('OBX-04 — `ADAPTER_FAILED` REACHES NO LOCAL STATE, BY DECLARATION', () => {
   for (const recoverability of CLASSES) {
-    it(`${recoverability}: UNDECLARED, citing K4 against OBX-01`, () => {
+    it(`${recoverability}: UNDECLARED, citing 25 §7.1's diagnostics-only rule`, () => {
       const policy = outcomePolicyFor(recoverability, 'ADAPTER_FAILED');
       expect(policy.kind).toBe('UNDECLARED');
       if (policy.kind !== 'UNDECLARED') return;
-      expect(policy.reason).toBe('KNOWN_FAILURE_STATE_UNDECLARED');
-      expect(policy.detail).toContain('24 §3 K4');
-      expect(policy.detail).toContain('25 §7 OBX-01');
-      expect(policy.detail).toContain('S1J-C2');
+      expect(policy.reason).toBe('ADAPTER_FAILED_REACHES_NO_LOCAL_STATE');
+      // The refusal cites the DECLARATION, not an open point: `25 §7.1` retains the kind
+      // for diagnostics and says it reaches no state, and OBX-01's no-reclaim rule is why
+      // the claim is nonetheless safe where it sits.
+      expect(policy.detail).toContain('25 §7.1');
+      expect(policy.detail).toContain('OBX-01');
+      expect(policy.detail).toContain('never re-dispatched');
     });
   }
 
@@ -177,10 +239,14 @@ describe('`§40` items 7, 8 and 9 — THE VULNERABLE POLICIES DISCRIMINATE', () 
     );
     expect(unsafeRelabelled.effectStatus).toBe('DISPATCHED_OUTCOME_UNKNOWN');
     expect(unsafeRelabelled.mieMovement).toBe('NONE');
-    // Production, for the SAME authoritative effect: UNDECLARED, and no MIE movement is
-    // performed because none is declared.
+    // Production, for the SAME authoritative effect: PRESUMED_EXECUTED and the declared
+    // `reserved → presumed` movement — NOT the money answer the relabelling asked for.
     const productionIrrecoverable = outcomePolicyFor('IRRECOVERABLE', 'OUTCOME_UNKNOWN');
-    expect(productionIrrecoverable.kind).toBe('UNDECLARED');
+    expect(productionIrrecoverable.kind).toBe('RESOLVE');
+    if (productionIrrecoverable.kind !== 'RESOLVE') return;
+    expect(productionIrrecoverable.effectStatus).toBe('PRESUMED_EXECUTED');
+    expect(productionIrrecoverable.economicMovement).toBe('MIE_RESERVED_TO_PRESUMED');
+    expect(unsafeRelabelled.effectStatus).not.toBe(productionIrrecoverable.effectStatus);
 
     // Direction 2 (`§17`'s reverse): an authoritative money effect, claimed IRRECOVERABLE.
     const unsafeSpoofedUp = unsafePolicyFromClaimedRecoverability(
@@ -210,7 +276,7 @@ describe('`§40` items 7, 8 and 9 — THE VULNERABLE POLICIES DISCRIMINATE', () 
     const production = outcomePolicyFor('COMPENSABLE', 'OUTCOME_UNKNOWN');
     expect(production.kind).toBe('RESOLVE');
     if (production.kind !== 'RESOLVE') return;
-    expect(production.reservationHeld).toBe(true);
+    expect(production.commitmentHeld).toBe(true);
   });
 
   it('CONTROL 9 — the unsafe policy COLLAPSES unknown into FAILED and permits redispatch', () => {
@@ -227,7 +293,7 @@ describe('`§40` items 7, 8 and 9 — THE VULNERABLE POLICIES DISCRIMINATE', () 
     if (production.kind !== 'RESOLVE') return;
     expect(production.effectStatus).toBe('DISPATCHED_OUTCOME_UNKNOWN');
     expect(production.redispatchPermitted).toBe(false);
-    expect(production.reservationHeld).toBe(true);
+    expect(production.commitmentHeld).toBe(true);
   });
 
   it('and NO production branch, over the whole input space, permits a redispatch', () => {

@@ -369,8 +369,23 @@ describe('`§41` — NOTHING IS MARKED EXTERNALLY DISPATCHED', () => {
         /markDispatched/i,
         /'EXECUTED'/,
         /'SETTLED'/,
-        /'PRESUMED_EXECUTED'/,
         /'NEVER_SENT'/,
+        /*
+         * `'PRESUMED_EXECUTED'` HAS LEFT THIS SWEEP — v1.3.5 (MIE-01), and it is a
+         * consequence of the declaration rather than a relaxation.
+         *
+         * S1I banned it because v1.3.4 reached it only through a consumption no artifact
+         * defined; `25 §10.1` now declares the movement and `25 §7.1` makes it the state an
+         * IRRECOVERABLE effect reaches from the adapter's own typed outcome. It is a LOCAL
+         * state, not provider evidence — `25 §10.1`: "The unit does not move directly to
+         * `realised`, because a presumption is not a realisation and provider truth is
+         * unverified."
+         *
+         * THE PROPERTY THIS SUITE OWNS IS UNCHANGED AND IS STILL ASSERTED: no module under
+         * `src/kernel/outbox/` names it. The check below is scoped to this directory, where
+         * it was always the sharper claim, and `'VERIFIED'`, `'NEVER_SENT'`, `'EXECUTED'`
+         * and `'SETTLED'` remain banned everywhere because each asserts provider truth.
+         */
       ]) {
         if (pattern.test(withoutTagName)) offenders.push(`${path} (${String(pattern)})`);
       }
@@ -378,6 +393,17 @@ describe('`§41` — NOTHING IS MARKED EXTERNALLY DISPATCHED', () => {
     expect(offenders, `an external-outcome state in src/:\n  ${offenders.join('\n  ')}`).toEqual(
       [],
     );
+
+    // AND `PRESUMED_EXECUTED` IS STILL ABSENT FROM THE OUTBOX DIRECTORY ITSELF. `25 §7`
+    // OBX-01 gives the outbox row exactly two states, and a post-dispatch effect status is
+    // not one of them: the outcome row carries it (`25 §7.1`), and this directory does not
+    // know that the outcome row exists.
+    const outboxOnly = files.filter(({ path }) => path.includes(`${sep}outbox${sep}`));
+    expect(outboxOnly.length).toBeGreaterThan(0);
+    for (const { path, code } of outboxOnly) {
+      expect(/'PRESUMED_EXECUTED'/.test(code), `${path} names PRESUMED_EXECUTED`).toBe(false);
+      expect(/'VERIFIED'/.test(code), `${path} names VERIFIED`).toBe(false);
+    }
   });
 
   it('the outbox status domain is exactly `ENQUEUED` and `CLAIMED`', () => {

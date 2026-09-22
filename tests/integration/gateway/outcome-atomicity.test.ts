@@ -12,10 +12,10 @@ import {
 } from '../../support/outboxFixture.js';
 import {
   ADAPTER_ADS,
+  dispatchEnv,
   outcomeJournalRows,
   rawOutcomeRowCount,
   rawOutcomeRows,
-  testRegistry,
 } from '../../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome, unknownOutcome } from '../../support/mockAdapter.js';
 import { Conductor, settleAll, valueOf } from '../../support/barrier.js';
@@ -103,8 +103,8 @@ describe('`§20` — KILL POINTS INSIDE THE OUTCOME TRANSACTION', () => {
 
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(mock),
+        dispatchEnv(h,
+        mock),
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,
@@ -141,8 +141,8 @@ describe('`§20` — KILL POINTS INSIDE THE OUTCOME TRANSACTION', () => {
 
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(mock),
+        dispatchEnv(h,
+        mock),
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,
@@ -177,8 +177,8 @@ describe('`§20` — KILL POINTS INSIDE THE OUTCOME TRANSACTION', () => {
     const mock = adsMock();
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(mock),
+        dispatchEnv(h,
+        mock),
         {
           companyId: COMPANY_ID,
           idempotencyKey: first.idempotencyKey,
@@ -190,7 +190,7 @@ describe('`§20` — KILL POINTS INSIDE THE OUTCOME TRANSACTION', () => {
     ).rejects.toThrow('crash');
 
     const second = await enqueuedPause('gap-2');
-    const ok = await dispatchAuthorisedEffect(h.control, testRegistry(adsMock()), {
+    const ok = await dispatchAuthorisedEffect(dispatchEnv(h, adsMock()), {
       companyId: COMPANY_ID,
       idempotencyKey: second.idempotencyKey,
       dispatchedBy: 'worker:gap',
@@ -214,8 +214,8 @@ describe('`§20` — KILL POINTS INSIDE THE OUTCOME TRANSACTION', () => {
     // outcome-less — the state the unsafe split then operates on.
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(adsMock()),
+        dispatchEnv(h,
+        adsMock()),
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,
@@ -273,8 +273,8 @@ describe('`§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE MOCK ATTEMPT', 
     let racerResult: Awaited<ReturnType<typeof processAdapterOutcome>> | null = null;
 
     const gateway = await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(mock),
+      dispatchEnv(h,
+      mock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: effect.idempotencyKey,
@@ -337,8 +337,8 @@ describe('`§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE MOCK ATTEMPT', 
     } | null = null;
 
     const gateway = await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(mock),
+      dispatchEnv(h,
+      mock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: effect.idempotencyKey,
@@ -388,7 +388,7 @@ describe('`§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE MOCK ATTEMPT', 
     const effect = await enqueuedPause('unlocked-race');
     // Claim and dispatch normally first, so a committed outcome exists to collide with.
     const mock = adsMock();
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:unlocked-race',
@@ -412,8 +412,8 @@ describe('`§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE MOCK ATTEMPT', 
     const other = await enqueuedPause('unlocked-race-2');
     const otherMock = adsMock();
     await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(otherMock),
+      dispatchEnv(h,
+      otherMock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: other.idempotencyKey,
@@ -463,21 +463,27 @@ describe('`§25` — TWO OUTCOME-PROCESSING TRANSACTIONS FOR ONE MOCK ATTEMPT', 
   });
 });
 
-describe('`§21`, `§43` — THE MONEY-PATH LOCK ORDER IS NOT ENGAGED, AND THAT IS DECLARED', () => {
-  it('the outcome transaction touches no `window_balance` row, so there is no money lock', async () => {
+describe('`§21`, `§43` — THE MONEY-PATH LOCK ORDER, ENGAGED WHERE AND ONLY WHERE IT MOVES', () => {
+  it('a money outcome touches no `window_balance` row, so it takes no balance lock', async () => {
     /*
-     * `§43` is conditional: "IF outcome-state transactions touch money/MIE rows: assert
-     * SERIALIZABLE where current architecture requires it; bounded retry `40001`."
+     * =================================================================================
+     * `§43`'s CONDITIONAL NOW FIRES ON ONE SIDE AND NOT THE OTHER — `30 §5.1`, v1.3.5.
      *
-     * They do not. `25 §10`'s declared branches move no ledger term, so the transaction's
-     * locks are `dispatch_outbox` (step 3 of `30 §5.2`) then `journal_counter` (step 5,
-     * LAST) — two locks in the declared total order with no money-path lock between them.
-     * `33 §6` scopes the serialisable requirement to the exposure ledger, "the only table
-     * with a serialisable-isolation requirement", so `READ COMMITTED` is correct here for
-     * the same reason it is correct for the ACCEPTED S1I claim.
+     * "IF outcome-state transactions touch money/MIE rows: assert SERIALIZABLE where current
+     *  architecture requires it; bounded retry `40001`."
      *
-     * Asserted by observing that the ledger is byte-identical across a dispatch of every
-     * declared outcome kind, on a money-bearing class.
+     * Before MIE-01 the answer was "they do not", for every branch. `30 §5.1`'s ordering
+     * block now splits it:
+     *
+     *   "**The outcome transaction takes the money-path lock order where — and only where —
+     *    it moves the ledger.** [...] An outcome reaching an awaiting-verification or
+     *    outcome-unknown state moves no ledger term and takes no balance lock."
+     *
+     * THIS TEST IS THE SECOND HALF. A money class reaching `DISPATCHED_OUTCOME_UNKNOWN`
+     * moves nothing — `35 §4`: "The exposure reservation **remains held**. It is not
+     * released on timeout" — so the ledger must be byte-identical across the dispatch, and
+     * `READ COMMITTED` stays correct for the reason the accepted implementation gave.
+     * =================================================================================
      */
     const effect = await enqueuedPause('locks');
     const before = await economicSnapshot(h.control);
@@ -486,34 +492,71 @@ describe('`§21`, `§43` — THE MONEY-PATH LOCK ORDER IS NOT ENGAGED, AND THAT 
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: unknownOutcome(),
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:locks',
       now: NOW,
     });
     expect(result.kind).toBe('OUTCOME_RESOLVED');
+    if (result.kind !== 'OUTCOME_RESOLVED') return;
+    expect(result.record.economicMovement).toBe('NONE');
+    // THE LEDGER IS UNTOUCHED, and the gateway reports no moved window — the two agree, and
+    // the second is what a reviewer can check without reading the balances.
     expect(await economicSnapshot(h.control)).toEqual(before);
+    expect(result.movedWindows).toHaveLength(0);
   });
 
-  it('and `40P01` is not retried anywhere on this path — no second lock discipline exists', async () => {
+  it('THE SINGLE LOCK ORDER IS THE ACCEPTED ONE — `30 §5.2`, and there is no second', async () => {
     /*
-     * `§21`: "`40P01`: defect, never retry." The accepted doctrine lives in
-     * `src/kernel/exposure/retry.ts` and is asserted by
-     * `tests/integration/exposure/retry-deadlock-not-retried.test.ts`. S1J adds NO retry
-     * loop of its own — `outcomeTransaction.ts` contains no retry, no backoff and no
-     * SQLSTATE inspection — so there is no second discipline to disagree with the first.
+     * =================================================================================
+     * WHAT THIS ASSERTION REPLACED, AND WHY THE REPLACEMENT IS STRONGER
      *
-     * Asserted over the source, because the property is an absence.
+     * The accepted version asserted that `outcomeTransaction.ts` contains no `40001`, no
+     * `retr`, no `backoff` and no `SERIALIZABLE` — an ABSENCE, which was the right property
+     * while the transaction moved no ledger term. `25 §10.1` now requires the PRESUME row to
+     * be "in the same **serializable** local transaction", and `30 §5.1` requires the
+     * balance locks, so those literals MUST appear. Asserting their absence would now be
+     * asserting a defect.
+     *
+     * The property that actually matters is the one `30 §5.2` states — "There is one lock
+     * order in the system and both writers of the money row obey it" — and it is asserted
+     * directly: the outcome transaction acquires its balance locks through the SINGLE
+     * accepted acquisition site and takes none of its own.
+     *
+     * `tests/integration/exposure/lock-order.test.ts` is the accepted test that reads the
+     * whole source tree and fails if a second `FOR UPDATE` against `window_balance`,
+     * `standing_window_exposure` or `journal_counter` appears anywhere in `src/`. It is
+     * UNAMENDED, and it now covers this file too — which is why the assertion here is about
+     * WHICH module is imported rather than about which strings are absent.
+     * =================================================================================
      */
-    const source = await import('node:fs/promises').then((fs) =>
-      fs.readFile('src/kernel/gateway/outcomeTransaction.ts', 'utf8'),
-    );
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-    for (const pattern of [/40001/, /40P01/, /retr/i, /backoff/i, /SERIALIZABLE/]) {
-      expect(pattern.test(code), `${String(pattern)} appears in outcomeTransaction.ts`).toBe(
-        false,
-      );
-    }
+    const read = await import('node:fs/promises');
+    const code = (await read.readFile('src/kernel/gateway/outcomeTransaction.ts', 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    // IT TAKES NO LOCK OF ITS OWN. `30 §5.2`'s invariant, checked as an absence over the one
+    // statement shape that could introduce a second discipline.
+    expect(/FOR\s+UPDATE\s+OF\s+o/.test(code)).toBe(true); // the outbox row, step 3
+    expect(/window_balance[\s\S]{0,200}FOR\s+UPDATE/.test(code)).toBe(false);
+    expect(/standing_window_exposure/.test(code)).toBe(false);
+    expect(/journal_counter/.test(code)).toBe(false);
+
+    // AND IT ACQUIRES THEM THROUGH THE ACCEPTED SITE, in the accepted order.
+    expect(code).toContain('acquireMoneyPathLocks');
+    expect(code).toContain("includeStandingRows: false");
+    // The counter is LAST, inside `emit_dispatch_outcome`, beside the row it numbers —
+    // `30 §5.2`: "The counter is taken last because it is the most contended."
+    expect(code).toContain('includeJournalCounter: false');
+    expect(code).toContain('emit_dispatch_outcome');
+
+    // `40P01` IS STILL NEVER RETRIED ON THIS PATH. The retry is the accepted bounded one,
+    // imported and not reimplemented, and `retry.ts` propagates a deadlock immediately
+    // (S1A-H2) — so there is no inspection of that SQLSTATE here, and no loop of its own.
+    expect(code).toContain('withSerialisationRetry');
+    expect(/40P01/.test(code)).toBe(false);
+    expect(/backoff/i.test(code)).toBe(false);
+    expect(/setTimeout/.test(code)).toBe(false);
   });
 });

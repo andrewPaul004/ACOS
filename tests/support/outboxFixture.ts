@@ -2,6 +2,13 @@ import { createHash, generateKeyPairSync, randomUUID, type KeyObject } from 'nod
 
 import type { Client, Pool } from '../../src/db/pool.js';
 import { COMPANY_ID } from './fixture.js';
+import { fixtureEnumerationConstructor } from './fixtureEnumerator.js';
+import {
+  REFUND_VERSION_1_0,
+  newTestSigner,
+  signConstructorVersion,
+} from './canonicalisationFixture.js';
+import { refundCreateConstructor } from '../../src/kernel/canonicalisation/constructors/refundCreate.js';
 import { createReplicationFixture, type ReplicationFixture } from './replicationFixture.js';
 import {
   S1E_PASS_ORDER,
@@ -116,6 +123,9 @@ export interface OutboxHarness {
 export async function createOutboxHarness(): Promise<OutboxHarness> {
   const replication = await createReplicationFixture();
   const auditPair = generateKeyPairSync('ed25519');
+  // ONE constructor-version signer for the harness, so the records registered below and the
+  // resolver the kernel is built with share a public key.
+  const signer = newTestSigner();
 
   let seed: OutboxSeed | null = null;
   let kernel: LocalAuthorityHarness | null = null;
@@ -157,6 +167,25 @@ export async function createOutboxHarness(): Promise<OutboxHarness> {
            RETURNING incident_id`,
           [COMPANY_ID],
         );
+        // The two fixture resources `campaign.pause` and `fulfilment.reship` enumerate
+        // against. `commerce_order.resource_ref` is free-form and UNIQUE, so one row per
+        // fixture resource is all the authoritative state those classes need — and
+        // demoting `grade` away from RECORD is how a gap-mutation test makes an authorised
+        // effect stale. See `fixtureEnumerator.ts`.
+        await client.query(
+          `INSERT INTO commerce_order
+             (company_id, order_id, resource_ref, grade, currency, customer_novelty)
+           VALUES ($1, $2, $3, 'RECORD', 'USD', 'RETURNING'),
+                  ($1, $4, $5, 'RECORD', 'USD', 'RETURNING')
+           ON CONFLICT (company_id, order_id) DO NOTHING`,
+          [
+            COMPANY_ID,
+            PAUSE_RESOURCE_ID,
+            `campaign:${PAUSE_RESOURCE_ID}`,
+            RESHIP_RESOURCE_ID,
+            `order:${RESHIP_RESOURCE_ID}`,
+          ],
+        );
         seed = {
           incidentRef: BigInt(incident.rows[0]!.incident_id),
           ownerSigner: world.ownerSigner,
@@ -164,7 +193,46 @@ export async function createOutboxHarness(): Promise<OutboxHarness> {
       } finally {
         client.release();
       }
-      kernel = makeLocalAuthorityHarness(replication.control, { at: S1I_NOW });
+      kernel = makeLocalAuthorityHarness(replication.control, {
+        at: S1I_NOW,
+        // `25 §14.1` (v1.3.5, SER-01) makes dispatch revalidation MANDATORY, and it
+        // revalidates the ORIGINAL enumeration/option identity. `campaign.pause` and
+        // `fulfilment.reship` have no production constructor, so the accepted fixtures
+        // authorised them with no enumeration at all — half of C′ stood in for, and half
+        // missing. `fixtureEnumerator.ts` supplies the missing half, TEST-ONLY, so those two
+        // classes revalidate through the production `EffectEnumerator` exactly as a refund
+        // does. Production's catalogue is untouched and still registers ONE constructor.
+        constructors: [
+          refundCreateConstructor,
+          fixtureEnumerationConstructor('campaign.pause', PAUSE_CONSTRUCTOR_VERSION.constructorId),
+          fixtureEnumerationConstructor(
+            'fulfilment.reship',
+            RESHIP_CONSTRUCTOR_VERSION.constructorId,
+          ),
+        ],
+        records: [
+          signConstructorVersion(signer, REFUND_VERSION_1_0),
+          signConstructorVersion(signer, {
+            constructorId: PAUSE_CONSTRUCTOR_VERSION.constructorId,
+            actionClass: 'campaign.pause',
+            semanticMajor: PAUSE_CONSTRUCTOR_VERSION.semanticMajor,
+            nonSemanticMinor: PAUSE_CONSTRUCTOR_VERSION.nonSemanticMinor,
+            changedFields: [],
+            semanticChange: false,
+            signedAt: PAUSE_CONSTRUCTOR_VERSION.signedAt,
+          }),
+          signConstructorVersion(signer, {
+            constructorId: RESHIP_CONSTRUCTOR_VERSION.constructorId,
+            actionClass: 'fulfilment.reship',
+            semanticMajor: RESHIP_CONSTRUCTOR_VERSION.semanticMajor,
+            nonSemanticMinor: RESHIP_CONSTRUCTOR_VERSION.nonSemanticMinor,
+            changedFields: [],
+            semanticChange: false,
+            signedAt: RESHIP_CONSTRUCTOR_VERSION.signedAt,
+          }),
+        ],
+        signer,
+      });
     },
     async close() {
       await replication.close();
@@ -367,11 +435,90 @@ export function pauseDispatchPayloadBytes(input: PausePayloadInput): Buffer {
   });
 }
 
+/**
+ * Enumerate one fixture class for real, and return the identity `25 §14.1` revalidates.
+ *
+ * =================================================================================
+ * WHY THE FIXTURE ENUMERATES INSTEAD OF WRITING AN `enumeration_record` BY HAND
+ *
+ * A hand-written row could carry any `option_id`, including one the live enumeration would
+ * never produce — and then the dispatch-time revalidation would fail for every effect, or
+ * (worse) a test could make it pass by writing whatever the enumerator happens to compute.
+ * Either way the check under test would be testing the fixture.
+ *
+ * So this runs the PRODUCTION `EffectEnumerator` under a REAL entity lease, against the
+ * fixture's `commerce_order` row, through `fixtureEnumerator.ts`'s registered constructor.
+ * The `option_id` is content-addressed by `26 §2.2`'s own rule and the `enumeration_id` by
+ * `computeEnumerationId`, exactly as they are for a refund. The record it writes is the
+ * record the dispatch path later looks up.
+ *
+ * THE SPEC IS THE ONE THE RECORD PERSISTS. `admittedResourceRefs` carries this resource and
+ * nothing else, so a later re-enumeration cannot widen its own scope — which is the property
+ * `contextSpec.ts`'s serialisation header exists to protect.
+ * =================================================================================
+ */
+async function enumerateFixtureIdentity(
+  h: OutboxHarness,
+  actionClass: 'campaign.pause' | 'fulfilment.reship',
+  resourceRef: string,
+  entityType: string,
+  entityId: string,
+  taskId: string,
+): Promise<{ readonly enumerationId: string; readonly optionId: string }> {
+  // The fixture resource this class enumerates against, materialised on demand.
+  //
+  // Tests name their own resource ids so each scenario is a DISTINCT semantic effect, so the
+  // row cannot be seeded once in `reset()`. `ON CONFLICT DO NOTHING` makes it idempotent, and
+  // it is written OUTSIDE the lease for the reason the accepted `ledger.ts` gives about
+  // `ensureWindowInstance`: materialisation is not an authority read.
+  const seedClient = await h.control.connect();
+  try {
+    await seedClient.query(
+      `INSERT INTO commerce_order
+         (company_id, order_id, resource_ref, grade, currency, customer_novelty)
+       VALUES ($1, $2, $3, 'RECORD', 'USD', 'RETURNING')
+       ON CONFLICT (company_id, order_id) DO NOTHING`,
+      [COMPANY_ID, entityId, resourceRef],
+    );
+  } finally {
+    seedClient.release();
+  }
+
+  return h.kernel.leases.withEntityLease(
+    { companyId: COMPANY_ID, entityType, entityId },
+    async (lease) => {
+      const outcome = await h.kernel.enumerator.enumerate(lease, {
+        actionClass,
+        resourceRef,
+        spec: {
+          companyId: COMPANY_ID,
+          taskId,
+          principalId: 'principal:support_reasoner:1',
+          admittedResourceRefs: new Set([resourceRef]),
+          admittedDescriptionFields: {},
+          reasonCodeScope: 'GOODS_FAULT',
+        },
+      });
+      const optionId = outcome.set.options[0]?.optionId;
+      if (optionId === undefined) {
+        throw new Error(
+          `the fixture enumerator returned no option for ${resourceRef}; 25 §14.1 needs an ` +
+            'enumeration/option identity for the dispatch path to revalidate against',
+        );
+      }
+      return { enumerationId: outcome.set.enumerationId, optionId };
+    },
+  );
+}
+
 export function pauseFacts(input: {
   readonly authorisationRef: string;
   readonly resourceId?: string;
   readonly dispatchPayloadHash: string;
   readonly idempotencyKey: string;
+  /** `25 §14.1`'s revalidation identity, from a REAL enumeration. */
+  readonly enumerationId: string;
+  readonly optionId: string;
 }): LocalAuthorisationRequestFacts {
   return {
     companyId: COMPANY_ID,
@@ -404,6 +551,9 @@ export function pauseFacts(input: {
     autonomyLevel: 'L3',
     gateClass: 'UNGATED_LOGGED',
     countUnits: 1n,
+    // `25 §14.1`'s revalidation identity, from the enumeration this fixture actually ran.
+    enumerationId: input.enumerationId,
+    optionId: input.optionId,
   };
 }
 
@@ -424,7 +574,23 @@ export async function authorisePause(
   const bytes = pauseDispatchPayloadBytes({ authorisationRef, idempotencyKey, resourceId });
   const dispatchPayloadHash = sha256Hex(bytes);
 
-  const facts = pauseFacts({ authorisationRef, resourceId, dispatchPayloadHash, idempotencyKey });
+  // `25 §14.1`. The enumeration this effect is authorised against, taken for real before
+  // the authorisation and looked up again at dispatch time by the revalidation.
+  const identity = await enumerateFixtureIdentity(
+    h,
+    'campaign.pause',
+    `campaign:${resourceId}`,
+    'campaign',
+    resourceId,
+    'task:T-S1I-pause',
+  );
+  const facts = pauseFacts({
+    authorisationRef,
+    resourceId,
+    dispatchPayloadHash,
+    idempotencyKey,
+    ...identity,
+  });
   const outcome = await h.kernel.leases.withEntityLease(
     { companyId: COMPANY_ID, entityType: 'campaign', entityId: resourceId },
     (lease) =>
@@ -522,6 +688,18 @@ export async function authoriseReship(
   const bytes = reshipDispatchPayloadBytes({ authorisationRef, idempotencyKey, resourceId });
   const dispatchPayloadHash = sha256Hex(bytes);
 
+  // `25 §14.1`. THE IRRECOVERABLE CLASS'S OWN ENUMERATION. This is the identity
+  // `dispatch-gap-revalidation.test.ts` invalidates by demoting the resource's grade, and
+  // the one every `PRESUMED_EXECUTED` scenario revalidates before it can claim.
+  const reshipIdentity = await enumerateFixtureIdentity(
+    h,
+    'fulfilment.reship',
+    `order:${resourceId}`,
+    'order',
+    resourceId,
+    options.taskId ?? 'task:T-S1I-reship',
+  );
+
   const facts: LocalAuthorisationRequestFacts = {
     companyId: COMPANY_ID,
     sessionId: 'session:S1I-kernel',
@@ -546,6 +724,8 @@ export async function authoriseReship(
     autonomyLevel: 'L3',
     gateClass: 'UNGATED_LOGGED',
     countUnits: 1n,
+    enumerationId: reshipIdentity.enumerationId,
+    optionId: reshipIdentity.optionId,
   };
 
   const outcome = await h.kernel.leases.withEntityLease(
@@ -648,6 +828,12 @@ export async function authoriseRefundAtExposure(
     autonomyLevel: 'L3',
     gateClass: 'UNGATED_LOGGED',
     countUnits: 1n,
+    // `25 §14.1`. NULL, and deliberately: this fixture exists for `30 §5.1` item 4's
+    // APPROVAL-FLOOR row and its effect is never dispatched, only claim-evaluated. An
+    // effect with no revalidation identity is refused at the dispatch boundary, which is
+    // the correct answer for one that has no enumeration behind it.
+    enumerationId: null,
+    optionId: null,
   };
 
   const outcome = await h.kernel.leases.withEntityLease(

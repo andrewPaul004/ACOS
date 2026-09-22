@@ -160,3 +160,101 @@ export function projectedFieldNames(
   if (admitted === undefined) return [];
   return fields.filter((field) => admitted.has(field.name)).map((field) => field.name);
 }
+
+
+/**
+ * =====================================================================================
+ * THE PERSISTED PROJECTION — `25 §14.1`'s dispatch-time re-enumeration scope, v1.3.5.
+ *
+ * `25 §14.1` makes revalidation of the originally authorised effect MANDATORY one epoch
+ * after the authorisation, and the comparison it performs is a membership test of the
+ * original `option_id` in the CURRENT live set. That live set is produced by an
+ * enumeration, and an enumeration is scoped by this type: `24 §3` K4 forbids enumerating
+ * "outside the resource set its context_spec admits", and `26 §2.2` puts the task's
+ * `reasonCodeScope` INSIDE `refund.create`'s `semantic_option_digest` — so the scope is an
+ * input to the very identity being compared.
+ *
+ * A `context_spec` supplied at the dispatch boundary would therefore be two attacks at
+ * once: a caller could widen the admitted resource set one epoch after the gates ran, and a
+ * caller could change the reason-code scope and make the live set compute DIFFERENT
+ * `option_id`s. Persisting it on the kernel's own `enumeration_record` closes both, because
+ * the dispatch path then has no parameter for one.
+ *
+ * IT IS A PROJECTION AND NOT THE WHOLE TASK. Only the three fields the enumeration reads
+ * are carried: the admitted resource refs, the admitted description fields and the reason
+ * code scope, plus the task and principal the row already stores separately. `companyId` is
+ * NOT serialised — it is the row's own key, and a serialised copy would be a second place
+ * it could disagree with itself.
+ * =====================================================================================
+ */
+
+/** The persisted shape. Arrays rather than `Set`s, because JSONB has no set. */
+export interface SerialisedContextSpec {
+  readonly task_id: string;
+  readonly principal_id: string;
+  /** Sorted, so two equal scopes serialise to equal bytes. */
+  readonly admitted_resource_refs: readonly string[];
+  readonly admitted_description_fields: Readonly<Record<string, readonly string[]>>;
+  readonly reason_code_scope: ReasonCodeScope;
+}
+
+export function serialiseContextSpec(spec: TaskContextSpec): SerialisedContextSpec {
+  const fields: Record<string, readonly string[]> = {};
+  for (const actionClass of Object.keys(spec.admittedDescriptionFields).sort()) {
+    const admitted = spec.admittedDescriptionFields[actionClass as ActionClass];
+    if (admitted === undefined) continue;
+    fields[actionClass] = [...admitted].sort();
+  }
+  return {
+    task_id: spec.taskId,
+    principal_id: spec.principalId,
+    admitted_resource_refs: [...spec.admittedResourceRefs].sort(),
+    admitted_description_fields: fields,
+    reason_code_scope: spec.reasonCodeScope,
+  };
+}
+
+/**
+ * Read a persisted scope back into the kernel's own type.
+ *
+ * RETURNS `null` RATHER THAN A DEFAULT for anything it cannot read. `51 §2.3`'s rule about
+ * undeclared catalogue dimensions generalises: no implicit default may widen authority, and
+ * a permissive fallback here would be a scope nobody declared. `dispatchRevalidation.ts`
+ * treats `null` as STALE, which refuses the dispatch — the fail-closed direction.
+ */
+export function deserialiseContextSpec(companyId: string, raw: unknown): TaskContextSpec | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const value = raw as Partial<SerialisedContextSpec>;
+  if (typeof value.task_id !== 'string' || typeof value.principal_id !== 'string') return null;
+  if (typeof value.reason_code_scope !== 'string') return null;
+  if (!Array.isArray(value.admitted_resource_refs)) return null;
+
+  const refs = new Set<string>();
+  for (const ref of value.admitted_resource_refs) {
+    if (typeof ref !== 'string') return null;
+    refs.add(ref);
+  }
+
+  const fields: Partial<Record<ActionClass, ReadonlySet<string>>> = {};
+  const rawFields = value.admitted_description_fields;
+  if (typeof rawFields === 'object' && rawFields !== null && !Array.isArray(rawFields)) {
+    for (const [actionClass, names] of Object.entries(rawFields)) {
+      if (!Array.isArray(names)) return null;
+      const set = new Set<string>();
+      for (const name of names) {
+        if (typeof name !== 'string') return null;
+        set.add(name);
+      }
+      fields[actionClass as ActionClass] = set;
+    }
+  }
+
+  return {
+    companyId,
+    taskId: value.task_id,
+    principalId: value.principal_id,
+    admittedResourceRefs: refs,
+    admittedDescriptionFields: fields,
+    reasonCodeScope: value.reason_code_scope as ReasonCodeScope,
+  };
+}

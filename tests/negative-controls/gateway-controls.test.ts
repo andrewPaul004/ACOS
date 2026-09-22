@@ -13,8 +13,8 @@ import {
 import {
   ADAPTER_ADS,
   ADAPTER_COMMERCE,
+  dispatchEnv,
   rawOutcomeRows,
-  testRegistry,
 } from '../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome } from '../support/mockAdapter.js';
 import { enqueueDispatch } from '../../src/kernel/outbox/enqueue.js';
@@ -127,8 +127,8 @@ describe('`§40` item 2 — THE ADAPTER INVOKED BEFORE THE CLAIM COMMITS', () =>
       events: productionEvents,
     });
     const production = await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(productionMock),
+      dispatchEnv(h,
+      productionMock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: productionEffect.idempotencyKey,
@@ -187,7 +187,7 @@ describe('`§40` item 2 — THE ADAPTER INVOKED BEFORE THE CLAIM COMMITS', () =>
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: returnedOutcome(),
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(second), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, second), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:after-rollback',
@@ -239,7 +239,7 @@ describe('`§40` item 3 — THE CALLER CHOOSES THE ADAPTER', () => {
     // PRODUCTION: the same attacker adapter, installed in the registry under its own
     // identity, is never consulted — the gateway asks for `mock_ads`.
     attacker.reset();
-    const production = await dispatchAuthorisedEffect(h.control, testRegistry(attacker), {
+    const production = await dispatchAuthorisedEffect(dispatchEnv(h, attacker), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:chosen',
@@ -317,7 +317,7 @@ describe('`§13`, `§40` item 13 — EM6 ADAPTER ELIGIBILITY FOR IRRECOVERABLE C
     });
 
     // PRODUCTION: refused, and the adapter is never invoked.
-    const production = await dispatchAuthorisedEffect(h.control, testRegistry(barren), {
+    const production = await dispatchAuthorisedEffect(dispatchEnv(h, barren), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:ineligible',
@@ -366,7 +366,7 @@ describe('`§13`, `§40` item 13 — EM6 ADAPTER ELIGIBILITY FOR IRRECOVERABLE C
       resolutionCapabilities: ['DELIVERY_EVENT_WEBHOOK'],
       outcome: returnedOutcome('mock:resolvable'),
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(capable), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, capable), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:eligible',

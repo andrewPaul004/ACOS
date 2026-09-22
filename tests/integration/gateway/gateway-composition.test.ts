@@ -18,11 +18,11 @@ import {
   ADAPTER_ADS,
   ADAPTER_COMMERCE,
   ADAPTER_PROCESSOR,
+  dispatchEnv,
   outcomeJournalRows,
   persistedCorrelationTag,
   persistedPayloadHex,
   rawOutcomeRows,
-  testRegistry,
 } from '../../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome } from '../../support/mockAdapter.js';
 import { enqueueDispatch } from '../../../src/kernel/outbox/enqueue.js';
@@ -102,8 +102,8 @@ describe('`§4` — THE WHOLE COMPOSITION, PER RECOVERABILITY CLASS', () => {
     });
 
     const result = await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(mock),
+      dispatchEnv(h,
+      mock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: effect.idempotencyKey,
@@ -146,7 +146,7 @@ describe('`§4` — THE WHOLE COMPOSITION, PER RECOVERABILITY CLASS', () => {
       outcome: returnedOutcome('mock:processor-1'),
     });
 
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:s1j',
@@ -188,7 +188,7 @@ describe('`§4` — THE WHOLE COMPOSITION, PER RECOVERABILITY CLASS', () => {
       outcome: returnedOutcome('mock:commerce-1'),
     });
 
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:s1j',
@@ -231,8 +231,8 @@ describe('`§6` — CLAIM COMMIT ALWAYS PRECEDES THE MOCK INVOCATION', () => {
             events,
           });
           await dispatchAuthorisedEffect(
-            h.control,
-            testRegistry(mock),
+            dispatchEnv(h,
+            mock),
             {
               companyId: COMPANY_ID,
               idempotencyKey: effect.idempotencyKey,
@@ -273,7 +273,7 @@ describe('`§6` — CLAIM COMMIT ALWAYS PRECEDES THE MOCK INVOCATION', () => {
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: returnedOutcome(),
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:seq',
@@ -309,7 +309,7 @@ describe('`§8` — THE ADAPTER COMES FROM TRUSTED CLOSED RESOLUTION', () => {
       outcome: returnedOutcome('mock:attacker'),
     });
 
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(attackerAdapter), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, attackerAdapter), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:subst',
@@ -366,7 +366,7 @@ describe('`§10`, `§11`, `§12` — WHAT ACTUALLY CROSSED THE PORT', () => {
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: returnedOutcome(),
     });
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:port',

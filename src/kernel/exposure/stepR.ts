@@ -1,6 +1,7 @@
 import type { Client } from '../../db/pool.js';
+import { irrecoverableUnitsFor, isActionClass } from '../canonicalisation/actionCatalogue.js';
 import { asDenial } from './errors.js';
-import { applyReservation } from './ledger.js';
+import { applyIrrecoverableReservation, applyReservation } from './ledger.js';
 import { acquireMoneyPathLocks, allocateJournalSeq } from './lockOrder.js';
 import { isZero, toDb, ZERO, type Money } from './money.js';
 import type { WindowInstance } from './windowInstance.js';
@@ -104,6 +105,47 @@ export interface ReservationResult {
 }
 
 /**
+ * `25 §10.1`'s RESERVE row's quantity, RESOLVED FROM THE CLOSED CATALOGUE — v1.3.5 (MIE-01).
+ *
+ * =================================================================================
+ * IT IS NOT A FIELD OF ANY REQUEST TYPE ON THIS MODULE'S SURFACE
+ *
+ * `51 §2.3`: "**THE VALUE IS KERNEL- AND CATALOGUE-OWNED AND IS NEVER MODEL- OR
+ * CALLER-SUPPLIED.** [...] **There is no generic caller parameter for it, and no request
+ * field carries one.**"
+ *
+ * `OrdinaryReservationRequest` and `RateClassAuthorisationRequest` therefore have NO
+ * `irrecoverableUnits` member and `WindowTarget` has none either — deliberately, and in
+ * contrast to `countUnits`, which IS a request field because `51 §2`'s count ceilings count
+ * effects and a caller-supplied figure there was the accepted S1A/S1F shape. The unit count
+ * is resolved HERE, from the action class the request already carries, so a caller cannot
+ * reserve fewer MIE units than its class declares.
+ *
+ * `tests/type-negative/mie-units-as-argument.ts` asserts the absence at the type level, and
+ * `tests/integration/exposure/mie-reservation.test.ts` asserts the resolved values against a
+ * hand-authored transcription of `51 §2.3`'s table.
+ * =================================================================================
+ *
+ * AN UNCATALOGUED CLASS THROWS. `51 §2.3`: "A class present in the catalogue with no
+ * declared value is a **catalogue-validation failure, not a class with a value of one**."
+ * The same rule applies with more force to a class that is not in the catalogue at all —
+ * step R must not reserve for an effect whose ceiling contribution is unknown. This is an
+ * assertion rather than a denial, because a proposal for an unknown class is denied at
+ * `26 §7` step C long before step R, and reaching here means the catalogue and the committed
+ * state have diverged.
+ */
+function reservedIrrecoverableUnitsFor(actionClass: string): bigint {
+  if (!isActionClass(actionClass)) {
+    throw new Error(
+      `step R cannot reserve for ${actionClass}: it is not in the closed action catalogue, ` +
+        'so its irrecoverable_units are undeclared and no implicit default may widen ' +
+        'authority (51 §2.3, SR7)',
+    );
+  }
+  return irrecoverableUnitsFor(actionClass);
+}
+
+/**
  * Step R, ordinary non-rate branch. Reserves `total_exposure` into I3 term 1.
  *
  * The caller owns the transaction. This function assumes it is inside one and does not
@@ -151,18 +193,28 @@ export async function reserveOrdinary(
     ],
   );
 
+  // `25 §10.1`'s RESERVE quantity, from the catalogue and not from the request.
+  const irrecoverableUnits = reservedIrrecoverableUnitsFor(request.actionClass);
+
   try {
     for (const target of request.windows) {
       await client.query(
         `INSERT INTO reservation_window_instance
-           (reservation_id, company_id, window_id, window_instance_key, amount)
-         VALUES ($1, $2, $3, $4, $5::NUMERIC)`,
+           (reservation_id, company_id, window_id, window_instance_key, amount,
+            irrecoverable_units)
+         VALUES ($1, $2, $3, $4, $5::NUMERIC, $6::BIGINT)`,
         [
           request.reservationId,
           request.companyId,
           target.instance.windowId,
           target.instance.key,
           toDb(request.exposure.totalExposure),
+          // THE IMMUTABLE EVIDENCE. `0013` makes this table append-only and
+          // `i20_authorised_irrecoverable_units` reads `I20`'s denominator from it, so the
+          // figure survives the PRESUME and REALISE movements that empty the balance's
+          // `reserved_irrecoverable` column. `25 §10.1`: the basis is "the immutable set of
+          // legitimately committed irrecoverable reservation units", NOT the live term.
+          irrecoverableUnits.toString(),
         ],
       );
       await applyReservation(
@@ -172,6 +224,23 @@ export async function reserveOrdinary(
         target.instance.key,
         request.exposure.totalExposure,
         target.countUnits,
+      );
+      // `25 §10.1`'s RESERVE row, "against **every** applicable MIE window instance the
+      // matching grants reference — not the first, not a primary, not the most permissive."
+      // It is inside the SAME loop as the count/monetary reservation, over the SAME
+      // `request.windows`, so "every" is a property of the iteration rather than a claim:
+      // there is no second window set and no filter between them.
+      //
+      // A no-op for every REVERSIBLE and COMPENSABLE class, which declare `0`.
+      // `24 §3` K5's guard fires on this UPDATE where the window is at its
+      // `max_irrecoverable_units`, and `asDenial` below translates it to WINDOW_EXHAUSTED —
+      // the same treatment the monetary and count ledgers already get.
+      await applyIrrecoverableReservation(
+        client,
+        request.companyId,
+        target.instance.windowId,
+        target.instance.key,
+        irrecoverableUnits,
       );
     }
   } catch (error) {
@@ -210,6 +279,18 @@ export async function authoriseRateClass(
   }
   if (request.exposure.vendorAmount !== null) {
     throw new Error('a rate class has vendor_amount = NULL (26 §2.1.3, I18a null branch)');
+  }
+  // `51 §2.3`: a rate class is COMPENSABLE and declares `irrecoverable_units = 0`, so it
+  // "moves the irrecoverable ledger not at all". Asserted rather than assumed: a rate class
+  // that declared a positive count would reserve MIE units through a branch that has no
+  // release path, and the catalogue's own load-time coherence check would have to have
+  // failed for it to get here.
+  const rateIrrecoverableUnits = reservedIrrecoverableUnitsFor(request.actionClass);
+  if (rateIrrecoverableUnits !== 0n) {
+    throw new Error(
+      `a rate class declares irrecoverable_units = 0 (51 §2.3); ${request.actionClass} ` +
+        `declares ${String(rateIrrecoverableUnits)}`,
+    );
   }
 
   // 1. Locks, in the declared order, taken FIRST.
@@ -296,8 +377,9 @@ export async function authoriseRateClass(
       // The zero-amount reservation is real state against every referenced instance.
       await client.query(
         `INSERT INTO reservation_window_instance
-           (reservation_id, company_id, window_id, window_instance_key, amount)
-         VALUES ($1, $2, $3, $4, 0.00)`,
+           (reservation_id, company_id, window_id, window_instance_key, amount,
+            irrecoverable_units)
+         VALUES ($1, $2, $3, $4, 0.00, 0)`,
         [
           request.reservationId,
           request.companyId,

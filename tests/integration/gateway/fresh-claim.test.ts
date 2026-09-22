@@ -11,6 +11,8 @@ import {
 } from '../../support/outboxFixture.js';
 import {
   ADAPTER_ADS,
+  dispatchEnv,
+  dispatchEnvWith,
   rawOutcomeRows,
   testRegistry,
 } from '../../support/gatewayFixture.js';
@@ -105,8 +107,8 @@ describe('`§24` — THE CRASH BETWEEN CLAIM COMMIT AND INVOCATION', () => {
     // kill point `§22` item 2 names: "after claim commits, before mock invocation".
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        registry,
+        dispatchEnvWith(h, registry),
+        
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,
@@ -138,7 +140,7 @@ describe('`§24` — THE CRASH BETWEEN CLAIM COMMIT AND INVOCATION', () => {
     // STEPS 5 AND 6. "Restart": the same production entry point, called again. It is the
     // ONLY production dispatch surface, and it refuses — because the claim it would need is
     // already taken and `25 §7` admits no second transition into `CLAIMED`.
-    const afterRestart = await dispatchAuthorisedEffect(h.control, registry, {
+    const afterRestart = await dispatchAuthorisedEffect(dispatchEnvWith(h, registry),  {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:restarted',
@@ -173,8 +175,8 @@ describe('`§24` — THE CRASH BETWEEN CLAIM COMMIT AND INVOCATION', () => {
 
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(mock),
+        dispatchEnv(h,
+        mock),
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,
@@ -187,7 +189,7 @@ describe('`§24` — THE CRASH BETWEEN CLAIM COMMIT AND INVOCATION', () => {
     expect(mock.callCount).toBe(0);
 
     // PRODUCTION, after the restart: refused.
-    const production = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const production = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:restarted',
@@ -229,8 +231,8 @@ describe('`§24` — THE CRASH BETWEEN CLAIM COMMIT AND INVOCATION', () => {
     for (const effect of [first, second]) {
       await expect(
         dispatchAuthorisedEffect(
-          h.control,
-          registry,
+          dispatchEnvWith(h, registry),
+          
           {
             companyId: COMPANY_ID,
             idempotencyKey: effect.idempotencyKey,
@@ -353,8 +355,8 @@ describe('`§34` — AN OUTCOME CANNOT BE SUBMITTED WITHOUT AN ATTESTATION', () 
     // Claim it (and crash before invocation), so the row is CLAIMED and outcome-less.
     await expect(
       dispatchAuthorisedEffect(
-        h.control,
-        testRegistry(mock),
+        dispatchEnv(h,
+        mock),
         {
           companyId: COMPANY_ID,
           idempotencyKey: effect.idempotencyKey,

@@ -658,6 +658,14 @@ describe('the excluded future steps are absent from `src/`', () => {
       join('src', 'kernel', 'gateway', 'dispatchEnvelope.ts'),
       join('src', 'kernel', 'gateway', 'dispatchCapability.ts'),
       join('src', 'kernel', 'gateway', 'outcomeTransaction.ts'),
+    // v1.3.5 (SER-01). `25 §14.1`'s dispatch-time revalidation reads the ORIGINAL
+    // identity off the committed `dispatch_outbox` row — the section names the operands
+    // one by one — so it necessarily knows the row's name. It writes nothing to it, and
+    // the MONEY-PATH clause this case exists for is untouched: `kernel/authority`,
+    // `kernel/policy`, `kernel/exposure` and `kernel/canonicalisation` still contain no
+    // `CLAIMED`, no `outbox` and no `claimForExternalDispatch`.
+    join('src', 'kernel', 'gateway', 'dispatchRevalidation.ts'),
+    join('src', 'kernel', 'gateway', 'dispatchLease.ts'),
       join('src', 'kernel', 'gateway', 'outcomePolicy.ts'),
     ];
     const unexpected: string[] = [];

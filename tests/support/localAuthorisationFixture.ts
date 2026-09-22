@@ -144,7 +144,7 @@ export interface LocalAuthorityHarness extends AuthorityHarness {
 
 export function makeLocalAuthorityHarness(
   harness: Harness,
-  options: { readonly at?: Date } = {},
+  options: Parameters<typeof makeAuthorityHarness>[1] = {},
 ): LocalAuthorityHarness {
   const authority = makeAuthorityHarness(harness, options);
   const decisionKeys = newDecisionSigner();
@@ -336,6 +336,13 @@ export function rateFacts(
     // Accepted VC-S7's figure. Both ad-spend windows declare `max_count` UNBOUNDED
     // (`51 §2`), so the count ledger does not bind a rate class either way.
     countUnits: 0n,
+    // `25 §14.1`'s revalidation identity. NULL for the rate branch, which never traverses
+    // C′ (`26 §7` step C2 — no registered constructor for `campaign.budget.set`), so it has
+    // no enumeration and no option. `dispatchRevalidation.ts` refuses to dispatch an effect
+    // whose identity is absent; a rate class is never dispatched at S1J and the accepted
+    // S1F suites assert only its authorisation.
+    enumerationId: null,
+    optionId: null,
   };
 }
 

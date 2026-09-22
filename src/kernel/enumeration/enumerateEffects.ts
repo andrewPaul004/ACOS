@@ -262,6 +262,10 @@ export class EffectEnumerator {
         constructorNonSemanticMinor: constructorVersion.nonSemanticMinor,
         constructorRecordHash: constructorVersion.recordHash,
         options,
+        // `25 §14.1` (v1.3.5, SER-01). The scope this set was computed under, so the
+        // dispatch-time re-enumeration one epoch later runs under the SAME one and no
+        // dispatch surface needs a `context_spec` parameter.
+        contextSpec: spec,
       });
     }
 

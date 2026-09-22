@@ -124,6 +124,41 @@ export interface ActionCatalogueEntry {
    * `tests/canonicalisation/window-ref-provenance.test.ts` asserts the catalogue cannot
    * manufacture a different set.
    */
+  /**
+   * `51 §2.3`'s per-action-class irrecoverable-unit count — v1.3.5 (MIE-01, S1J-C1).
+   *
+   * =================================================================================
+   * THE DECLARATION, VERBATIM
+   *
+   * `51 §2.3`: "**`irrecoverable_units` is declared here, per action class, as part of the
+   * closed catalogue's execution metadata.**" and, on ownership:
+   *
+   *   "**THE VALUE IS KERNEL- AND CATALOGUE-OWNED AND IS NEVER MODEL- OR CALLER-SUPPLIED.**
+   *    It is a property of the action class in exactly the sense `26 §5`'s recoverability
+   *    is [...] **There is no generic caller parameter for it, and no request field carries
+   *    one.** A REVERSIBLE or COMPENSABLE class declares `0` and therefore moves the
+   *    irrecoverable ledger not at all."
+   *
+   * `25 §10.1` is the lifecycle it feeds: step R reserves this many units against EVERY
+   * applicable MIE window instance, `PRESUMED_EXECUTED` moves them `reserved → presumed`,
+   * and `DISPATCH_NOT_SENT_CONFIRMED` releases them.
+   * =================================================================================
+   *
+   * =================================================================================
+   * IT IS A FIELD OF THE FROZEN ENTRY AND NOT AN ARGUMENT ANYWHERE
+   *
+   * `src/kernel/exposure/stepR.ts` reads it through `irrecoverableUnitsFor(actionClass)`
+   * and NOT from its request object, so the reservation writer cannot be handed a unit
+   * count. `tests/type-negative/mie-units-as-argument.ts` asserts that no worker-facing or
+   * kernel-facing reservation surface accepts one, and
+   * `tests/integration/exposure/mie-reservation.test.ts` asserts the catalogue's values
+   * against a HAND-AUTHORED transcription of `51 §2.3`'s table.
+   *
+   * `bigint`, matching the `BIGINT` ledger columns `24 §3` K5 declares, so no unit count
+   * ever passes through a `number` on the way to the ledger.
+   * =================================================================================
+   */
+  readonly irrecoverableUnits: bigint;
   /** `51 §5.1`'s settlement tolerance. Recorded; `I18d` is not implemented in S1B. */
   readonly settlementTolerance: 'EXACT' | 'BAND' | 'NONE';
   /** The mock adapter and method this class dispatches through. No adapter exists in S1B. */
@@ -145,6 +180,8 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: true,
     rateBased: false,
+    // `51 §2.3`: "`campaign.pause` | REVERSIBLE | **0**".
+    irrecoverableUnits: 0n,
     settlementTolerance: 'NONE',
     adapter: 'mock_ads',
     method: 'campaignPause',
@@ -160,6 +197,8 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: true,
     costComponentFree: false,
     rateBased: false,
+    // `51 §2.3`: "`refund.create` | COMPENSABLE | **0**".
+    irrecoverableUnits: 0n,
     settlementTolerance: 'EXACT',
     adapter: 'mock_processor',
     method: 'refundCreate',
@@ -175,6 +214,9 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: false,
     rateBased: false,
+    // `51 §2.3`: "`fulfilment.reship` | IRRECOVERABLE | **1**". The only class in this
+    // catalogue that moves ledger 3 at all.
+    irrecoverableUnits: 1n,
     settlementTolerance: 'BAND',
     adapter: 'mock_commerce',
     method: 'fulfilmentReship',
@@ -189,6 +231,8 @@ export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry
     carriesVendorMonetaryField: false,
     costComponentFree: true,
     rateBased: true,
+    // `51 §2.3`: "`campaign.budget.set` | COMPENSABLE (rate) | **0**".
+    irrecoverableUnits: 0n,
     settlementTolerance: 'BAND',
     adapter: 'mock_ads',
     method: 'campaignBudgetSet',
@@ -248,4 +292,88 @@ export function requiresExternalDispatch(entry: ActionCatalogueEntry): boolean {
 /** The same predicate, resolved from the closed catalogue by class. */
 export function requiresExternalDispatchFor(actionClass: ActionClass): boolean {
   return requiresExternalDispatch(ACTION_CATALOGUE[actionClass]);
+}
+
+
+/**
+ * `51 §2.3`'s unit count, RESOLVED FROM THE CLOSED CATALOGUE BY CLASS — v1.3.5 (MIE-01).
+ *
+ * =================================================================================
+ * THE SIGNATURE IS THE AUTHORITY PROPERTY. READ IT BEFORE THE BODY.
+ *
+ * One parameter, an `ActionClass`. There is no units argument, no options bag, no override,
+ * no allow list and no default parameter, so `51 §2.3`'s "**there is no generic caller
+ * parameter for it, and no request field carries one**" is a property of this signature
+ * rather than of a check inside it. `26 §1` Corollary 3 — "the request must be built by the
+ * ceiling's enforcer, not by its subject" — applied to a ceiling whose subject is an
+ * authorised effect.
+ *
+ * `src/kernel/exposure/stepR.ts` is the only production caller, and
+ * `tests/integration/gateway/no-real-transport-boundary.test.ts` asserts that no reservation
+ * surface under `src/` accepts a unit count as an argument.
+ * =================================================================================
+ *
+ * =================================================================================
+ * A CLASS WITH NO DECLARED VALUE THROWS. IT DOES NOT DEFAULT — `51 §2.3`.
+ *
+ * "**A future action class needing a value other than 1 must declare it here, and `NO
+ *  IMPLICIT DEFAULT MAY WIDEN AUTHORITY.`** A class present in the catalogue with no
+ *  declared value is a **catalogue-validation failure, not a class with a value of one** —
+ *  the same fail-closed rule SR7 applies to every other undeclared catalogue dimension."
+ *
+ * TypeScript makes the field mandatory on `ActionCatalogueEntry`, so the omission cannot
+ * compile; the runtime throw below covers the one remaining route — an entry reaching this
+ * function from outside the frozen literal — and it is an ASSERTION, not a fallback.
+ * =================================================================================
+ */
+export function irrecoverableUnitsFor(actionClass: ActionClass): bigint {
+  const entry = ACTION_CATALOGUE[actionClass];
+  if (entry === undefined) {
+    throw new Error(
+      `${actionClass} is not in the closed action catalogue; an undeclared class has no ` +
+        'irrecoverable_units and no implicit default may widen authority (51 §2.3)',
+    );
+  }
+  const units = entry.irrecoverableUnits;
+  if (typeof units !== 'bigint' || units < 0n) {
+    throw new Error(
+      `${actionClass} declares no valid irrecoverable_units; a catalogued class with no ` +
+        'declared value is a catalogue-validation failure, not a class with a value of ' +
+        'one (51 §2.3)',
+    );
+  }
+  return units;
+}
+
+/**
+ * `51 §2.3`'s COHERENCE RULE, checked at module load.
+ *
+ * "**For every IRRECOVERABLE class in the current catalogue the declared value is `1`, and
+ *  for every REVERSIBLE and COMPENSABLE class it is `0`.**" (`25 §10.1` prints the same
+ * sentence.)
+ *
+ * A REVERSIBLE class declaring a positive count would move ledger 3 for an effect that is
+ * not irrecoverable, and an IRRECOVERABLE class declaring `0` would remove the class from
+ * the MIE ceiling entirely — `51 §2.3` names exactly that as the reason the table is signed
+ * control-artifact class 17 content. Both are startup failures rather than runtime
+ * surprises, for the same reason `preReservation.ts` asserts its step order at construction.
+ */
+for (const actionClass of ACTION_CLASSES) {
+  const entry = ACTION_CATALOGUE[actionClass];
+  const units = entry.irrecoverableUnits;
+  if (entry.recoverability === 'IRRECOVERABLE') {
+    if (units < 1n) {
+      throw new Error(
+        `catalogue defect: ${actionClass} is IRRECOVERABLE and declares ` +
+          `irrecoverable_units = ${String(units)}; 51 §2.3 declares 1 for every current ` +
+          'IRRECOVERABLE class and a 0 would remove the class from the MIE ceiling',
+      );
+    }
+  } else if (units !== 0n) {
+    throw new Error(
+      `catalogue defect: ${actionClass} is ${entry.recoverability} and declares ` +
+        `irrecoverable_units = ${String(units)}; 51 §2.3 declares 0 for every REVERSIBLE ` +
+        'and COMPENSABLE class, which move the irrecoverable ledger not at all',
+    );
+  }
 }

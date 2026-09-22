@@ -124,11 +124,36 @@ describe('S1A-H3 — there is no place in the schema for an irrecoverable standi
     ).toEqual([]);
   });
 
-  it('EVERY irrecoverable column in the schema is one of the seven K5 declares', async () => {
-    // A future StandingAuthorization type introducing irrecoverable-unit forward exposure
-    // would have to add a column, and this exact-set assertion is what makes that
-    // impossible to do quietly.
+  it('EVERY irrecoverable column in the schema is one K5 or `25 §10.1` declares', async () => {
+    /*
+     * =============================================================================
+     * THE EXACT-SET ASSERTION IS THE POINT, AND IT IS WIDENED BY EXACTLY THREE.
+     *
+     * A future `StandingAuthorization` type introducing irrecoverable-unit forward exposure
+     * would have to add a column, and this assertion is what makes that impossible to do
+     * quietly. **The property it protects — S1A-H3, that there is no place in the schema for
+     * an irrecoverable STANDING term — is untouched**, and the case above still asserts it
+     * directly against `standing_window_exposure`.
+     *
+     * What v1.3.5 added is the RESERVATION EVIDENCE and the view over it. `25 §10.1` rebases
+     * `I20` on "the immutable historical authorisation basis [...] **and not** the current
+     * value of `reserved_irrecoverable`", and the reason is mechanical: PRESUME and REALISE
+     * move units OUT of that column while leaving the commitment unchanged, so a bound
+     * written against the live column inverts the invariant's own direction.
+     *
+     * So the basis has to live somewhere immutable, and `0013` puts it on the row `0004`
+     * already created for exactly this purpose — one row per (reservation, window instance),
+     * written inside step R's transaction. **None of the three is a ledger term**, and none
+     * of them is a standing one.
+     * =============================================================================
+     */
     expect(await irrecoverableColumns()).toEqual([
+      // `25 §10.1`'s `I20` denominator, read from committed immutable rows only.
+      'i20_authorised_irrecoverable_units.authorised_irrecoverable_units',
+      'i20_authorised_irrecoverable_units.released_irrecoverable_units',
+      // The immutable evidence the view sums. Append-only against `UPDATE` (`0013`).
+      'reservation_window_instance.irrecoverable_units',
+      // `24 §3` K5's seven, unchanged.
       'window_balance.max_irrecoverable_unbounded',
       'window_balance.max_irrecoverable_units',
       'window_balance.presumed_irrecoverable',
@@ -137,6 +162,13 @@ describe('S1A-H3 — there is no place in the schema for an irrecoverable standi
       'window_registry.max_irrecoverable_unbounded',
       'window_registry.max_irrecoverable_units',
     ]);
+
+    // AND NOT ONE OF THEM IS A STANDING TERM. S1A-H3's property, restated over the whole
+    // schema rather than over one table, so a `standing_irrecoverable` ANYWHERE fails here
+    // as well as in the case above.
+    for (const column of await irrecoverableColumns()) {
+      expect(column, 'an irrecoverable standing term appeared').not.toContain('standing');
+    }
   });
 });
 

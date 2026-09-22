@@ -10,7 +10,10 @@ import {
   createOutboxHarness,
   type OutboxHarness,
 } from '../../support/outboxFixture.js';
-import { rawOutcomeRows, testRegistry } from '../../support/gatewayFixture.js';
+import {
+  dispatchEnv,
+  rawOutcomeRows,
+} from '../../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome } from '../../support/mockAdapter.js';
 import { enqueueDispatch } from '../../../src/kernel/outbox/enqueue.js';
 import { dispatchAuthorisedEffect } from '../../../src/kernel/gateway/effectGateway.js';
@@ -21,6 +24,8 @@ import * as capabilityModule from '../../../src/kernel/gateway/dispatchCapabilit
 import * as envelopeModule from '../../../src/kernel/gateway/dispatchEnvelope.js';
 import * as policyModule from '../../../src/kernel/gateway/outcomePolicy.js';
 import * as outcomeModule from '../../../src/kernel/gateway/outcomeTransaction.js';
+import * as leaseModule from '../../../src/kernel/gateway/dispatchLease.js';
+import * as revalidationModule from '../../../src/kernel/gateway/dispatchRevalidation.js';
 import { EMPTY_ADAPTER_REGISTRY } from '../../../src/kernel/gateway/adapterRegistry.js';
 
 /**
@@ -202,6 +207,30 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
       './dispatchEnvelope.js',
       './outcomePolicy.js',
       './outcomeTransaction.js',
+      // v1.3.5 (SER-01, MIE-01). Four dependencies the two epochs and the ledger movement
+      // need, each named for the declaration that requires it:
+      //
+      //   entityLease.js      `25 §14.1`'s Epoch B reacquires "the SAME architecture entity
+      //                       advisory-lock key", so the dispatch lease composes the accepted
+      //                       manager rather than opening a second lock discipline.
+      //   enumerateEffects.js the live re-enumeration `25 §14.1` revalidates against. The
+      //                       ACCEPTED S1C core, imported and not reimplemented — and note
+      //                       what is NOT here: no constructor, no canonicaliser, no
+      //                       `liveSelector.js`, because revalidation constructs no payload.
+      //   ledger.js           `25 §10.1`'s three implemented movements.
+      //   lockOrder.js        `30 §5.2`'s SINGLE acquisition site, for the outcome
+      //                       transaction's balance locks (`30 §5.1`'s own block).
+      //   retry.js            the accepted bounded `40001` retry. `40P01` is still never
+      //                       retried — `retry.ts` propagates it, and that is the property
+      //                       the assertion below checks.
+      '../enumeration/entityLease.js',
+      '../enumeration/enumerateEffects.js',
+      '../enumeration/enumerationRecord.js',
+      '../exposure/ledger.js',
+      '../exposure/lockOrder.js',
+      '../exposure/retry.js',
+      './dispatchLease.js',
+      './dispatchRevalidation.js',
     ];
     const files = await gatewaySourceOf();
     const seen = new Set<string>();
@@ -215,13 +244,27 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
     // The ACCEPTED claim IS imported, which is `§13`'s requirement rather than a leak.
     expect(seen).toContain('../outbox/claim.js');
     expect(seen).toContain('../canonicalisation/actionCatalogue.js');
+    // AND THE CANONICALISER IS STILL ABSENT — `25 §14.1`: revalidation "constructs no
+    // payload" and "the persisted payload remains the exact authorised payload". A gateway
+    // that imported the constructor registry or the live selector could rebuild dispatch
+    // bytes one epoch later, which is the substitution the section forbids by name.
+    expect(seen).not.toContain('../enumeration/liveSelector.js');
+    expect(seen).not.toContain('../canonicalisation/canonicaliser.js');
+    expect(seen).not.toContain('../canonicalisation/registry.js');
     // AND NO CANONICALISER, NO ENUMERATION PORT, NO COMMERCE READER — `§10`'s absence.
+    //
+    // `../exposure/ledger.js` HAS LEFT THIS LIST, and `../exposure/stepR.js` HAS NOT.
+    // The distinction is `30 §5.1`'s own: the outcome transaction moves the MIE ledger
+    // (`25 §10.1`) and therefore reads and writes balance rows, so it imports the ledger's
+    // movement functions and `30 §5.2`'s single lock-acquisition site. What it must never
+    // import is the RESERVATION writer — a gateway that could call `reserveOrdinary` could
+    // create authority at the dispatch boundary, which is `26 §1` Corollary 3's whole
+    // subject. One import moves a declared commitment; the other would mint one.
     for (const forbidden of [
       '../canonicalisation/canonicaliser.js',
       '../enumeration/port.js',
       '../enumeration/liveSelector.js',
       '../enumeration/commerceState.js',
-      '../exposure/ledger.js',
       '../exposure/stepR.js',
     ]) {
       expect(seen, `the gateway imports ${forbidden}`).not.toContain(forbidden);
@@ -365,9 +408,26 @@ describe('`§7`, `§9` — THERE IS EXACTLY ONE PRODUCTION INVOCATION SURFACE, A
       'GATEWAY_EVENTS',
       'dispatchAuthorisedEffect',
     ]);
+    // `25 §14.1`'s two new modules. NEITHER EXPORTS A DISPATCH SURFACE: the lease manager
+    // grants no permission (`25 §14.1`: "Reacquiring the dispatch lease is not a recovery
+    // mechanism"), and the revalidator returns `VALID` or `STALE` and nothing an adapter
+    // could be invoked with.
+    expect(Object.keys(leaseModule).sort()).toEqual([
+      'DispatchLeaseManager',
+      'entityKeyEqualityProof',
+      'entityKeyForResourceRef',
+      'underlyingLeaseFor',
+    ]);
+    expect(Object.keys(revalidationModule).sort()).toEqual([
+      'DISPATCH_STALE_REASONS',
+      'revalidateAuthorisedEffectUnderLease',
+    ]);
     expect(Object.keys(portModule).sort()).toEqual([
       'ADAPTER_OUTCOME_KINDS',
       'ADAPTER_RESOLUTION_CAPABILITIES',
+      // `25 §7.2`'s two admissible bases, as a closed enum. It exists so the classification
+      // is typed control flow rather than a parsed string, and it carries no behaviour.
+      'NOT_SENT_BASES',
     ]);
     expect(Object.keys(registryModule).sort()).toEqual([
       'ADAPTER_RESOLUTION_REFUSALS',
@@ -396,12 +456,20 @@ describe('`§7`, `§9` — THERE IS EXACTLY ONE PRODUCTION INVOCATION SURFACE, A
       'ECONOMIC_MOVEMENTS',
       'POST_DISPATCH_EFFECT_STATUSES',
       'UNDECLARED_POLICY_REASONS',
+      // `30 §5.1`: the outcome transaction takes the money-path lock order "where — and only
+      // where — it moves the ledger". This predicate is that condition, derived from the
+      // MOVEMENT so the lock decision and the ledger decision cannot drift apart.
+      'movesLedger',
       'outcomePolicyFor',
     ]);
     expect(Object.keys(outcomeModule).sort()).toEqual([
       'OUTCOME_REFUSALS',
+      // `25 §14.1` Epoch B runs its outcome transaction ON THE DISPATCH LEASE'S CONNECTION,
+      // so the service exposes a client-taking entry point beside the pooled one.
+      'outcomeIsolationFor',
       'processAdapterOutcome',
       'processAdapterOutcomeOn',
+      'processAdapterOutcomeOnClient',
       'readDispatchOutcome',
     ]);
   });
@@ -441,7 +509,7 @@ describe('`§34` — THE WORKER-FACING SURFACE IS COARSE, AND CARRIES NO AUTHORI
       resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
       outcome: returnedOutcome('mock:coarse'),
     });
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:coarse',
@@ -461,7 +529,20 @@ describe('`§34` — THE WORKER-FACING SURFACE IS COARSE, AND CARRIES NO AUTHORI
       typeof value === 'bigint' ? value.toString() : value,
     );
     const parsed = JSON.parse(serialised) as Record<string, unknown>;
-    expect(Object.keys(parsed).sort()).toEqual(['claimJournalSeq', 'kind', 'record']);
+    // `movedWindows` is `25 §10.1`'s "every applicable MIE window instance", as a value the
+    // gateway REPORTS rather than a property a test has to infer from balances. It carries
+    // window ids and instance keys and nothing else — no amount, no unit count, no ceiling
+    // and no headroom — so `§33`'s rule that no economic quantity reaches a worker surface
+    // is unchanged by it.
+    expect(Object.keys(parsed).sort()).toEqual([
+      'claimJournalSeq',
+      'kind',
+      'movedWindows',
+      'record',
+    ]);
+    for (const moved of parsed['movedWindows'] as readonly Record<string, unknown>[]) {
+      expect(Object.keys(moved).sort()).toEqual(['windowId', 'windowInstanceKey']);
+    }
     for (const forbidden of [
       'capability',
       'attestation',
@@ -503,6 +584,23 @@ describe('`§34` — THE WORKER-FACING SURFACE IS COARSE, AND CARRIES NO AUTHORI
       'OUTBOX_ROW_NOT_FOUND',
       'OUTBOX_ROW_NOT_CLAIMED',
       'OUTCOME_POLICY_UNDECLARED',
+      // v1.3.5 (MIE-01), FAIL-CLOSED. An IRRECOVERABLE effect whose committed reservation
+      // holds no irrecoverable unit has nothing for `25 §10.1`'s PRESUME row to move.
+      'MIE_UNITS_NOT_RESERVED',
+    ]);
+
+    // `25 §14.1`'s stale reasons are INTERNAL and are never a `GatewayResult` field — the
+    // gateway collapses every one of them to a single coarse literal, exactly as
+    // `workerFacingDenial.ts` collapses the four selector codes. The vocabulary is asserted
+    // here so a new member cannot appear without a reviewer seeing it.
+    expect([...revalidationModule.DISPATCH_STALE_REASONS]).toEqual([
+      'AUTHORISED_EFFECT_NOT_FOUND',
+      'REVALIDATION_IDENTITY_ABSENT',
+      'ENUMERATION_RECORD_ABSENT',
+      'ENUMERATION_BINDING_MISMATCH',
+      'CONSTRUCTOR_VERSION_CHANGED',
+      'RESOURCE_NO_LONGER_RESOLVES',
+      'OPTION_ABSENT_FROM_LIVE_SET',
     ]);
     expect([...capabilityModule.CAPABILITY_REFUSALS]).toEqual([
       'CAPABILITY_NOT_LIVE',
@@ -523,11 +621,30 @@ describe('`§29`, `§31` — NO PROVIDER, NO RECONCILIATION, NOTHING FAKED', () 
     const files = await sourceOf();
     const offenders: string[] = [];
     for (const { path, code } of files) {
-      const withoutTagName = code.replace(/DISPATCHED_UNMIRRORED/g, '');
+      const withoutTagName = code
+        .replace(/DISPATCHED_UNMIRRORED/g, '')
+        // `PRESUMED_EXECUTED` IS NO LONGER A PROVIDER-EVIDENCE LITERAL, and removing it from
+        // this sweep is a consequence of MIE-01 rather than a relaxation.
+        //
+        // The accepted S1J banned it because v1.3.4 reached it only through a consumption it
+        // could not perform. v1.3.5 declares it as a LOCAL state reached from the adapter's
+        // own typed outcome — `25 §7.1`'s two IRRECOVERABLE rows — and `25 §10.1` is explicit
+        // that it is NOT a realisation: "The unit does not move directly to `realised`,
+        // because a presumption is not a realisation and provider truth is unverified."
+        //
+        // The literals that DO assert provider truth stay banned below, and that is the line
+        // the sweep now draws: `VERIFIED` and `NEVER_SENT` require "independent provider
+        // evidence" by `25 §10.1`'s own words, and neither appears in `src/`.
+        .replace(/PRESUMED_EXECUTED/g, '')
+        // Likewise the confirmed-not-sent state, which `25 §7.2` keeps "deliberately NOT
+        // `NEVER_SENT`" precisely because it is IMMEDIATE TRUSTED-ADAPTER PROOF rather than
+        // later reconciliation. The sweep still bans the reconciled literal itself.
+        .replace(/DISPATCH_NOT_SENT_CONFIRMED/g, '')
+        .replace(/NOT_SENT_CONFIRMED/g, '')
+        .replace(/PROVIDER_REJECTED_NO_MUTATION/g, '');
       for (const pattern of [
         /'VERIFIED'/,
         /'NEVER_SENT'/,
-        /'PRESUMED_EXECUTED'/,
         /'DISPATCHED'/,
         /'EXECUTED'/,
         /'SETTLED'/,
@@ -564,7 +681,7 @@ describe('`§29`, `§31` — NO PROVIDER, NO RECONCILIATION, NOTHING FAKED', () 
       resolutionCapabilities: ['IDEMPOTENCY_HEADER', 'DELIVERY_EVENT_WEBHOOK'],
       outcome: returnedOutcome(),
     });
-    await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:nofake',

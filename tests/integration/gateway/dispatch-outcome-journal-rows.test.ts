@@ -20,9 +20,9 @@ import {
 } from '../../support/jcs1Oracle.js';
 import {
   ADAPTER_ADS,
+  dispatchEnv,
   outcomeJournalRows,
   rawOutcomeRows,
-  testRegistry,
 } from '../../support/gatewayFixture.js';
 import { createMockAdapter, returnedOutcome, unknownOutcome } from '../../support/mockAdapter.js';
 import { enqueueDispatch } from '../../../src/kernel/outbox/enqueue.js';
@@ -109,7 +109,7 @@ async function dispatched(
   at: Date = NOW,
 ): Promise<AuthorisedEffect> {
   const effect = await enqueuedPause(resourceId);
-  const result = await dispatchAuthorisedEffect(h.control, testRegistry(adsMock(outcome)), {
+  const result = await dispatchAuthorisedEffect(dispatchEnv(h, adsMock(outcome)), {
     companyId: COMPANY_ID,
     idempotencyKey: effect.idempotencyKey,
     dispatchedBy: 'worker:journal',
@@ -384,7 +384,7 @@ describe('`§38` — THE UNMIRRORED EVIDENCE PATH, END TO END', () => {
     );
 
     const mock = adsMock();
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:degraded',
@@ -438,8 +438,8 @@ describe('`§38` — THE UNMIRRORED EVIDENCE PATH, END TO END', () => {
 
     const mock = adsMock();
     await dispatchAuthorisedEffect(
-      h.control,
-      testRegistry(mock),
+      dispatchEnv(h,
+      mock),
       {
         companyId: COMPANY_ID,
         idempotencyKey: effect.idempotencyKey,

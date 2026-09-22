@@ -165,25 +165,53 @@ export interface DispatchEnvelope {
  *                        "conflating 'failed' with 'unknown' is what produces double
  *                        execution."
  *
- *   `ADAPTER_FAILED`     K4's "adapter failure". IT IS IN THIS UNION AND HAS NO OUTCOME
- *                        POLICY — `S1J-C2`. The taxonomy is declared, so an adapter that
- *                        genuinely knows its call was refused must be able to SAY so
- *                        rather than misreport it as unknown. What v1.3.4 does not
- *                        provide is what to DO with it: it declares no effect state for a
- *                        known failure, and the response it does declare — "bounded retry
- *                        [...] against the same idempotency key" — contradicts `25 §7`'s
- *                        "no transition out of `CLAIMED`, and no second transition into
- *                        it", because a retry of a claimed row has no row to claim.
- *                        `outcomePolicy.ts` returns `UNDECLARED` for it and the outcome
- *                        transaction writes nothing. `§19`: "If no immediate
- *                        known-not-sent state exists, do not invent one."
+ *   `NOT_SENT_CONFIRMED` v1.3.5 (OBX-05), `25 §7.2`. THE ANSWER TO `§19`'s CONDITIONAL —
+ *                        "If no immediate known-not-sent state exists, do not invent one."
+ *                        The accepted S1J did not invent one; v1.3.5 declares one, and
+ *                        this is it. It "may be returned only by a trusted adapter, and
+ *                        only where the adapter can positively establish from its own
+ *                        control flow or from typed provider semantics that NO EXTERNAL
+ *                        WRITE CROSSED THE TRANSPORT BOUNDARY."
+ *
+ *   `ADAPTER_FAILED`     K4's "adapter failure". IT IS IN THIS UNION AND, BY v1.3.5's OWN
+ *                        DECLARATION, HAS NO LOCAL OUTCOME POLICY AND REACHES NO LOCAL
+ *                        STATE. `25 §7.1`: "Retained for diagnostics only [...] because a
+ *                        failure the adapter cannot classify as confirmed-not-sent is a
+ *                        failure whose request may have escaped." That is no longer an
+ *                        open architecture question (`S1J-C2` is resolved): K4's retry is
+ *                        CORRECTED to pre-claim workflow failures, and an adapter that
+ *                        genuinely knows nothing escaped now has `NOT_SENT_CONFIRMED` to
+ *                        say so with. `outcomePolicy.ts` returns `UNDECLARED` for it and
+ *                        the outcome transaction writes nothing.
+ * =================================================================================
+ *
+ * =================================================================================
+ * THE TWO-BY-TWO THIS TAXONOMY IS ACTUALLY ABOUT — `25 §7.2` AND `35 §4`
+ *
+ * `35 §4`'s rule and its mirror image, which `25 §7.2` names:
+ *
+ *   "conflating 'failed' with 'unknown' is what produces double execution"
+ *   — and labelling a possible escape as a confirmed non-send "would release a commitment
+ *     for an effect that happened."
+ *
+ * So the discriminating question is never "did the call succeed?" but "COULD THE WRITE
+ * HAVE ESCAPED?", and the taxonomy answers exactly that:
+ *
+ *   escaped, and the adapter has a response       `ADAPTER_RETURNED`
+ *   MAY have escaped                              `OUTCOME_UNKNOWN`
+ *   PROVABLY did not escape                       `NOT_SENT_CONFIRMED`
+ *   unclassifiable, so MAY have escaped           `ADAPTER_FAILED` (no state)
+ *
+ * `25 §7.2`: "**Anything for which the request MAY have escaped is `OUTCOME_UNKNOWN`.**"
  * =================================================================================
  *
  * =================================================================================
  * WHAT AN ADAPTER MAY NOT PUT IN AN OUTCOME — `§17`, `§33`
  *
  * There is no `recoverability` member, no `effectStatus` member, no `exposure`, no
- * `amount`, no `mieUnits` and no `redispatch` member. An adapter reports WHAT HAPPENED TO
+ * `amount`, no `mieUnits`, no `irrecoverableUnits`, no `releaseCommitment` and no
+ * `redispatch` member. `51 §2.3` puts the unit count in the catalogue and `25 §7.2` puts
+ * the release decision in the kernel's policy table, so neither is expressible here. An adapter reports WHAT HAPPENED TO
  * ITS CALL. The economic and policy consequences are the kernel's, read from committed
  * state inside the outcome transaction.
  *
@@ -193,6 +221,33 @@ export interface DispatchEnvelope {
  * FACT." Nothing parsed out of a response body is authority for anything here.
  * =================================================================================
  */
+/**
+ * The two admissible bases for `NOT_SENT_CONFIRMED` — `25 §7.2`, transcribed.
+ *
+ * A CLOSED SET OF TWO, and neither is derived from a message. `36 §2`'s discipline about
+ * closed enums over string classification applies with unusual force here, because this is
+ * the ONE outcome that RELEASES a commitment: every other member of the taxonomy either
+ * holds it or moves it between terms.
+ */
+export const NOT_SENT_BASES = [
+  /** "a failure raised **before** the external request was opened or sent". */
+  'PRE_SEND_FAILURE',
+  /**
+   * "a provider rejection whose declared adapter contract guarantees no external mutation
+   * occurred".
+   *
+   * S1J HAS NO PROVIDER AND THEREFORE NO SUCH CONTRACT. The member is declared because the
+   * taxonomy is the architecture's and a partial transcription of a closed set is a set
+   * with rows nobody wrote; the deterministic mock exercises `PRE_SEND_FAILURE`, which is
+   * the basis a mock can honestly establish. Nothing in `src/` asserts that any real
+   * provider offers such a guarantee — `36 §7` requires that to be MEASURED against a
+   * sandbox, and S1J measures nothing.
+   */
+  'PROVIDER_REJECTED_NO_MUTATION',
+] as const;
+
+export type NotSentBasis = (typeof NOT_SENT_BASES)[number];
+
 export type AdapterOutcome =
   | {
       readonly kind: 'ADAPTER_RETURNED';
@@ -207,6 +262,53 @@ export type AdapterOutcome =
       readonly reason: 'TIMEOUT' | 'AMBIGUOUS';
     }
   | {
+      /**
+       * `25 §7.2`, v1.3.5 (OBX-05). POSITIVE TRUSTED-ADAPTER PROOF OF NON-TRANSMISSION.
+       *
+       * =============================================================================
+       * `basis` IS A CLOSED TYPED ENUM AND NOT AN ERROR MESSAGE — THE LOAD-BEARING FIELD
+       *
+       * `25 §7.2`: "**THE CLASSIFICATION MAY NOT BE MADE FROM ARBITRARY ERROR-MESSAGE
+       * STRINGS.** `30 §5.7`'s rule against string-classified causes applies here for the
+       * same reason: a string is a vendor's prose, and an economic release decided by
+       * prose is a release decided by the vendor's changelog."
+       *
+       * So this member carries no `message`, no `error`, no `code` and no `detail` — there
+       * is nowhere on it to put a string an adapter parsed. What it carries is one value
+       * from a two-member enum, and each member is one of the two bases `25 §7.2` declares
+       * admissible, verbatim:
+       *
+       *   `PRE_SEND_FAILURE`             "a failure raised **before** the external request
+       *                                  was opened or sent"
+       *   `PROVIDER_REJECTED_NO_MUTATION` "a provider rejection whose declared adapter
+       *                                  contract guarantees no external mutation occurred"
+       *
+       * A TIMEOUT, A CONNECTION RESET AFTER SEND, AN UNKNOWN PROVIDER ERROR AND A GENERIC
+       * EXCEPTION ARE NONE OF THESE, and each is `OUTCOME_UNKNOWN`. An adapter that cannot
+       * place its failure in one of the two members has not established anything, and
+       * `25 §7.2`'s "anything for which the request MAY have escaped" applies.
+       *
+       * THE ENUM IS NOT AN AUTHORITY OPERAND EITHER. `outcomePolicyFor` takes the outcome
+       * KIND and the recoverability and nothing else, so which basis an adapter declared
+       * changes no local state and moves no ledger term — it is evidence for the audit
+       * trail and for a later provider reconciliation, not an input to the decision.
+       * =============================================================================
+       *
+       * =============================================================================
+       * THE ADAPTER IS TRUSTED, AND THAT IS A TCB CLAIM RATHER THAN A COMFORT
+       *
+       * `49 §3.1` makes adapters TCB MEMBERS, and `25 §7.2` scopes this outcome to "a
+       * trusted adapter". A compromised adapter returning this falsely releases a
+       * commitment for an effect that may have happened — which is precisely why
+       * `tests/negative-controls/unsafe-false-not-sent.ts` exists and why the mock's
+       * genuine pre-send failure path increments NO acceptance counter: the discrimination
+       * is between an adapter that never reached its own send point and one that did.
+       * =============================================================================
+       */
+      readonly kind: 'NOT_SENT_CONFIRMED';
+      readonly basis: NotSentBasis;
+    }
+  | {
       readonly kind: 'ADAPTER_FAILED';
       /** Diagnostic only. `§14`: never inspected to decide an economic outcome. */
       readonly failureClass: string;
@@ -215,6 +317,7 @@ export type AdapterOutcome =
 export const ADAPTER_OUTCOME_KINDS = [
   'ADAPTER_RETURNED',
   'OUTCOME_UNKNOWN',
+  'NOT_SENT_CONFIRMED',
   'ADAPTER_FAILED',
 ] as const;
 

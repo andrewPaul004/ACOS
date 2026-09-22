@@ -21,9 +21,9 @@ import {
   ADAPTER_ADS,
   ADAPTER_COMMERCE,
   ADAPTER_PROCESSOR,
+  dispatchEnv,
   outcomeJournalRows,
   rawOutcomeRows,
-  testRegistry,
 } from '../../support/gatewayFixture.js';
 import {
   createMockAdapter,
@@ -130,7 +130,7 @@ async function dispatch(
   readonly mock: ReturnType<typeof createMockAdapter>;
 }> {
   const mock = mockFor(adapterId, outcome);
-  const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+  const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
     companyId: COMPANY_ID,
     idempotencyKey: effect.idempotencyKey,
     dispatchedBy: worker,
@@ -312,81 +312,84 @@ describe('`§15`, `§27` — REVERSIBLE / COMPENSABLE UNKNOWN: HOLD AND RESOLVE'
   });
 });
 
-describe('`§16`, `§28` — IRRECOVERABLE UNKNOWN: PARTIAL, AND FAIL-CLOSED', () => {
-  it('production REFUSES and writes nothing, naming `S1J-C1`', async () => {
+describe('MIE-01 — IRRECOVERABLE UNKNOWN REACHES `PRESUMED_EXECUTED` AND MOVES ONE UNIT', () => {
+  it('`25 §10.1`: PRESUMED_EXECUTED, and reserved → presumed on EVERY bound window', async () => {
     /*
-     * `25 §10` row 2 requires `PRESUMED_EXECUTED` AND the irrecoverable-unit consumption as
-     * ONE act — `24 §3` K4, `34` ADR-026 item 3 and `35 §12.3` all state the pair the same
-     * way. The consumption's ledger mutation is declared nowhere, and no accepted slice
-     * reserves a unit for it to consume, so the pair cannot be performed.
+     * =================================================================================
+     * THE CELL THE ACCEPTED S1J RETURNED PARTIAL FOR.
      *
-     * `§2` and `§16`: RETURN PARTIAL rather than invent a counter.
+     * `25 §10` row 2 required `PRESUMED_EXECUTED` AND the irrecoverable-unit consumption as
+     * ONE act, and `phase2-v1.3.5-errata.md §1` records what the implementation did about
+     * it: "the S1J implementation returned PARTIAL rather than inventing a counter." MIE-01
+     * is the declaration that closed it — `25 §10.1`'s PRESUME row, `51 §2.3`'s unit counts,
+     * and `24 §3` K5's transition table.
+     *
+     * WHAT IS ASSERTED HERE IS THE ARITHMETIC, FROM DIRECT SQL, ON BOTH SIDES OF THE
+     * DISPATCH. `§41` forbids reading an expected value out of production, so the expected
+     * state comes from the hand-authored table and the observed state from raw `SELECT`s.
+     * =================================================================================
      */
     const effect = await irrecoverable('unknown-irr');
-    const before = await economicSnapshot(h.control);
+    const expected = expectedOutcomeFor('IRRECOVERABLE', 'OUTCOME_UNKNOWN');
     const mieBefore = await unsafeMieSnapshot(h.control, COMPANY_ID);
+    const mieWindowsBefore = mieBefore.filter((r) => r.windowId.endsWith('_MIE'));
+
+    // STEP R RESERVED THE UNIT. `25 §10.1`: "EVERY AUTHORISED IRRECOVERABLE EXTERNAL EFFECT
+    // RESERVES ITS IRRECOVERABLE UNITS BEFORE EXECUTION." Asserted before the dispatch, so
+    // the movement below is demonstrably a MOVEMENT and not a fresh increment.
+    expect(mieWindowsBefore.length).toBeGreaterThan(0);
+    for (const row of mieWindowsBefore) {
+      expect(row.reservedIrrecoverable).toBe('1');
+      expect(row.presumedIrrecoverable).toBe('0');
+      expect(row.realisedIrrecoverable).toBe('0');
+    }
 
     const { result, mock } = await dispatch(effect, ADAPTER_COMMERCE, unknownOutcome());
 
-    expect(result.kind).toBe('OUTCOME_REFUSED');
-    if (result.kind !== 'OUTCOME_REFUSED') return;
-    expect(result.reason).toBe('OUTCOME_POLICY_UNDECLARED');
-    expect(result.undeclared).toBe('IRRECOVERABLE_UNKNOWN_MIE_TRANSITION_UNDECLARED');
-    expect(result.detail).toContain('S1J-C1');
-
-    // The mock WAS invoked and DID reach its acceptance point. The refusal is about the
-    // local accounting, not about the dispatch: `30 §5.1b` makes an IRRECOVERABLE effect
-    // dispatch-eligible in `NORMAL`, and it was dispatched.
+    expect(result.kind).toBe('OUTCOME_RESOLVED');
+    if (result.kind !== 'OUTCOME_RESOLVED') return;
+    expect(result.record.effectStatus).toBe(expected.effectStatus);
+    expect(result.record.economicMovement).toBe(expected.economicMovement);
     expect(mock.callCount).toBe(1);
     expect(mock.acceptedCount).toBe(1);
 
-    // NOTHING WAS WRITTEN. No outcome row, no journal row, no ledger movement.
-    expect(await rawOutcomeRows(h.control)).toHaveLength(0);
-    expect(await outcomeJournalRows(h.control)).toHaveLength(0);
-    expect(economicTerms(await economicSnapshot(h.control))).toEqual(economicTerms(before));
-    expect(await unsafeMieSnapshot(h.control, COMPANY_ID)).toEqual(mieBefore);
+    // THE MOVEMENT, ON EVERY BOUND WINDOW AND NOT MERELY THE FIRST — `25 §10.1`: "against
+    // every applicable MIE window instance the matching grants reference — not the first,
+    // not a primary, not the most permissive."
+    const mieAfter = (await unsafeMieSnapshot(h.control, COMPANY_ID)).filter((r) =>
+      r.windowId.endsWith('_MIE'),
+    );
+    expect(mieAfter).toHaveLength(mieWindowsBefore.length);
+    for (const row of mieAfter) {
+      expect(row.reservedIrrecoverable).toBe('0');
+      expect(row.presumedIrrecoverable).toBe('1');
+      expect(row.realisedIrrecoverable).toBe('0');
+    }
+    // And the gateway REPORTS the same set, so "every" is a value rather than an inference.
+    expect(result.movedWindows.length).toBe(mieWindowsBefore.length);
 
-    // AND `PRESUMED_EXECUTED` DOES NOT EXIST IN THIS SCHEMA. The row is unwritable even by
-    // a direct INSERT, which is `0012`'s
-    // `dispatch_outcome_irrecoverable_unknown_undeclared` CHECK.
-    const outbox = (await outboxRows(h.control))[0]!;
-    const client = await h.control.connect();
-    try {
-      await expect(
-        client.query(
-          `INSERT INTO effect_dispatch_outcome (
-             company_id, idempotency_key, outbox_id, effect_id, authorisation_id, claim_id,
-             adapter, recoverability, outcome_kind, effect_status,
-             requires_unmirrored_tag, unmirrored_tag_sent, economic_movement,
-             invoked_at, outcome_at, journal_seq)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'IRRECOVERABLE', 'OUTCOME_UNKNOWN',
-                   'DISPATCHED_OUTCOME_UNKNOWN', FALSE, FALSE, 'NONE', $8, $8, 1)`,
-          [
-            COMPANY_ID,
-            effect.idempotencyKey,
-            outbox.outboxId,
-            outbox.effectId,
-            outbox.authorisationId,
-            outbox.claimId,
-            outbox.adapter,
-            NOW,
-          ],
-        ),
-      ).rejects.toThrow(/dispatch_outcome_irrecoverable_unknown_undeclared/);
-    } finally {
-      client.release();
+    // NO HEADROOM. `25 §10.1`: "The sum of the three terms does not fall, so an unknown
+    // outcome creates no headroom." Computed from the two snapshots rather than asserted.
+    for (const before of mieWindowsBefore) {
+      const after = mieAfter.find(
+        (r) => r.windowId === before.windowId && r.windowInstanceKey === before.windowInstanceKey,
+      )!;
+      const sum = (r: typeof before): bigint =>
+        BigInt(r.reservedIrrecoverable) + BigInt(r.presumedIrrecoverable) + BigInt(r.realisedIrrecoverable);
+      expect(sum(after)).toBe(sum(before));
     }
   });
 
   it('the SAFETY half still holds: never re-dispatched, by any path', async () => {
     /*
-     * `25 §10` row 2's first sentence is "Never re-dispatch", and that half is closed by
-     * the committed `CLAIMED` row rather than by the accounting. So the PARTIAL is scoped
-     * to the ledger movement and does not weaken `I36`.
+     * `25 §10` row 2's first sentence is "Never re-dispatch", and that half is closed by the
+     * committed `CLAIMED` row rather than by the accounting — unchanged by MIE-01, and
+     * restated by `25 §7.1`: "ONCE A ROW IS `CLAIMED`, THE SAME OUTBOX IDENTITY IS NEVER
+     * RETRIED OR REDISPATCHED, ON ANY OUTCOME."
      */
     const effect = await irrecoverable('unknown-irr-safe');
     const first = await dispatch(effect, ADAPTER_COMMERCE, unknownOutcome());
-    expect(first.result.kind).toBe('OUTCOME_REFUSED');
+    expect(first.result.kind).toBe('OUTCOME_RESOLVED');
     expect(first.mock.callCount).toBe(1);
 
     expect((await outboxRows(h.control))[0]!.status).toBe('CLAIMED');
@@ -404,45 +407,42 @@ describe('`§16`, `§28` — IRRECOVERABLE UNKNOWN: PARTIAL, AND FAIL-CLOSED', (
     expect(second.mock.callCount).toBe(0);
   });
 
-  it('THE DISCRIMINATOR — `§40` item 10: the unsafe control invents the transition', async () => {
+  it('THE DISCRIMINATOR — `§40` item 10: the invented transition consumes TWICE', async () => {
     /*
-     * `§40` item 10: "IRRECOVERABLE unknown does not consume MIE / or consumes it twice, IF
-     * MIE transition is normatively defined." It is not, so the control IS the invention.
+     * `§40` item 10: "IRRECOVERABLE unknown does not consume MIE / or consumes it twice."
+     * Both halves now have a production answer to discriminate against.
      *
-     * AND IT IS NOT EXACTLY-ONCE, WHICH IS THE SECOND HALF OF THE ITEM. Production's
-     * exactly-once property comes from `effect_dispatch_outcome`'s primary key; a ledger
-     * movement bolted on outside the outcome row inherits none of it, so calling the
-     * control twice moves the counter twice.
+     * The control's defect is no longer that it invents a transition the architecture does
+     * not declare — `25 §10.1` declares one — it is that the movement is bolted on OUTSIDE
+     * the outcome row and therefore inherits none of its exactly-once property. Production's
+     * comes from `effect_dispatch_outcome`'s primary key and the outbox row lock; the
+     * control has neither, so calling it twice moves the ledger twice.
      */
     const effect = await irrecoverable('unknown-irr-mie');
     const { result } = await dispatch(effect, ADAPTER_COMMERCE, unknownOutcome());
-    expect(result.kind).toBe('OUTCOME_REFUSED');
+    expect(result.kind).toBe('OUTCOME_RESOLVED');
 
-    const before = await unsafeMieSnapshot(h.control, COMPANY_ID);
-    // The reship reserved COUNT units against the MIE windows; the irrecoverable ledger is
-    // untouched by any accepted slice, so `reserved_irrecoverable` is zero everywhere —
-    // which is exactly why there is nothing to consume.
-    for (const row of before) expect(row.reservedIrrecoverable).toBe('0');
+    const production = (await unsafeMieSnapshot(h.control, COMPANY_ID)).filter((r) =>
+      r.windowId.endsWith('_MIE'),
+    );
+    for (const row of production) expect(row.presumedIrrecoverable).toBe('1');
 
-    const moved = await unsafeConsumeIrrecoverableUnit(h.control, COMPANY_ID, [
-      'W_DAY_MIE',
-      'W_MONTH_MIE',
-    ]);
-    expect(moved).toBeGreaterThan(0);
-    const once = await unsafeMieSnapshot(h.control, COMPANY_ID);
-    expect(once).not.toEqual(before);
-
-    // Twice.
+    // UNSAFE: the same movement, twice, with nothing to make it once.
     await unsafeConsumeIrrecoverableUnit(h.control, COMPANY_ID, ['W_DAY_MIE', 'W_MONTH_MIE']);
-    const twice = await unsafeMieSnapshot(h.control, COMPANY_ID);
-    expect(twice).not.toEqual(once);
-    const mieWindows = twice.filter((r) => r.windowId.endsWith('_MIE'));
-    for (const row of mieWindows) expect(row.presumedIrrecoverable).toBe('2');
+    await unsafeConsumeIrrecoverableUnit(h.control, COMPANY_ID, ['W_DAY_MIE', 'W_MONTH_MIE']);
+    const after = (await unsafeMieSnapshot(h.control, COMPANY_ID)).filter((r) =>
+      r.windowId.endsWith('_MIE'),
+    );
+    for (const row of after) expect(row.presumedIrrecoverable).toBe('3');
+
+    // AND PRODUCTION'S OWN SECOND PROCESSING MOVES NOTHING — the discrimination, stated as
+    // one comparison. `mie-outcome-duplicate.test.ts` proves it against real concurrency.
+    expect(production.every((r) => r.presumedIrrecoverable === '1')).toBe(true);
   });
 });
 
 describe('`§19` — A KNOWN ADAPTER FAILURE HAS NO DECLARED LOCAL STATE', () => {
-  it('production refuses `KNOWN_FAILURE_STATE_UNDECLARED` and writes nothing', async () => {
+  it('production refuses `ADAPTER_FAILED_REACHES_NO_LOCAL_STATE` and writes nothing', async () => {
     /*
      * `24 §3` K4 declares the RESPONSE and no state; the response contradicts `25 §7`
      * OBX-01. `§19`: "If no immediate known-not-sent state exists, do not invent one.
@@ -456,7 +456,7 @@ describe('`§19` — A KNOWN ADAPTER FAILURE HAS NO DECLARED LOCAL STATE', () =>
       outcome: failedOutcome('MOCK_VALIDATION_REJECTED'),
     });
 
-    const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+    const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
       companyId: COMPANY_ID,
       idempotencyKey: effect.idempotencyKey,
       dispatchedBy: 'worker:failed',
@@ -464,7 +464,7 @@ describe('`§19` — A KNOWN ADAPTER FAILURE HAS NO DECLARED LOCAL STATE', () =>
     });
     expect(result.kind).toBe('OUTCOME_REFUSED');
     if (result.kind !== 'OUTCOME_REFUSED') return;
-    expect(result.undeclared).toBe('KNOWN_FAILURE_STATE_UNDECLARED');
+    expect(result.undeclared).toBe('ADAPTER_FAILED_REACHES_NO_LOCAL_STATE');
 
     expect(await rawOutcomeRows(h.control)).toHaveLength(0);
     expect(await outcomeJournalRows(h.control)).toHaveLength(0);
@@ -497,7 +497,13 @@ describe('`§19` — A KNOWN ADAPTER FAILURE HAS NO DECLARED LOCAL STATE', () =>
             NOW,
           ],
         ),
-      ).rejects.toThrow(/dispatch_outcome_kind_declared/);
+        // EITHER refusal is the right one, and the pair is stronger than either alone:
+        // `dispatch_outcome_kind_declared` excludes the literal from the column, and the C4
+        // biconditionals bind every declared status to a kind that is not this one. So
+        // `ADAPTER_FAILED` cannot be paired with ANY status — which is `25 §7.1`'s "it
+        // carries no local outcome policy and reaches no local state", enforced by the
+        // database over the whole status domain rather than at one row of it.
+      ).rejects.toThrow(/dispatch_outcome_kind_declared|dispatch_outcome_c4_/);
     } finally {
       client.release();
     }
@@ -519,7 +525,7 @@ describe('`§26` — EVERY OUTCOME BRANCH REMAINS NON-RECLAIMABLE', () => {
         resolutionCapabilities: ['IDEMPOTENCY_HEADER'],
         outcome: branch.outcome,
       });
-      const result = await dispatchAuthorisedEffect(h.control, testRegistry(mock), {
+      const result = await dispatchAuthorisedEffect(dispatchEnv(h, mock), {
         companyId: COMPANY_ID,
         idempotencyKey: effect.idempotencyKey,
         dispatchedBy: 'worker:nc',

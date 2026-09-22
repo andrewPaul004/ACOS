@@ -3,6 +3,7 @@ import type {
   AdapterResolutionCapability,
   DispatchEnvelope,
   ExternalEffectAdapter,
+  NotSentBasis,
 } from '../../src/kernel/gateway/adapterPort.js';
 
 /**
@@ -133,6 +134,35 @@ export interface MockAdapterOptions {
    * reader sees.
    */
   readonly attemptMutation?: boolean;
+  /**
+   * `25 §7.2`'s FIRST ADMISSIBLE BASIS, AS A REAL CONTROL-FLOW BRANCH — v1.3.5 (OBX-05).
+   *
+   * =================================================================================
+   * WHY THIS IS A SEPARATE FLAG AND NOT JUST A PROGRAMMED OUTCOME
+   *
+   * `25 §7.2`: `NOT_SENT_CONFIRMED` "may be returned only by a trusted adapter, and only
+   * where the adapter can positively establish **from its own control flow** or from typed
+   * provider semantics that NO EXTERNAL WRITE CROSSED THE TRANSPORT BOUNDARY". The admissible
+   * basis it names first is "a failure raised **before** the external request was opened or
+   * sent".
+   *
+   * An adapter could be PROGRAMMED to return `NOT_SENT_CONFIRMED` through `outcome`, and that
+   * would prove only that the kernel handles the literal. What `§17` of the continuation
+   * mandate asks for is "a deterministic genuine pre-send failure producing this result" —
+   * an adapter whose CONTROL FLOW never reached its own send point.
+   *
+   * SO THIS FLAG RETURNS EARLY, BEFORE `acceptedCount` IS INCREMENTED. The counter is the
+   * observable that separates an honest confirmed-non-send from a false one:
+   *
+   *   genuine pre-send failure   callCount 1, acceptedCount 0  → NOT_SENT_CONFIRMED is TRUE
+   *   escaped, then failed       callCount 1, acceptedCount 1  → NOT_SENT_CONFIRMED is a LIE
+   *
+   * `tests/negative-controls/unsafe-not-sent-mapping.ts` is the second row, and
+   * `not-sent-vs-unknown.test.ts` asserts the discrimination as a comparison of the two
+   * counters rather than as a claim about intent.
+   * =================================================================================
+   */
+  readonly failBeforeSend?: NotSentBasis;
 }
 
 export interface MockAdapter extends ExternalEffectAdapter {
@@ -240,6 +270,23 @@ export function createMockAdapter(options: MockAdapterOptions): MockAdapter {
         });
       }
 
+      // ==============================================================================
+      // THE PRE-SEND FAILURE BRANCH — `25 §7.2`, AND IT RETURNS BEFORE THE ACCEPTANCE POINT.
+      //
+      // "a failure raised **before** the external request was opened or sent". The adapter
+      // establishes the basis from ITS OWN CONTROL FLOW: it has not reached the line below,
+      // so no request can have left, and `acceptedCount` stays where it was.
+      //
+      // This is the ONLY honest source of `NOT_SENT_CONFIRMED` in this file. There is no path
+      // that reaches the acceptance point and then returns it, because that is the lie
+      // `25 §7.2` exists to make unrepresentable and
+      // `tests/negative-controls/unsafe-not-sent-mapping.ts` is where it lives instead.
+      // ==============================================================================
+      if (options.failBeforeSend !== undefined) {
+        options.events?.push('MOCK_ADAPTER_FAILED_BEFORE_SEND');
+        return { kind: 'NOT_SENT_CONFIRMED', basis: options.failBeforeSend };
+      }
+
       // THE ACCEPTANCE POINT. Past here, a real request would have left the process.
       acceptedCount += 1;
       options.events?.push('MOCK_ADAPTER_ACCEPTED');
@@ -270,7 +317,28 @@ export function unknownOutcome(reason: 'TIMEOUT' | 'AMBIGUOUS' = 'TIMEOUT'): Ada
   return { kind: 'OUTCOME_UNKNOWN', reason };
 }
 
-/** `24 §3` K4's "adapter failure". No declared local policy — `S1J-C2`. */
+/**
+ * `25 §7.1`'s `ADAPTER_FAILED`. Retained for diagnostics; it reaches no local state.
+ *
+ * v1.3.5 CORRECTED WHAT THIS MEANS. v1.3.4 declared a RESPONSE for it — "bounded retry with
+ * jitter against the same idempotency key" — and no state, and the response contradicted
+ * OBX-01. `25 §7.1` scopes the retry to pre-claim workflow failures and declares that this
+ * kind "carries no local outcome policy and reaches no local state".
+ */
 export function failedOutcome(failureClass = 'MOCK_REJECTED'): AdapterOutcome {
   return { kind: 'ADAPTER_FAILED', failureClass };
+}
+
+/**
+ * `25 §7.2`'s `NOT_SENT_CONFIRMED`, as a programmed value.
+ *
+ * USE `failBeforeSend` INSTEAD WHERE THE POINT IS THE PROOF. This helper is for the cases
+ * where the subject is the KERNEL's handling of the literal — the C4 matrix, the release, the
+ * terminal state — and the adapter's own basis is not what is under test. Where the subject
+ * IS the basis, `failBeforeSend` returns before the acceptance point and the counter shows it.
+ */
+export function notSentOutcome(
+  basis: NotSentBasis = 'PRE_SEND_FAILURE',
+): AdapterOutcome {
+  return { kind: 'NOT_SENT_CONFIRMED', basis };
 }

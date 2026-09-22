@@ -28,7 +28,7 @@ import type {
   DispatchAttestation,
   FreshDispatchCapability,
 } from '../../src/kernel/gateway/dispatchCapability.js';
-import type { AdapterRegistry } from '../../src/kernel/gateway/adapterRegistry.js';
+import type { DispatchEnvironment } from '../../src/kernel/gateway/effectGateway.js';
 import type {
   AdapterOutcome,
   DispatchEnvelope,
@@ -36,7 +36,15 @@ import type {
 } from '../../src/kernel/gateway/adapterPort.js';
 
 declare const control: Pool;
-declare const registry: AdapterRegistry;
+/**
+ * `25 §14.1`'s Epoch B collaborators, wired at process start.
+ *
+ * The environment replaced the bare registry when SER-01 made the dispatch lease and the
+ * dispatch-time revalidation mandatory. It changes nothing about THIS file's subject: the
+ * environment is built by the kernel at wiring time and the four scalars below are still the
+ * only thing a worker supplies, so every attack still has to enter through `input`.
+ */
+declare const env: DispatchEnvironment;
 declare const now: Date;
 declare const envelope: DispatchEnvelope;
 declare const someAdapter: ExternalEffectAdapter;
@@ -48,7 +56,7 @@ declare const someAdapter: ExternalEffectAdapter;
 // EXPECT_ERROR: `26 §5` assigns the adapter "per action class in the catalogue, not per
 // request, and never by a model". The gateway resolves it from the identity the committed
 // outbox row carries, so there is no field for a caller to name one in.
-export const chosenAdapter = dispatchAuthorisedEffect(control, registry, {
+export const chosenAdapter = dispatchAuthorisedEffect(env, {
   companyId: 'co',
   idempotencyKey: 'idem:1',
   dispatchedBy: 'worker:1',
@@ -58,7 +66,7 @@ export const chosenAdapter = dispatchAuthorisedEffect(control, registry, {
 
 // EXPECT_ERROR: nor by identity. `25 §7`: the execution metadata is "a property of the
 // catalogue that a model cannot choose and a caller cannot pass".
-export const chosenAdapterId = dispatchAuthorisedEffect(control, registry, {
+export const chosenAdapterId = dispatchAuthorisedEffect(env, {
   companyId: 'co',
   idempotencyKey: 'idem:1',
   dispatchedBy: 'worker:1',
@@ -72,7 +80,7 @@ export const chosenAdapterId = dispatchAuthorisedEffect(control, registry, {
 
 // EXPECT_ERROR: `24 §3` K4's "What AI may not do" names "a recoverability class". The
 // outcome transaction reads it from the committed `effect` row inside its own transaction.
-export const spoofedRecoverability = dispatchAuthorisedEffect(control, registry, {
+export const spoofedRecoverability = dispatchAuthorisedEffect(env, {
   companyId: 'co',
   idempotencyKey: 'idem:1',
   dispatchedBy: 'worker:1',
@@ -82,7 +90,7 @@ export const spoofedRecoverability = dispatchAuthorisedEffect(control, registry,
 
 // EXPECT_ERROR: and neither is the outcome. `§14`: "The adapter is part of the TCB. The
 // model must not choose the outcome."
-export const chosenOutcome = dispatchAuthorisedEffect(control, registry, {
+export const chosenOutcome = dispatchAuthorisedEffect(env, {
   companyId: 'co',
   idempotencyKey: 'idem:1',
   dispatchedBy: 'worker:1',

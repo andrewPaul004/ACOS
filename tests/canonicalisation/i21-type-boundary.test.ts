@@ -101,7 +101,7 @@ function markers(): readonly Diagnostic[] {
 }
 
 describe('the harness discriminates', () => {
-  it('the fixture directory contains a positive control and seventeen negative files', () => {
+  it('the fixture directory contains a positive control and eighteen negative files', () => {
     const files = readdirSync(PROJECT).filter((name) => name.endsWith('.ts')).sort();
     expect(files).toEqual([
       // S1E. WIDENED BY EXACTLY TWO, and every existing entry is untouched.
@@ -154,6 +154,18 @@ describe('the harness discriminates', () => {
       // compiles clean, and "no diagnostic appears on an unmarked line" now covers the new
       // file as well.
       'local-authorisation-as-dispatchable.ts',
+      // S1J's v1.3.5 CONTINUATION. WIDENED BY EXACTLY ONE, and every existing entry is
+      // untouched.
+      //
+      // The new fixture is the compile-time half of `51 §2.3`'s ownership rule: no
+      // reservation or dispatch surface accepts an `irrecoverable_units` argument, and an
+      // adapter can neither supply a unit count nor invent a `NOT_SENT_CONFIRMED` basis
+      // string. It ALSO carries cases that MUST COMPILE — the two ledger movements, which
+      // legitimately take a `units` argument because they ARE the movement — so the fixture
+      // cannot pass by being uniformly broken. Its EXPECTED DIAGNOSTICS are owned by
+      // `tests/integration/exposure/mie-units-type-boundary.test.ts`, not by this file, so
+      // this list is the only line it changes here.
+      'mie-units-as-argument.ts',
       'model-amount-into-exposure.ts',
       // S1D. WIDENED BY EXACTLY THREE, and every existing entry is untouched.
       //

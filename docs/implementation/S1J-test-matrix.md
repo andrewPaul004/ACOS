@@ -209,3 +209,79 @@ test amendment; both are the accepted assertions doing their job:
 1965 passed, 0 failed, 0 skipped, 962.03 s.**
 
 `S1J-result.md §19` carries the full record, including the diff audit.
+
+---
+
+# 8. The v1.3.5 continuation — what was added, and what changed
+
+**Everything in `§1`–`§7` above describes the pass that ended at `f1f849a` and is retained
+as the record of it.** This section covers the continuation against the OWNER-ACCEPTED
+v1.3.5 package at `81c2939`.
+
+## 8.1 New focused suites
+
+| Suite | `§` of the mandate | What it proves |
+|---|---|---|
+| `tests/integration/exposure/mie-reservation.test.ts` | `§4`, `§5`, `§6`, `§37` | `51 §2.3`'s table against a hand transcription; step R reserving on **every** referenced instance; the append-only evidence; and `I20`'s denominator surviving `reserved → presumed` |
+| `tests/integration/exposure/mie-units-type-boundary.test.ts` | `§4` | a real `tsc` run: six refusals where a unit count is offered as an argument, and three cases that MUST compile so the fixture cannot pass by being broken |
+| `tests/integration/exposure/mie-final-unit-concurrency.test.ts` | `§8` | the last unit, raced: exactly one commits, exactly one is denied by the architecture's guard, the ceiling is reached **exactly**, and no `40P01` |
+| `tests/integration/gateway/mie-outcome-atomicity.test.ts` | `§13`, `§15` | six kill points each returning the exact pre-outcome state; the seventh proved unreachable by construction; the no-headroom sum; and the four wrong movements |
+| `tests/integration/gateway/mie-outcome-duplicate.test.ts` | `§14` | sequential, concurrent and restart-after-commit, each moving the unit exactly once |
+| `tests/integration/gateway/not-sent-confirmed.test.ts` | `§17`, `§18`, `§19` | the typed basis; the genuine pre-send failure; the terminal identity; and both releases |
+| `tests/integration/gateway/not-sent-vs-unknown.test.ts` | `§20`, `§21` | the false-not-sent attack and the generic-failure retry, each as a two-implementation comparison |
+| `tests/integration/gateway/dispatch-gap-revalidation.test.ts` | `§27`, `§28`, `§29` | revalidation under the lease; six precise stale reasons; the coarse outward denial; and that nothing is constructed or minted |
+| `tests/integration/gateway/dispatch-lease-continuity.test.ts` | `§23`–`§26`, `§30` | the key equality, the lock-free gap, five held-lock observations across the span, and a real competing mutation |
+| `tests/integration/gateway/dispatch-lease-crash.test.ts` | `§31`, `§32` | both crash points, and the required regression: an old `CLAIMED` row plus a newly acquired lease still cannot dispatch |
+| `tests/integration/gateway/irrecoverable-outcome-matrix.test.ts` | `§33` | all twelve C4 cells as committed database state, plus the agreement of the two IRRECOVERABLE informative cells |
+
+**Every concurrency, atomicity and authoritative-state property runs against real
+PostgreSQL.** The lease observations are made from a **separate session** through
+`pg_try_advisory_lock`, never from an application boolean.
+
+## 8.2 New negative-control modules
+
+| Module | Controls |
+|---|---|
+| `tests/negative-controls/unsafe-mie-movements.ts` | no reservation; state moves and unit does not; release on unknown; `reserved → realised`; two-transaction movement; application-only final-unit admission |
+| `tests/negative-controls/unsafe-not-sent-mapping.ts` | the exception-to-not-sent mapper; an adapter that escapes then reports a confirmed non-send; the generic-failure requeue |
+| `tests/negative-controls/unsafe-dispatch-epoch.ts` | dispatch that trusts enqueue-time validity; dispatch from a persisted `CLAIMED` row alone |
+| `tests/integration/gateway/mieDuplicateSupport.ts` | the duplicate consumption, as one callable |
+
+## 8.3 Accepted assertions that v1.3.5 SUPERSEDED
+
+Each row is an assertion that was **correct under v1.3.4 and is wrong under v1.3.5**. None
+was weakened; each was replaced by the property the new declaration makes true.
+
+| File | What it asserted | What replaced it |
+|---|---|---|
+| `tests/gateway/outcome-policy.test.ts` | two undeclared reasons; one economic movement (`NONE`); two post-dispatch statuses; `(IRRECOVERABLE, OUTCOME_UNKNOWN)` UNDECLARED | one undeclared reason **by declaration**; four movements with **no `REALISED` among them**; four statuses; the cell RESOLVES and the two informative cells are asserted to AGREE |
+| `tests/integration/gateway/outcome-classes.test.ts` | the IRRECOVERABLE unknown branch refuses and `PRESUMED_EXECUTED` is unwritable | it resolves, and the movement is asserted on **every bound window** with the three-term sum computed on both sides |
+| `tests/integration/gateway/dispatch-envelope.test.ts` | a gap mutation leaves the dispatch proceeding with persisted bytes | the mutation makes the option **stale**, the claim is refused, and the unsafe path is the discriminator |
+| `tests/integration/gateway/outcome-atomicity.test.ts` | `outcomeTransaction.ts` contains no `40001`, no `retr`, no `SERIALIZABLE` | the **single lock order** is asserted directly: no `FOR UPDATE` of its own, the accepted acquisition site, the counter last, and `40P01` still never retried |
+| `tests/integration/gateway/no-real-transport-boundary.test.ts` | import/export/refusal allow-lists; `'PRESUMED_EXECUTED'` banned in `src/` | widened by name with the declaration that requires each; the literal leaves the provider-evidence sweep because `25 §10.1` makes it a LOCAL state, while `VERIFIED` and `NEVER_SENT` stay banned |
+| `tests/integration/outbox/no-transport-boundary.test.ts` | the same literal banned across `src/` | banned in **`src/kernel/outbox/` specifically**, which was always the sharper claim for this suite |
+| `tests/integration/outbox/outbox-claim.test.ts` | the irrecoverable ledger is three zeros at enqueue and at claim | the unit **is** reserved at step R, and **neither the enqueue nor the claim moves it** — a property that was untestable while there was nothing to move |
+| `tests/integration/authority/local-transaction-atomicity.test.ts` | `OUTBOX_FILES`; `../exposure/ledger.js` forbidden to the gateway | widened by the two Epoch-B modules; the ledger's **movement** functions are admitted and `stepR.ts` stays forbidden — one moves a declared commitment, the other would mint one |
+| `tests/integration/gateway/gateway-type-boundary.test.ts` | the gateway's four-argument shape | the `DispatchEnvironment` shape; all fourteen attacks unchanged |
+
+**And one production name survived an accepted assertion unchanged:** the
+`'DISPATCHED'`-absence rule still holds, and `25 §7.1`'s new terminal state is
+`DISPATCH_NOT_SENT_CONFIRMED` rather than anything containing the bare literal.
+
+## 8.4 What was NOT touched
+
+- **`docs/architecture/` is unmodified** — `git diff HEAD -- docs/architecture/` is empty.
+- **The architecture gate is unamended**, and all **29** retained seeds still fail.
+- `tests/support/jcs1Oracle.ts` is unchanged; `30 §5.3a`'s field order did not move.
+- No accepted test was deleted, and no `.only` exists anywhere.
+
+## 8.5 Verification
+
+**Architecture gate: 64 PASS / 0 FAIL, and all 29 retained seeds still fail their intended
+conditions. `npm run verify`: GREEN — 147 files, 2057 tests, 2057 passed, 0 failed, 0
+skipped.**
+
+Baseline for comparison: 136 files, 1965 tests. **+11 files, +92 tests, and no accepted test
+deleted.**
+
+`S1J-result.md §13a` carries the full record, including the diff audit.

@@ -235,3 +235,79 @@ path can skip.
 | `src/kernel/outbox/` | **byte-identical to `e5b356a`** |
 
 `S1J-result.md §19` carries the diff audit.
+
+---
+
+# The v1.3.5 continuation
+
+**Baseline `81c2939`. Architecture unmodified.** The record below covers what was built
+against the accepted v1.3.5 package, and — more usefully — the three places where the
+implementation had to stop and decide rather than transcribe.
+
+## A. The three decisions that were not transcriptions
+
+### A1. Only `refund.create` can be revalidated, and the fixture had to supply the rest
+
+`25 §14.1` makes dispatch revalidation mandatory and names the enumeration/option identity as
+an operand. `SelectedAuthoritativeOption` is a **union of one** at S1B, and S1B registered a
+constructor for exactly one class, so in a conformant S1 pipeline only `refund.create` can be
+canonicalised, authorised, or therefore dispatched.
+
+The accepted S1I/S1J fixtures reach `campaign.pause` and `fulfilment.reship` through
+hand-authored facts that bypass C′ — **which stood in for only half of it**: they supplied a
+canonical payload and no enumeration. Under v1.3.5 those effects are correctly refused at the
+dispatch boundary.
+
+**This is a fixture gap, not an architecture contradiction, and it is not reported as one.**
+`tests/support/fixtureEnumerator.ts` supplies the missing half, TEST-ONLY, so those classes
+revalidate through the production enumeration core exactly as a refund does. Production's
+catalogue is untouched and every other harness still registers one constructor, so `36 §2`'s
+`NOT_CANONICALISABLE` assertions are unamended. Recorded as `S1J-C10`.
+
+### A2. There were no committed-reservation-release semantics to use
+
+`25 §7.2` releases "under the existing reservation-release semantics". **There were none.**
+`26 §7` property 8's release is implemented by rolling back to a `SAVEPOINT`, which releases
+by never having committed; S1J is the first slice that releases a committed reservation.
+
+What was built is the minimum that keeps `I3` term 1 reconstructable: the same two terms step
+R moved, by the same amounts, on the same bound instances, plus a one-way stamp. Recorded as
+`S1J-C8`.
+
+### A3. Two kill points `§13` asks for do not exist
+
+`§13` lists "after decrement reserved" and "after increment presumed" as separate points.
+`applyIrrecoverablePresumption` moves both terms in **one `UPDATE`**, so there is no instant
+between them — which is `25 §10.1`'s own requirement ("no transaction may expose transient
+headroom"), not an omission.
+
+The suite asserts the absence **over the source** rather than reporting an unreachable kill
+point, and `unsafeTwoTransactionMovement` shows what the split version costs by observing the
+transient headroom from another session.
+
+## B. Two production names changed because an accepted assertion was right
+
+| Accepted assertion | What it caught | Fix |
+|---|---|---|
+| `local-transaction-atomicity.test.ts`: no bare `COMMIT` outside `pool.ts` | an error message in `dispatchLease.ts` used the word as prose | lowercased; **the accepted sweep was not weakened** |
+| `local-transaction-atomicity.test.ts`: the gateway may not import `stepR.ts` | it does not, and must not — a gateway that could call `reserveOrdinary` could mint authority at the dispatch boundary | `ledger.ts` was admitted (it MOVES a declared commitment) and `stepR.ts` stays forbidden (it would CREATE one) |
+
+## C. Isolation, and why it is not uniform
+
+`SERIALIZABLE` where the outcome moves a ledger term, `READ COMMITTED` where it does not.
+`25 §10.1` requires the first; the accepted S1J gave the reason for the second, and it still
+holds: at a stricter level the loser of a duplicate-outcome race raises `40001` instead of
+reading the committed prior outcome, converting a determinate answer into a retryable error.
+A branch that moves nothing has no write skew to prevent. Recorded as `S1J-C11`.
+
+## D. The lock order is still the single accepted one
+
+`30 §5.1` (v1.3.5) puts balance locks inside the outcome transaction. They are acquired
+through `acquireMoneyPathLocks` — the one acquisition site in `src/` — with
+`includeStandingRows: false` (no standing term moves on any outcome) and
+`includeJournalCounter: false` (the counter is taken LAST, inside `emit_dispatch_outcome`,
+beside the row it numbers). The outcome transaction issues no `FOR UPDATE` of its own, and
+`lock-order.test.ts` would fail if it did.
+
+No inversion is constructible: the S1I claim never takes `window_balance`, and the S1F
+authorising transaction never takes `dispatch_outbox`.

@@ -363,6 +363,32 @@ A valid pair of owner signatures over class 20's content hash proves **exactly o
 | 8 | **Classes 1, 4–16, 18, 21–23, 25–26 in the manifest** | **S4 or later**, when their consumers arrive. The closure rule of `§6` applies to each of them when they enter |
 | 9 | **Cedar semantic correctness** — symcc, policy equivalence, policy rotation | **UNCHANGED and OPEN.** `§2e` brings the policy bundle inside the signature framework and makes no semantic claim |
 | 10 | **`I20`, `I36`'s verification leg, the real-provider six-kill-point validation** | **OPEN**, exactly as v1.3.5 left them. This pass moves nothing into or out of them |
-| 11 | **`H4`, `H8`, `H9` and `H13` have NO DISCRIMINATING SEED** — found while re-running all fifty-four seeds against the final tree of this pass | **OPEN, and newly RECORDED rather than newly created.** The four have been seed-less since v1.3.4. **v1.3.4's and v1.3.5's READMEs each claim the whole `H1`–`H13` range is seed-covered, and that claim is false**; `phase2-v1.3.6-verification.md §1a` states the actual coverage and this issue's README is corrected. **Authoring the four seeds is architecture work and is carried to the next errata pass**, not done inside a freeze. **All twenty-five conditions THIS pass introduced are fully seed-covered** |
+| 11 | **`H4`, `H8`, `H9` and `H13` had NO DISCRIMINATING SEED** — found while re-running every seed against the final tree of this pass | **CLOSED IN THIS PASS.** See `§14` |
+| 12 | **`C1`–`C29` (fifteen live conditions) and `E1`–`E7` have no discriminating seed** | **OPEN, and newly DISCLOSED rather than newly created.** They have been seed-less since v1.3 and v1.3.1, **and no package has ever claimed otherwise for them**, so this is a disclosure and not a correction. **None is classified non-seedable**: several are computed rather than matched and a harness could exercise them; no pass has authored the controls. **Carried to a later errata pass.** Every condition the v1.3.2–v1.3.6 errata passes introduced — `F1`–`F3`, `G1`–`G10`, `H1`–`H13`, `J1`–`J16`, `K1`–`K25`, sixty-seven in all — is fully seed-covered, and `S1K` depends on none of the open twenty-two |
 
 **And one thing this pass deliberately does not resolve.** `attestation_cadence` and `k` have no signed owning class. `§6` explains why the closure rule does not reach them — they are detection-latency parameters rather than authority operands — and records the reasoning rather than the conclusion alone, so a later pass that disagrees has something to disagree with.
+
+---
+
+## 14. The H-condition seed-coverage correction (verification errata)
+
+**This is a correction to the VERIFICATION RECORD, not to the architecture.** No deliverable, no invariant, no quantity and no mechanism is touched by it.
+
+> **Earlier package READMEs overstated H-condition seed coverage; v1.3.6 discovered and corrected the verification coverage going forward.**
+
+**What was claimed.** `docs/architecture/v1.3.4/README.md` and `docs/architecture/v1.3.5/README.md` each state that every one of `H1`–`H13` is failed by at least one seeded negative control.
+
+**What was true.** v1.3.4 shipped **eight** H seeds between thirteen conditions, and they reach **nine** of them — `H1`, `H2`, `H3`, `H5`, `H6`, `H7`, `H10`, `H11`, `H12`. **`H4`, `H8`, `H9` and `H13` had never been failed by any seed**, in v1.3.4, v1.3.5 or the first issue of v1.3.6. Each was a real condition that reads the corpus and can fail; what none of them had was **a recorded negative control proving a plausible WRONG architecture fails it** — the property every other errata condition carries.
+
+**What was done.** The final v1.3.6 review found it before the freeze. **Four dedicated negative controls were authored and are now part of this package:**
+
+| Seed | Condition it discriminates | Semantic property mutated |
+|---|---|---|
+| `--seed-caller-selects-clock` | **H4** | the evidentiary clock's deterministic ordering, and the decision's exclusive ownership of the choice (`30 §9.2.5`) |
+| `--seed-posture-restores-row1` | **H8** (with **G6**, coupled) | `§5.1a`'s FULL-HALT POSTURE composition — that row 1 halts and is **not** restorable |
+| `--seed-override-unlocks-row1` | **H9** | `§5.7.2`'s ordinary override scope, and its structural exclusion of IRRECOVERABLE |
+| `--seed-adapter-pulled-into-s1` | **H13** | SEQ-01's S1/S4 split, and `I36`'s two legs landing in the two slices that can run them |
+
+**Every one applies all of its edits, leaves the corpus parsing, deletes no section, corrupts no unrelated syntax and changes no unrelated quantity.** `phase2-v1.3.6-verification.md §1a` records each mutation, why it is the right one, and the single documented coupling.
+
+**HISTORICAL PACKAGES ARE NOT MODIFIED.** `docs/architecture/v1.3.4/` and `docs/architecture/v1.3.5/` are byte-identical after this pass and their inaccurate README statements stand as issued. **The correction is recorded forward, in this package, and no history is rewritten.**

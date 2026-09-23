@@ -458,6 +458,9 @@ if SEED_GENERIC_INSERT_FAIL:
 #   --seed-reclaim-timeout     a visibility timeout returns CLAIMED rows -> H10
 #   --seed-outbox-irrecoverable-only  outbox restricted to IRRECOVERABLE -> H11
 #   --seed-swap-claim-fields   two claim-row fields transposed           -> H12
+#
+# H4, H8, H9 and H13 are NOT reached by any flag in this block. v1.3.6's
+# H-COVERAGE block, further down, supplies the four missing controls.
 # ============================================================================
 SEED_MODEL_CASE_REF = "--seed-model-case-ref" in sys.argv
 SEED_CLAIM_CASE_REF = "--seed-claim-case-ref" in sys.argv
@@ -770,6 +773,147 @@ _k_seed(SEED_PULL_FORWARD_S4_AUDIT, "unrelated S4 work pulled forward with the g
      "- *(nothing further — the S1K gate additionally pulls forward the later owner briefing, the S4 audit mechanisms and provider reconciliation, since all three read control artifacts)*;"),
 ])
 
+
+# ============================================================================
+# v1.3.6 H-COVERAGE NEGATIVE CONTROLS (the H4/H8/H9/H13 gap).
+#
+# H1-H13 were introduced at v1.3.4 with eight seeds between them, and four
+# conditions -- H4, H8, H9 and H13 -- were never exercised by any of them.
+# Both `docs/architecture/v1.3.4/README.md` and `docs/architecture/v1.3.5/
+# README.md` state that every one of H1-H13 is failed by at least one seed.
+# THAT STATEMENT WAS FALSE. Those two packages are prior issues and are not
+# modified; the four missing controls are authored here.
+#
+# Each one mutates the SEMANTIC property its condition exists to protect, not
+# the syntax that carries it. Every mutated corpus still parses, every section
+# survives, and each seed is written to fail ONE condition so the check is
+# shown to be sharp rather than incidental.
+#
+#   --seed-caller-selects-clock     the evidentiary clock chosen at discretion
+#                                   and nominated by the caller          -> H4
+#   --seed-posture-restores-row1    the FULL-HALT POSTURE widened to restore
+#                                   row 1                                -> H8
+#   --seed-override-unlocks-row1    an ordinary DegradedModeOverride unlocks
+#                                   IRRECOVERABLE                        -> H9
+#   --seed-adapter-pulled-into-s1   the vendor half collapsed back into S1,
+#                                   with I36 claimed whole at S1        -> H13
+# ============================================================================
+SEED_CALLER_SELECTS_CLOCK    = "--seed-caller-selects-clock" in sys.argv
+SEED_POSTURE_RESTORES_ROW1   = "--seed-posture-restores-row1" in sys.argv
+SEED_OVERRIDE_UNLOCKS_ROW1   = "--seed-override-unlocks-row1" in sys.argv
+SEED_ADAPTER_PULLED_INTO_S1  = "--seed-adapter-pulled-into-s1" in sys.argv
+
+# ---- H4. The evidentiary clock stops being determinate and stops being the
+# decision's to choose. The boolean is untouched, the section is untouched, and
+# the qualifying set in §9.2.4 is untouched -- only WHICH clock is recorded,
+# and WHO picks it, change. That is exactly what H4 owns.
+_k_seed(SEED_CALLER_SELECTS_CLOCK,
+        "the evidentiary clock selected at the implementation's discretion and "
+        "nominated by the caller", "H4", [
+    (_P30,
+     "> 1. **earliest authoritative statutory deadline** (`deadline_at` ascending); then\n"
+     "> 2. **stable `clock_ref` ascending**, as the total tie-break.",
+     "> * **any qualifying live clock of the case**, at the implementation's "
+     "discretion. No ordering is imposed and no total tie-break is required."),
+    (_P30,
+     "**The decision selects the clock. A caller never does.** A caller-supplied "
+     "clock reference is the row-3 lever a third time and is refused structurally, "
+     "not checked.",
+     "**A caller may nominate the evidentiary clock**, and the decision records the "
+     "nomination it was handed."),
+    (_P30,
+     "Where row 3 is not the reason, the field is **NULL or absent**",
+     "Where row 3 is not the reason, the field may retain whatever clock reference "
+     "the caller last nominated"),
+])
+
+# ---- H8. §5.1a's posture composition is widened so an in-scope override
+# restores row 1 as well as rows 3 and 4. §5.7.2's ordinary override scope is
+# deliberately LEFT ALONE, so this seed separates the posture rule from the
+# override rule and fails H8 without touching H9.
+_k_seed(SEED_POSTURE_RESTORES_ROW1,
+        "the FULL-HALT POSTURE widened to restore row 1", "H8", [
+    (_P30,
+     "**In the FULL-HALT POSTURE (`§5.1a`, at or beyond "
+     "`audit_unreachable_full_halt_threshold`): Halt**, as for every other row, and "
+     "**not** restorable — the posture restores rows 3 and 4 only.",
+     "**In the FULL-HALT POSTURE (`§5.1a`, at or beyond "
+     "`audit_unreachable_full_halt_threshold`): Halt**, as for every other row, and "
+     "restorable by an in-scope override — the posture restores rows 1, 3 and 4."),
+    (_P30,
+     "| FULL-HALT POSTURE, any state | **HALT**, row 1 | **No** |",
+     "| FULL-HALT POSTURE, any state | **HALT**, row 1 | **Yes** — by an in-scope "
+     "override |"),
+    (_P30,
+     "**Therefore, in the posture: rows 3 and 4 are restorable by an in-scope "
+     "override; rows 1, 2 and 5 are not.**",
+     "**Therefore, in the posture: rows 1, 3 and 4 are restorable by an in-scope "
+     "override; rows 2 and 5 are not.**"),
+    (_P22,
+     "**Under the `§5.1a` FULL-HALT POSTURE every row halts, row 1 included, and "
+     "rows 1, 2 and 5 are not restorable.**",
+     "**Under the `§5.1a` FULL-HALT POSTURE every row halts, row 1 included, and "
+     "rows 2 and 5 are not restorable.**"),
+])
+
+# ---- H9. The ORDINARY degraded-mode override gains IRRECOVERABLE. §5.1a's
+# posture composition is deliberately LEFT ALONE, and so are the two degraded
+# reachability rows H6 and H7 own, so this seed fails H9 and nothing else.
+_k_seed(SEED_OVERRIDE_UNLOCKS_ROW1,
+        "an ordinary DegradedModeOverride able to unlock IRRECOVERABLE", "H9", [
+    (_P30,
+     "**A `DegradedModeOverride` can never unlock row 1**, in any state. Item 5's "
+     "*\"never rows 1 or 2\"* is unchanged, `51 §3.6`'s structural "
+     "`{COMPENSABLE, REVERSIBLE}` CHECK is unchanged, and `precedence_rows` still "
+     "cannot hold `1`.",
+     "**A `DegradedModeOverride` may unlock row 1** where the owner records an "
+     "explicit written justification. `51 §3.6`'s grantable set widens to "
+     "`{IRRECOVERABLE, COMPENSABLE, REVERSIBLE}`, and `precedence_rows` may hold "
+     "`1`."),
+    (_P30,
+     "Unreachable by override in either degraded state, and halted by "
+     "`§5.1a`'s posture.",
+     "Restorable by an in-scope override in either degraded state, and halted by "
+     "`§5.1a`'s posture."),
+    (_P30,
+     "It may **never** restore row 1 (IRRECOVERABLE) or row 2 (above-floor, not "
+     "clock-bearing). `recoverability_classes[]` therefore excludes `IRRECOVERABLE` "
+     "structurally at MVP, not by policy: there is no grant path that admits it.",
+     "It may also restore row 1 (IRRECOVERABLE), and it may **never** restore row 2 "
+     "(above-floor, not clock-bearing). `recoverability_classes[]` therefore admits "
+     "`IRRECOVERABLE` at MVP, by policy: the grant path exists and is bounded by the "
+     "declared override quantities."),
+    (_P22,
+     "Rows 3 and 4 are the only rows a `DegradedModeOverride` can restore, and rows "
+     "1 and 2 are unreachable by override",
+     "Rows 1, 3 and 4 are the rows a `DegradedModeOverride` can restore, and row 2 "
+     "is unreachable by override"),
+])
+
+# ---- H13. SEQ-01's split collapses: the vendor half returns to S1 and I36 is
+# claimed whole there. S1's own foundation list is left intact, so the seed
+# cannot pass by having emptied a section -- it fails on the SEQUENCING claim.
+_k_seed(SEED_ADAPTER_PULLED_INTO_S1,
+        "the vendor adapter pulled into S1 and I36 claimed whole at S1", "H13", [
+    (_P37,
+     "- the real adapter and the HTTP or vendor-SDK call;",
+     "- *(none — the real adapter and the HTTP or vendor-SDK call are built at S1 "
+     "with the outbox foundation)*;"),
+    (_P37,
+     "**`I36`'s enforcement leg therefore lands at S1 and its verification leg stays "
+     "at S4.**",
+     "**`I36` therefore lands whole at S1: S1 proves its enforcement leg and its "
+     "verification leg together.**"),
+    (_P37,
+     "**An outbox row count is not a provider accepted count**",
+     "**An outbox row count stands in for a provider accepted count at S1**"),
+    (_PREG,
+     "**S1 (enforcement), S4 (verification)**",
+     "**S1 (enforcement and verification)**"),
+    (_P37,
+     "**The vendor half of the ACOS-owned outbox**",
+     "**The residual reporting half of the ACOS-owned outbox**"),
+])
 
 results = []
 def cond(cid, desc, ok, detail=""):
@@ -1571,8 +1715,9 @@ cond("G10", "The STORE_WRITE_REJECTED exclusion list is present and carries all 
 #   H12     the declared claim-row field order (JCS-02)
 #   H13     the S1/S4 sequencing split (SEQ-01)
 #
-# Every one is written so it CAN return FAIL, and each is demonstrated failing
-# by at least one of the eight v1.3.4 seed flags above.
+# Every one is written so it CAN return FAIL. v1.3.4 shipped eight seeds for the
+# thirteen, reaching nine of them; H4, H8, H9 and H13 had no discriminating seed
+# until v1.3.6 authored four -- see the H-COVERAGE block above.
 # ============================================================================
 
 d22 = T[ROOT/"deliverables/22-architecture-principles.md"]

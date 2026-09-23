@@ -1,6 +1,6 @@
 # ACOS Operating Spine v1.3.6 — Verification
 
-**Phase 2.5f. The gate for the v1.3.6 normative errata pass. Every condition can fail, and every condition is demonstrated failing.**
+**Phase 2.5f. The gate for the v1.3.6 normative errata pass. Every condition can fail; every condition this pass and the v1.3.2–v1.3.5 passes introduced is demonstrated failing by a seed, and `§1a` states exactly which conditions are not.**
 
 This document gates **only** the v1.3.6 pass. `phase2-v1.3-verification.md` (V1–V16), `phase2-v1.3.1-verification.md` (E1–E7), `phase2-v1.3.2-verification.md` (F1–F3), `phase2-v1.3.3-verification.md` (G1–G10), `phase2-v1.3.4-verification.md` (H1–H13) and `phase2-v1.3.5-verification.md` (J1–J16) remain in force and are re-run by the same script.
 
@@ -42,6 +42,12 @@ PYTHONUTF8=1 python consistency-v1.3.py --seed-anchor-is-bootstrap-root         
 PYTHONUTF8=1 python consistency-v1.3.py --seed-vendor-call-before-gate           # 88 PASS / 1 FAIL  -> K24
 PYTHONUTF8=1 python consistency-v1.3.py --seed-pull-forward-s4-audit             # 88 PASS / 1 FAIL  -> K25
 
+# v1.3.6 H-COVERAGE CONTROLS — the four v1.3.4 conditions that had never had one.
+PYTHONUTF8=1 python consistency-v1.3.py --seed-caller-selects-clock              # 88 PASS / 1 FAIL  -> H4
+PYTHONUTF8=1 python consistency-v1.3.py --seed-posture-restores-row1             # 87 PASS / 2 FAIL  -> G6, H8
+PYTHONUTF8=1 python consistency-v1.3.py --seed-override-unlocks-row1             # 88 PASS / 1 FAIL  -> H9
+PYTHONUTF8=1 python consistency-v1.3.py --seed-adapter-pulled-into-s1            # 88 PASS / 1 FAIL  -> H13
+
 # Retained, and all twenty-nine still fail — this pass did not disarm any previous control.
 PYTHONUTF8=1 python consistency-v1.3.py --seed-no-mie-reservation                # 88 PASS / 1 FAIL  -> J1
 PYTHONUTF8=1 python consistency-v1.3.py --seed-caller-mie-units                  # 88 PASS / 1 FAIL  -> J2
@@ -74,9 +80,9 @@ PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-bytes                   
 PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-sentinel                 # 83 PASS / 6 FAIL  -> F1, F2, F3, H12, J16, K12
 ```
 
-Recorded runs: `analysis/consistency-v1.3.6-output.txt` and the twenty-five `analysis/consistency-v1.3.6-negative-control-*-output.txt` files.
+Recorded runs: `analysis/consistency-v1.3.6-output.txt` and the **twenty-nine** `analysis/consistency-v1.3.6-negative-control-*-output.txt` files — twenty-five for `K1`–`K25` and four for the H-coverage repair of `§1a`. **All thirty are reproduced byte for byte by re-running the script against the final tree.**
 
-**EVERY MUTATION MODIFIES THE CORPUS IN MEMORY ONLY. NOTHING ON DISK IS TOUCHED BY A SEEDED RUN**, and every seeded run reports the number of edits it applied so a seed that silently stopped matching cannot be mistaken for a condition that stopped discriminating. **All twenty-five v1.3.6 seeds apply every one of their edits.**
+**EVERY MUTATION MODIFIES THE CORPUS IN MEMORY ONLY. NOTHING ON DISK IS TOUCHED BY A SEEDED RUN**, and every seeded run reports the number of edits it applied so a seed that silently stopped matching cannot be mistaken for a condition that stopped discriminating. **All twenty-nine v1.3.6 seeds apply every one of their edits**, and so do all twenty-nine retained ones.
 
 **`analysis/recompute-v1.3.py` reproduces `analysis/recompute-v1.3-output.txt` line for line after this pass.** No authority quantity moved.
 
@@ -151,21 +157,47 @@ Recorded runs: `analysis/consistency-v1.3.6-output.txt` and the twenty-five `ana
 
 ## 1a. Seed coverage, stated accurately
 
-**All fifty-four seeds were re-run against the FINAL v1.3.6 tree, after every edit of this pass.** The clean run is **89 PASS / 0 FAIL, exit 0**; **every one of the fifty-four exits non-zero and fails at least one condition**, so no seed is inert and **no retained seed was disarmed**.
+**All fifty-eight seeds were re-run against the FINAL v1.3.6 tree, after every edit of this pass.** The clean run is **89 PASS / 0 FAIL, exit 0**; **every one of the fifty-eight exits non-zero and fails at least one condition**, so no seed is inert and **no retained seed was disarmed**.
 
 | Range | Conditions | Seed-covered | Not seed-covered |
 |---|---|---|---|
 | **K1–K25** (v1.3.6) | 25 | **25** | none |
 | **J1–J16** (v1.3.5) | 16 | **16** | none |
-| **H1–H13** (v1.3.4) | 13 | **9** — H1, H2, H3, H5, H6, H7, H10, H11, H12 | **H4, H8, H9, H13** |
+| **H1–H13** (v1.3.4) | 13 | **13** | **none — repaired by this pass** |
 | **G1–G10** (v1.3.3) | 10 | **10** | none |
 | **F1–F3** (v1.3.2) | 3 | **3** | none |
+| **E1–E7** (v1.3.1) | 7 | **0** | **all seven** |
+| **C1–C29** (v1.3) | 15 | **0** | **all fifteen** |
+| **Total** | **89** | **67** | **22** |
 
-**`H4`, `H8`, `H9` AND `H13` HAVE NO DISCRIMINATING SEED, AND HAVE NEVER HAD ONE.** They were introduced without one in v1.3.4 and carried unchanged through v1.3.5 and v1.3.6. **Both `docs/architecture/v1.3.4/README.md` and `docs/architecture/v1.3.5/README.md` state that every one of `H1`–`H13` is failed by at least one seed. That statement is FALSE, and it is corrected here rather than repeated.** Those two packages are prior issues and are not modified; the correction lives in this one.
+### The H-coverage defect this pass found, and closed
 
-**What the four still have, and what they do not.** Each is a real condition: it reads the corpus, it can fail, and it fails today if its required statements are removed by hand. **What it lacks is a recorded negative control proving that a plausible WRONG version of the architecture fails it** — the property every other condition in the gate carries. A condition without a negative control can be satisfied by text that merely contains the required strings, and nothing mechanical proves the check is sharp rather than incidental.
+**`H4`, `H8`, `H9` AND `H13` HAD NO DISCRIMINATING SEED.** They were introduced without one in v1.3.4 and carried unchanged through v1.3.5. **Both `docs/architecture/v1.3.4/README.md` and `docs/architecture/v1.3.5/README.md` state that every one of `H1`–`H13` is failed by at least one seed. THAT STATEMENT WAS FALSE.** Those two packages are prior issues and **are not modified**; the correction and the repair both live here.
 
-**This is recorded as an OPEN gate-quality gap, not repaired in this pass.** Repairing it means authoring four new seeds, which changes the seed count and the recorded output set — **architecture work of the kind a freeze pass exists to stop**. It is carried to the next errata pass, and **`S1K`'s runtime slice does not depend on it**: all twenty-five conditions this pass introduced are fully seed-covered.
+**Four new negative controls close it.** Each mutates the semantic property its condition exists to protect — not the syntax that carries it. **Every mutated corpus still parses, no section is deleted, no unrelated quantity moves, and no operative statement is turned into a comment.** Each models a plausible architecture regression: three of the four are a relaxation someone could argue for, and the fourth is the exact defect a prior errata pass corrected.
+
+| Seed | Models | Fails | Why it is the right mutation |
+|---|---|---|---|
+| `--seed-caller-selects-clock` | `30 §9.2.5`'s evidentiary-clock rule relaxed to *"any qualifying live clock, at the implementation's discretion"*, with the caller allowed to nominate it and the field allowed to survive outside row 3 | **H4** | H4 exists to make the evidentiary clock **determinate** and **the decision's to choose**. The seed leaves `§9.2.4`'s qualifying set, the boolean operand and the whole section intact and changes only *which* clock is recorded and *who* picks it. **A caller-nominated evidentiary clock is the row-3 lever CSB-01 closed**, re-opened one level down |
+| `--seed-posture-restores-row1` | `§5.1a`'s FULL-HALT POSTURE widened so an in-scope `DegradedModeOverride` restores **rows 1, 3 and 4** | **G6 and H8** | H8 exists to hold row 1 halted **and unrestorable** under the posture, with `§5.1a`'s rows-3-and-4-only composition unchanged. The seed edits the three sites that state the posture's composition and `22 §3.1`'s transcription of it, and **leaves `§5.7.2`'s ordinary override scope alone** — which is what separates it from the H9 seed below. **The G6 coupling is real and is documented in the next subsection** |
+| `--seed-override-unlocks-row1` | an ordinary `DegradedModeOverride` able to unlock IRRECOVERABLE where the owner records a justification, with `51 §3.6`'s grantable set widened to `{IRRECOVERABLE, COMPENSABLE, REVERSIBLE}` | **H9** | H9 exists to keep the **ordinary** override out of row 1 in **every** state. The seed edits `§5.1b`'s override statement, `§5.7.2`'s scope rule, its structural exclusion and `22 §3.1`'s transcription — and **leaves the posture composition and both degraded reachability rows alone**, so it fails H9 and neither H6, H7 nor H8 |
+| `--seed-adapter-pulled-into-s1` | SEQ-01's split collapsed: the real adapter and the HTTP/vendor-SDK call pulled into S1, `I36` claimed **whole** at S1, an outbox row count accepted as a stand-in for a provider accepted count, and the registry's slice column collapsed to match | **H13** | H13 exists to keep **PROVIDER TRUTH** out of the slice that cannot produce it. The seed leaves S1's seven-item foundation list completely intact, so it cannot pass by having emptied a section — **it fails on the sequencing claim itself**, which is the property SEQ-01 was raised to establish |
+
+**`--seed-posture-restores-row1` fails G6 as well as H8, and the coupling is real rather than incidental.** `30 §5.1a`'s sentence *"Therefore, in the posture: rows 3 and 4 are restorable by an in-scope override; rows 1, 2 and 5 are not"* is **one sentence that two conditions read for two different reasons**: G6 requires it as the *resolved override composition* of the full-halt threshold it declares, and H8 requires it as the thing v1.3.4 **did not widen**. A seed that moved row 1 into the restorable set and left that sentence alone would fail H8 on its other two statements while leaving the corpus contradicting itself at the exact site H8's second leg guards. **The coherent mutation edits the sentence, and the two conditions that own it both fail.** This is the same shape as `--seed-floor-dual-ownership` (G1 and K10) and `--seed-old-manifest-accepted` (K17 and K18), and it is recorded here for the same reason.
+
+**The other three fail exactly one condition each.** That is the sharper result and is what proves each check is discriminating rather than incidental: `H4` is separable from `H1`–`H3`, `H9` is separable from `H6`, `H7` and `H8`, and `H13` is separable from `K24` and `K25`, which read the same artifact.
+
+### What remains uncovered, stated rather than implied
+
+**`C1`–`C29` (fifteen live conditions) and `E1`–`E7` have no discriminating seed, and have never had one** — not in v1.3, not in v1.3.1, and not in any package since. **No README or verification document has ever claimed otherwise for them**, so this is a disclosure rather than a correction, but it is printed here so the coverage figure is not read as universal.
+
+**They are not classified `MECHANICALLY ASSERTED — NON-SEEDABLE BY CONSTRUCTION`, and no such classification is claimed anywhere in this package.** Several of them are computed rather than matched — `C27` resolves every invariant identifier used anywhere against the registry, `C28` counts the DB-enforced enumeration, `C29` checks registry arithmetic — and a mutation harness could exercise all of those. **They are uncovered because no pass has authored the controls, not because a control is impossible.** That is a gate-quality gap of the same kind this pass just closed for `H4`, `H8`, `H9` and `H13`, one range older, and it is **carried to a later errata pass**. It blocks nothing in `S1K`: every condition the v1.3.2 through v1.3.6 errata passes introduced — **`F1`–`F3`, `G1`–`G10`, `H1`–`H13`, `J1`–`J16` and `K1`–`K25`, sixty-seven in all** — is fully seed-covered.
+
+### The historical claim, and what was done about it
+
+> **Earlier package READMEs overstated H-condition seed coverage; v1.3.6 discovered and corrected the verification coverage going forward.**
+
+**`docs/architecture/v1.3.4/` and `docs/architecture/v1.3.5/` are NOT edited.** Their README statements are immutable historical package content and stay exactly as issued, wrong. **The correction is recorded in this package, the repair is made in this package, and no history is rewritten.**
 
 ---
 
@@ -199,17 +231,43 @@ Stated here so no reader takes the 89/0 result for more than it is:
 
 **`src/` and `tests/` are byte-identical to the accepted baseline `ad8a78e` and to the S1K findings checkpoint `1cf1816`.** No production code, no test and no fixture was added, removed or edited by this pass.
 
-`npm run verify` — typecheck, lint and the full suite against real PostgreSQL — is re-run after the pass and reproduces the accepted baseline exactly:
+**`npm run verify` WAS RE-RUN AFTER THE PASS AND DID NOT REPRODUCE THE ACCEPTED BASELINE ON THE FREEZE MACHINE. THIS SECTION RECORDS THE ACTUAL RESULT, NOT THE EXPECTED ONE.**
 
-| | |
-|---|---|
-| Test files | **147** |
-| Tests | **2057** |
-| Passed | **2057** |
-| Failed | **0** |
-| Skipped | **0** |
+**Three consecutive runs were made from the final tree. All three exited non-zero.**
 
-**A change in that result would be a defect of this pass by definition**, because this pass changed no code.
+| Run | Typecheck | Lint | Files | Tests | Passed | Failed | Skipped | Duration | Exit |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | **PASS** | **PASS** | 147 | 2057 | 1357 | **252** (74 files) | 448 | 2117s | **1** |
+| 2 | **PASS** | **PASS** | 147 | 2057 | 1924 | **70** (13 files) | 63 | 5365s | **1** |
+| 3 (after a container restart) | **PASS** | **PASS** | 147 | 2057 | 912 | **388** (91 files) | 757 | 295s | **1** |
+
+**The accepted baseline is 147 files / 2057 tests / 2057 passed / 0 failed / 0 skipped. IT WAS NOT REACHED.**
+
+**NOT ONE FAILURE IS AN ASSERTION FAILURE.** Across all three runs the count of `AssertionError` and expected-versus-actual mismatches is **zero**. Every failure carries one of two PostgreSQL signatures -- `3F000 schema "public" does not exist` and `no schema has been selected to create in` -- or a downstream `42P01`, plus `Cannot read properties of undefined (reading 'close')` where a teardown ran after a failed setup. **The reported "skipped" counts are suites whose setup hook died, not declared skips.**
+
+**THE MECHANISM, STATED EXACTLY.** `tests/support/fixture.ts`'s `reset()` calls `src/db/migrate.ts`'s `down()`:
+
+```
+DROP SCHEMA public CASCADE
+CREATE SCHEMA public
+```
+
+**Neither statement is idempotent, and `DROP SCHEMA` carries no `IF EXISTS`.** If anything interrupts the pair between the drop and a completed re-migration -- in run 1 a `deadlock detected` inside `0008__journal_attestation.sql` -- the database is left with **no `public` schema at all**. **Every subsequent `reset()` then fails on its own `DROP SCHEMA`, because the schema it is dropping is already gone.** The damage is self-perpetuating for the remainder of the run and is not cleared by the next run starting. **One transient lock event converts into hundreds of downstream failures**, which is precisely the observed shape, and it is why run 2 and run 3 each began failing at their first suite.
+
+**WHY THIS IS NOT ATTRIBUTABLE TO v1.3.6.** `src/` and `tests/` are **byte-identical to `1cf1816`**, proven by git tree hash rather than by inspection:
+
+| Path | Tree hash at `1cf1816` | Tree hash in the frozen tree |
+|---|---|---|
+| `src` | `958866a766b9b813d7a68f3da0cd505dd684a487` | **identical** |
+| `tests` | `147afe7d9e6c742b049e0f3cc81df561efaa3299` | **identical** |
+
+**This pass changed no code, no test and no fixture, so no test behaviour can have changed.** Environmental factors observed on the freeze machine: 21 concurrent `node.exe` processes, and run 2 taking 2.5x run 1's wall-clock, both consistent with contention. `spikes/durable-execution/spike.test.ts` deliberately `KILL`s child processes mid-transaction and is the most likely source of the initiating lock event.
+
+**WHAT THIS SECTION CLAIMS, AND WHAT IT REFUSES TO CLAIM.** It claims that **typecheck and lint pass on the final tree, in all three runs**, and that no failure is an assertion mismatch. **IT DOES NOT CLAIM THE SUITE IS GREEN. THIS PASS MUST NOT BE READ AS HAVING REPRODUCED THE ACCEPTED BASELINE, AND THE REPOSITORY REGRESSION EVIDENCE FOR v1.3.6 IS OPEN.** A gate that reported the expected figures here without having obtained them would be the precise failure mode `§2` exists to prevent.
+
+**THE REQUIRED FOLLOW-UP, WHICH IS RUNTIME WORK AND IS DELIBERATELY NOT DONE HERE.** Make `down()` idempotent -- `DROP SCHEMA IF EXISTS public CASCADE`, with a re-create that cannot leave the database schema-less -- so that one transient deadlock cannot poison a run and every run after it. **That is a change to `src/`, which this architecture pass is forbidden to make.** It is recorded here, carried to the S1K runtime slice, and **a green baseline must be re-established on a quiet machine before this suite's result is cited as evidence for anything.**
+
+**A change in the suite's result cannot be a consequence of this pass**, because this pass changed no code -- and it is the byte-identity proof above that carries that claim, never the suite's own outcome.
 
 ---
 

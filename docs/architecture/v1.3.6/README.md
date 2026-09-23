@@ -44,7 +44,7 @@ The application of the fourteen BLOCKING findings from the third independent arc
 | `deliverables/` | The architecture, `22`–`38` and `48`–`51`. **`38` is superseded and non-normative.** v1.3.2 edited three sections: `30 §5.3`, `36 §2`'s `VC-A3` case, `50 §2` class 20. **v1.3.3 adds `30 §5.1a` and `30 §5.7.1a`, adds `51 §3.7` and `§3.8`, adds `50 §2` class 27, adds `36`'s `VC-A2g` and `VC-A2h`, and edits `30 §5.1` items 4–5, `30 §5.6`'s reachability table, `50 §2` class 3, `22 §3.1`, `35 §12.1` and `36`'s `VC-A6`**. **v1.3.4 adds `30 §5.1b`, `30 §5.3a` and `30 §9.2`, adds `36`'s `VC-A6a`–`VC-A6d`, and edits `30 §5.1` item 4 row 1 with its narrative and rationale, `30 §5.3`'s column-order row, `30 §9.1`, `22 §3.1`, `24 §3` K7 and K10, `24 §4`'s ERD, `25 §7`, `26 §2.1`, `33 §6`, `34` ADR-026, `35 §4`, `36`'s `VC-A3` and `VC-A6`, `37 §2` S1 and S4, and `50 §2` class 20** **v1.3.5 edits ten deliverables — `24`, `25`, `26`, `30`, `34`, `35`, `36`, `37`, `50` and `51`; `phase2-v1.3.5-errata.md` is the section-level record.** **v1.3.6 edits six — `30`'s class-20 control-artifact-effect note in `§5.3a`, `36`'s new `VC-K1`–`VC-K3`, `37 §2`'s S1K pre-live gate, `49 §3.9`'s root-of-trust mechanism, `51 §2.3` and `§3.7`'s ownership corrections, and `50` throughout: class rows 2, 3, 17, 20 and 27, the new `§2a`–`§2f` and `§3a`–`§3i`, `§3` property 1 superseded, and `§4` and `§6` restated. `50 §2f` is the FIELD-FIRST ownership table; `50 §3g` is the bootstrap dependency graph** |
 | `artifacts/` | **New in v1.3.6.** Concrete signable control-artifact bytes. `acos-jcs-1.spec.v1.txt` **is** control artifact class 20 — 13479 bytes, LF only, US-ASCII, `content_hash` `7af60fc564aef296679ae06a34b188d3454ac7ef69f448f7260a3d5d55a18f33`, recomputed by the gate's condition K12 on every run |
 | `diagrams/` | Mermaid sources |
-| `analysis/` | Oracles and self-checks. `consistency-v1.3.py` carries C1–C29, the v1.3.1 conditions E1–E7, the v1.3.2 conditions F1–F3, the v1.3.3 conditions G1–G10, the v1.3.4 conditions H1–H13, the v1.3.5 conditions J1–J16 and the v1.3.6 conditions K1–K25 — **89 conditions** — and exits non-zero on failure; `recompute-v1.3.py` computes every displayed quantity from the formulae and **reproduces its recorded output line for line after v1.3.6**. Every prior issue's recorded runs and negative controls are retained; `consistency-v1.3.6-output.txt` and twenty-five `consistency-v1.3.6-negative-control-*-output.txt` files are v1.3.6's. **K12 is the only condition that reads a file and computes a hash** — it recomputes class 20's artifact digest and compares it to the four places the package declares it |
+| `analysis/` | Oracles and self-checks. `consistency-v1.3.py` carries C1–C29, the v1.3.1 conditions E1–E7, the v1.3.2 conditions F1–F3, the v1.3.3 conditions G1–G10, the v1.3.4 conditions H1–H13, the v1.3.5 conditions J1–J16 and the v1.3.6 conditions K1–K25 — **89 conditions** — and exits non-zero on failure; `recompute-v1.3.py` computes every displayed quantity from the formulae and **reproduces its recorded output line for line after v1.3.6**. Every prior issue's recorded runs and negative controls are retained; `consistency-v1.3.6-output.txt` and **twenty-nine** `consistency-v1.3.6-negative-control-*-output.txt` files are v1.3.6's — twenty-five for K1–K25 and four for the H-coverage repair. **K12 is the only condition that reads a file and computes a hash** — it recomputes class 20's artifact digest and compares it to the four places the package declares it |
 | `redteam3/` | `59`–`62`, unmodified. `62` is the operative gate |
 | `redteam2/` | `52`–`58`, unmodified. Superseded by `62` as a gate; retained as findings |
 | `*.keep` | v1.2 root documents, retained as history |
@@ -57,28 +57,34 @@ PYTHONUTF8=1 python consistency-v1.3.py                                  # 89 PA
 # v1.3.6 (K1-K25) — twenty-five seeds; phase2-v1.3.6-verification.md §1 maps each one.
 # Every K condition is failed by at least one of them, and every seed applies all of its edits.
 
-# v1.3.4 (H1-H13)
-PYTHONUTF8=1 python consistency-v1.3.py --seed-model-case-ref            # 47 PASS / 1 FAIL -> H1
-PYTHONUTF8=1 python consistency-v1.3.py --seed-claim-case-ref            # 46 PASS / 2 FAIL -> H1, H2
-PYTHONUTF8=1 python consistency-v1.3.py --seed-global-clock-search       # 47 PASS / 1 FAIL -> H3
-PYTHONUTF8=1 python consistency-v1.3.py --seed-irrecoverable-halt        # 47 PASS / 1 FAIL -> H5
-PYTHONUTF8=1 python consistency-v1.3.py --seed-irrecoverable-loose       # 46 PASS / 2 FAIL -> H6, H7
-PYTHONUTF8=1 python consistency-v1.3.py --seed-reclaim-timeout           # 47 PASS / 1 FAIL -> H10
-PYTHONUTF8=1 python consistency-v1.3.py --seed-outbox-irrecoverable-only # 47 PASS / 1 FAIL -> H11
-PYTHONUTF8=1 python consistency-v1.3.py --seed-swap-claim-fields         # 47 PASS / 1 FAIL -> H12
+# v1.3.6 H-COVERAGE CONTROLS — the four v1.3.4 conditions that never had one.
+PYTHONUTF8=1 python consistency-v1.3.py --seed-caller-selects-clock      # 88 PASS / 1 FAIL -> H4
+PYTHONUTF8=1 python consistency-v1.3.py --seed-posture-restores-row1     # 87 PASS / 2 FAIL -> G6, H8
+PYTHONUTF8=1 python consistency-v1.3.py --seed-override-unlocks-row1     # 88 PASS / 1 FAIL -> H9
+PYTHONUTF8=1 python consistency-v1.3.py --seed-adapter-pulled-into-s1    # 88 PASS / 1 FAIL -> H13
+
+# v1.3.4 (H1-H13) — counts are against the CURRENT 89-condition gate, not v1.3.4's 48.
+PYTHONUTF8=1 python consistency-v1.3.py --seed-model-case-ref            # 88 PASS / 1 FAIL -> H1
+PYTHONUTF8=1 python consistency-v1.3.py --seed-claim-case-ref            # 87 PASS / 2 FAIL -> H1, H2
+PYTHONUTF8=1 python consistency-v1.3.py --seed-global-clock-search       # 88 PASS / 1 FAIL -> H3
+PYTHONUTF8=1 python consistency-v1.3.py --seed-irrecoverable-halt        # 88 PASS / 1 FAIL -> H5
+PYTHONUTF8=1 python consistency-v1.3.py --seed-irrecoverable-loose       # 87 PASS / 2 FAIL -> H6, H7
+PYTHONUTF8=1 python consistency-v1.3.py --seed-reclaim-timeout           # 88 PASS / 1 FAIL -> H10
+PYTHONUTF8=1 python consistency-v1.3.py --seed-outbox-irrecoverable-only # 88 PASS / 1 FAIL -> H11
+PYTHONUTF8=1 python consistency-v1.3.py --seed-swap-claim-fields         # 87 PASS / 2 FAIL -> H12, J16
 
 # v1.3.3 and v1.3.2, retained and all still failing
-PYTHONUTF8=1 python consistency-v1.3.py --seed-floor-25                  # 45 PASS / 3 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-vendor-amount             # 46 PASS / 2 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-lag-10m                   # 47 PASS / 1 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-full-halt-15m             # 46 PASS / 2 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-quota-as-cause            # 45 PASS / 3 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-generic-insert-fail       # 46 PASS / 2 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-bytes            # 47 PASS / 1 FAIL
-PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-sentinel         # 44 PASS / 4 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-floor-25                  # 86 PASS / 3 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-vendor-amount             # 87 PASS / 2 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-lag-10m                   # 88 PASS / 1 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-full-halt-15m             # 87 PASS / 2 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-quota-as-cause            # 86 PASS / 3 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-generic-insert-fail       # 87 PASS / 2 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-bytes            # 88 PASS / 1 FAIL
+PYTHONUTF8=1 python consistency-v1.3.py --seed-old-null-sentinel         # 83 PASS / 6 FAIL
 ```
 
-**Every one of G1–G10, J1–J16 and K1–K25 is failed by at least one seed — and of H1–H13, nine are: H1, H2, H3, H5, H6, H7, H10, H11 and H12.** **`H4`, `H8`, `H9` and `H13` have never had a discriminating seed**, in v1.3.4, v1.3.5 or v1.3.6. **v1.3.4's and v1.3.5's READMEs each claimed the whole H range was covered and were wrong; v1.3.6 states the actual coverage** — those four are checked by the gate and are not negatively controlled, which is a weaker guarantee and is now printed as one. `phase2-v1.3.6-verification.md §1a` records it. Every earlier pass's controls still fail, so no pass disarmed a previous one. **v1.3.6 adds twenty-five seeds and retains all twenty-nine earlier ones**; `phase2-v1.3.6-verification.md §1` maps each to the conditions it breaks, records the **two prior conditions it restated** because ownership moved — G1 and J2, both of which gained a seed rather than losing a check — and records the one retained seed that now fails one extra condition through real coupling. **v1.3.5 adds thirteen seeds**; `phase2-v1.3.5-verification.md §1` maps each to the conditions it breaks, and notes the two retained seeds that now fail one extra condition each through real coupling rather than breakage. `phase2-v1.3.4-verification.md §1` maps each v1.3.4 seed to the conditions it breaks — and note the **pair** that carries IRN-01's narrowness: `--seed-irrecoverable-halt` fails **H5 alone** and `--seed-irrecoverable-loose` fails **H6 and H7 alone**, so a correction that moved more than `NORMAL`, or less, fails the gate in a different place.
+**Every one of F1–F3, G1–G10, H1–H13, J1–J16 and K1–K25 — sixty-seven conditions — is failed by at least one seed.** **`H4`, `H8`, `H9` and `H13` had never had a discriminating seed** in v1.3.4 or v1.3.5, and **v1.3.4's and v1.3.5's READMEs each claimed the whole H range was covered, which was FALSE.** Those two packages are prior issues and were **not** modified; **v1.3.6 discovered the gap, corrected the claim and then closed the gap** with four new controls — `--seed-caller-selects-clock`, `--seed-posture-restores-row1`, `--seed-override-unlocks-row1` and `--seed-adapter-pulled-into-s1`. **The twenty-two remaining conditions — `C1`–`C29` (fifteen) and `E1`–`E7` — have no seed and have never had one**, in any package; they are v1.3's and v1.3.1's structural conditions, the claim was never made for them, and they are carried as a declared open gap in `phase2-v1.3.6-verification.md §1a`. Every earlier pass's controls still fail, so no pass disarmed a previous one. **v1.3.6 adds twenty-five K seeds and four H-coverage seeds, and retains all twenty-nine earlier ones — fifty-eight in total**; `phase2-v1.3.6-verification.md §1` maps each to the conditions it breaks, records the **two prior conditions it restated** because ownership moved — G1 and J2, both of which gained a seed rather than losing a check — and records the one retained seed that now fails one extra condition through real coupling. **v1.3.5 adds thirteen seeds**; `phase2-v1.3.5-verification.md §1` maps each to the conditions it breaks, and notes the two retained seeds that now fail one extra condition each through real coupling rather than breakage. `phase2-v1.3.4-verification.md §1` maps each v1.3.4 seed to the conditions it breaks — and note the **pair** that carries IRN-01's narrowness: `--seed-irrecoverable-halt` fails **H5 alone** and `--seed-irrecoverable-loose` fails **H6 and H7 alone**, so a correction that moved more than `NORMAL`, or less, fails the gate in a different place.
 
 The two seeded runs restore v1.2's withdrawn NULL sentinel **in memory only** and must fail. `--seed-old-null-bytes` is the sharper of the two: it leaves the corrected text in place and reverts only SQL `NULL`'s bytes in `30 §5.3`'s worked-example table, so F3 fails on the collision itself.
 

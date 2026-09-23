@@ -231,17 +231,20 @@ Stated here so no reader takes the 89/0 result for more than it is:
 
 **`src/` and `tests/` are byte-identical to the accepted baseline `ad8a78e` and to the S1K findings checkpoint `1cf1816`.** No production code, no test and no fixture was added, removed or edited by this pass.
 
-**`npm run verify` WAS RE-RUN AFTER THE PASS AND DID NOT REPRODUCE THE ACCEPTED BASELINE ON THE FREEZE MACHINE. THIS SECTION RECORDS THE ACTUAL RESULT, NOT THE EXPECTED ONE.**
+**`npm run verify` REPRODUCES THE ACCEPTED BASELINE ON THE FINAL TREE. IT DID SO ONLY ON A QUIET MACHINE WITH A CLEAN DATABASE, AND THIS SECTION RECORDS EVERY RUN, NOT ONLY THE GREEN ONE.**
 
-**Three consecutive runs were made from the final tree. All three exited non-zero.**
+**Four runs established this result. The first three exited non-zero; the fourth, run in the conditions the first three lacked, is green.** **Editorial passes over this section after run 4 were each re-verified by a further full run from the edited tree, every one green at the same figures; they are not enumerated, because enumerating a run inside the document the run verified cannot terminate.**
 
 | Run | Typecheck | Lint | Files | Tests | Passed | Failed | Skipped | Duration | Exit |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | **PASS** | **PASS** | 147 | 2057 | 1357 | **252** (74 files) | 448 | 2117s | **1** |
 | 2 | **PASS** | **PASS** | 147 | 2057 | 1924 | **70** (13 files) | 63 | 5365s | **1** |
 | 3 (after a container restart) | **PASS** | **PASS** | 147 | 2057 | 912 | **388** (91 files) | 757 | 295s | **1** |
+| **4 — ACCEPTANCE. Quiet machine, database reset to empty, no concurrent run** | **PASS** | **PASS** | **147** | **2057** | **2057** | **0** | **0** | 6831s | **0** |
 
-**The accepted baseline is 147 files / 2057 tests / 2057 passed / 0 failed / 0 skipped. IT WAS NOT REACHED.**
+**The accepted baseline is 147 files / 2057 tests / 2057 passed / 0 failed / 0 skipped. RUN 4 REACHED IT EXACTLY.**
+
+**RUN 4 IS THE ONLY RUN THIS PACKAGE CITES AS ACCEPTANCE EVIDENCE.** Runs 1–3 are retained above because a section that deleted them would be claiming a clean history it does not have, and because the difference between them and run 4 is the whole finding.
 
 **NOT ONE FAILURE IS AN ASSERTION FAILURE.** Across all three runs the count of `AssertionError` and expected-versus-actual mismatches is **zero**. Every failure carries one of two PostgreSQL signatures -- `3F000 schema "public" does not exist` and `no schema has been selected to create in` -- or a downstream `42P01`, plus `Cannot read properties of undefined (reading 'close')` where a teardown ran after a failed setup. **The reported "skipped" counts are suites whose setup hook died, not declared skips.**
 
@@ -254,6 +257,10 @@ CREATE SCHEMA public
 
 **Neither statement is idempotent, and `DROP SCHEMA` carries no `IF EXISTS`.** If anything interrupts the pair between the drop and a completed re-migration -- in run 1 a `deadlock detected` inside `0008__journal_attestation.sql` -- the database is left with **no `public` schema at all**. **Every subsequent `reset()` then fails on its own `DROP SCHEMA`, because the schema it is dropping is already gone.** The damage is self-perpetuating for the remainder of the run and is not cleared by the next run starting. **One transient lock event converts into hundreds of downstream failures**, which is precisely the observed shape, and it is why run 2 and run 3 each began failing at their first suite.
 
+**WHAT RUNS 1-3 HAD IN COMMON, AND WHAT RUN 4 REMOVED.** Every one of the first three was started while **another `npm run verify` was running on the same machine against the same two containers**, or within the pool's own `idleTimeoutMillis` (**30 s**, `src/db/pool.ts`) of one exiting -- so that run's server-side backends were still alive. Two suites interleaving `DROP SCHEMA public CASCADE` / `CREATE SCHEMA public` against one database is sufficient on its own: a pooled connection that predates the drop holds a **stale cached `search_path`**, which is the exact origin of the `no schema has been selected to create in` that opens each cascade. **Run 4 was started with no other suite running, no surviving backend, and the database reset to an empty `public`, and it passed 2057/2057.** The same `vc-c1-end-to-end.test.ts` that failed 9/10 inside run 3 passes **10/10 in isolation**, which is the same fact from the other side.
+
+**THE SUITE IS THEREFORE GREEN ON THE FINAL TREE, AND THE FRAGILITY IS REAL AND UNFIXED.** Both statements are true together, and neither is allowed to hide the other.
+
 **WHY THIS IS NOT ATTRIBUTABLE TO v1.3.6.** `src/` and `tests/` are **byte-identical to `1cf1816`**, proven by git tree hash rather than by inspection:
 
 | Path | Tree hash at `1cf1816` | Tree hash in the frozen tree |
@@ -263,9 +270,9 @@ CREATE SCHEMA public
 
 **This pass changed no code, no test and no fixture, so no test behaviour can have changed.** Environmental factors observed on the freeze machine: 21 concurrent `node.exe` processes, and run 2 taking 2.5x run 1's wall-clock, both consistent with contention. `spikes/durable-execution/spike.test.ts` deliberately `KILL`s child processes mid-transaction and is the most likely source of the initiating lock event.
 
-**WHAT THIS SECTION CLAIMS, AND WHAT IT REFUSES TO CLAIM.** It claims that **typecheck and lint pass on the final tree, in all three runs**, and that no failure is an assertion mismatch. **IT DOES NOT CLAIM THE SUITE IS GREEN. THIS PASS MUST NOT BE READ AS HAVING REPRODUCED THE ACCEPTED BASELINE, AND THE REPOSITORY REGRESSION EVIDENCE FOR v1.3.6 IS OPEN.** A gate that reported the expected figures here without having obtained them would be the precise failure mode `§2` exists to prevent.
+**WHAT THIS SECTION CLAIMS, AND WHAT IT REFUSES TO CLAIM.** It claims that **typecheck and lint pass on the final tree in all four runs**, that **no failure in any run is an assertion mismatch**, and that **run 4 reproduced the accepted baseline exactly — 147 / 2057 / 2057 / 0 / 0, exit 0 — on the final tree, and is the run this package cites.** **IT DOES NOT CLAIM THE SUITE IS ROBUST.** Three of four runs on this machine failed, none for a reason in this package, and **the figures above were obtained rather than expected**: reporting them without run 4 in hand would have been the precise failure mode `§2` exists to prevent, which is why the earlier issue of this section refused to report them and is retained here rather than quietly replaced.
 
-**THE REQUIRED FOLLOW-UP, WHICH IS RUNTIME WORK AND IS DELIBERATELY NOT DONE HERE.** Make `down()` idempotent -- `DROP SCHEMA IF EXISTS public CASCADE`, with a re-create that cannot leave the database schema-less -- so that one transient deadlock cannot poison a run and every run after it. **That is a change to `src/`, which this architecture pass is forbidden to make.** It is recorded here, carried to the S1K runtime slice, and **a green baseline must be re-established on a quiet machine before this suite's result is cited as evidence for anything.**
+**THE REQUIRED FOLLOW-UP, WHICH IS RUNTIME WORK AND IS DELIBERATELY NOT DONE HERE.** Make `down()` idempotent -- `DROP SCHEMA IF EXISTS public CASCADE`, with a re-create that cannot leave the database schema-less -- so that one transient deadlock cannot poison a run and every run after it. **That is a change to `src/`, which this architecture pass is forbidden to make.** It is recorded here and carried to the S1K runtime slice. **The green baseline this section previously demanded has since been obtained — run 4 — so the repository regression evidence for v1.3.6 is CLOSED; the idempotency defect it exposed in `down()` remains OPEN and is runtime work.**
 
 **A change in the suite's result cannot be a consequence of this pass**, because this pass changed no code -- and it is the byte-identity proof above that carries that claim, never the suite's own outcome.
 

@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant W as Worker (untrusted)
+    participant EG as K4 Effect Gateway
+    participant PE as K3 Policy Engine
+    participant EX as K5 Exposure
+    participant TX as Postgres txn
+    participant AD as Adapter (creds)
+    participant AU as K11 Audit
+
+    W->>EG: propose_intent(action_class, resource_ref, selector, reason_code, rationale)
+    EG->>EG: CANONICALISE (step C-prime) — enumerate options,<br/>resolve selector, compute exposure + params + counterparty
+    EG->>EG: action_class in closed catalogue? (SR7) else DENY
+    EG->>EG: derive idempotency key<br/>H(task‖class‖resource‖param_digest)
+    EG->>PE: authority tuple + evidence refs
+    PE->>PE: 10-step fail-closed sequence (26 §7)
+    PE->>PE: fetch own preconditions — never trust proposal
+    Note over PE,TX: steps below are ONE transaction
+    PE->>EX: reserve(money, irrecoverable_count)
+    EX-->>PE: reserved or INSUFFICIENT_HEADROOM
+    PE->>TX: authorisation decision + effect journal row + reservation
+    TX-->>EG: committed
+    EG->>AU: append (hash-chained)
+    alt approval required
+      EG->>EG: durable suspend — reservation ALREADY held
+    end
+    EG->>AD: dispatch(idempotency_key)
+    AD-->>EG: outcome
+    EG->>TX: outcome + reservation settle/release
+    EG->>AU: append outcome

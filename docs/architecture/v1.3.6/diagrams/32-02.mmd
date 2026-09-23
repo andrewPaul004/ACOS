@@ -1,0 +1,20 @@
+graph TB
+    TC["Temporal cluster<br/>workflow durability"]
+    subgraph SVCS["Services"]
+      AUTH["Authority svc"]
+      ST["State svc"]
+      FIN["Finance svc"]
+      EV["Evidence svc"]
+      EF["Effect Gateway svc"]
+    end
+    POL["Policy sidecar<br/>Cedar/OPA"]
+    BUS["Event backbone"]
+    AU[("Audit store")]
+    ACT["Adapter activities"]
+    EXT[("External")]
+
+    TC --> ACT --> EXT
+    TC <--> SVCS
+    SVCS <--> BUS
+    EF --> POL
+    SVCS --> AU

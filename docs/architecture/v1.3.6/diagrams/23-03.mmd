@@ -1,0 +1,16 @@
+graph LR
+    Z0["Z0 — Owner<br/>root"]
+    Z1["Z1 — Kernel<br/>trusted deterministic"]
+    Z2["Z2 — Integration<br/>trusted, credentialed"]
+    Z3["Z3 — Reasoning<br/>untrusted, no creds"]
+    Z4["Z4 — Quarantine<br/>untrusted, isolated"]
+    Z5["Z5 — External<br/>hostile"]
+
+    Z0 -->|grants, approvals| Z1
+    Z1 -->|authorised effects| Z2
+    Z2 -->|API calls| Z5
+    Z1 -->|assembled context| Z3
+    Z3 -->|typed proposals| Z1
+    Z5 -->|raw content| Z4
+    Z4 -->|structured claims| Z1
+    Z5 -->|verified webhooks / polls| Z1

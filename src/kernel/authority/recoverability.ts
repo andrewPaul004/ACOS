@@ -17,7 +17,7 @@ import { recoverabilityOrdinal, type EffectiveAuthority } from './grants.js';
  * from the intent."
  *
  * So the left operand comes off `AuthorizationRequest.recoverability`, which the accepted
- * S1B canonicaliser copies from `ACTION_CATALOGUE[action_class]` and which `I21` makes
+ * S1B canonicaliser copies from the VERIFIED class-3 catalogue, keyed by `action_class` and which `I21` makes
  * type-level unreachable from `ProposedIntent`. The right operand is the intersection over
  * the matching grants (`grants.ts`). This function takes those two and nothing else.
  *

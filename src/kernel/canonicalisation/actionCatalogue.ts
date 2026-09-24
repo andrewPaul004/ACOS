@@ -124,9 +124,9 @@ export function actionCatalogueEntry(
   const entry = actionCatalogue(bundle).entries[actionClass];
   if (entry === undefined) {
     throw new Error(
-      `${actionClass} has no record in the verified class-3 action catalogue; an ` +
-        'undeclared class has no authority and no implicit default may widen it ' +
-        '(50 §2a, 51 §2.3)',
+      `${actionClass} has no record in the verified class-3 artifact; it is not a member ` +
+        'of the closed action catalogue, and an undeclared class has no authority — no ' +
+        'implicit default may widen it (SR7, 50 §2a, 51 §2.3)',
     );
   }
   return entry;

@@ -117,7 +117,7 @@ export type Disposition = (typeof DISPOSITIONS)[number];
  *
  *   `mirrorState`          `mirrorStateMachine.ts`, from `mirror_declaration` and
  *                          `mirror_corroboration`. Not a parameter of any caller-facing API.
- *   `recoverability`       `ACTION_CATALOGUE[action_class]`. `26 §5`: "Assigned per action
+ *   `recoverability`       the VERIFIED class-3 catalogue. `26 §5`: "Assigned per action
  *                          class in the catalogue, **not per request, and never by a
  *                          model**", and `I21` makes it type-level unreachable from
  *                          `ProposedIntent`.

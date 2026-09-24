@@ -77,7 +77,7 @@ export interface ConstructorInput {
   /**
    * The class's row from the CLOSED action catalogue — S1B.2, finding 1B.
    *
-   * Read by the canonicaliser as `ACTION_CATALOGUE[intent.actionClass]` after `action_class`
+   * Read by the canonicaliser as `actionCatalogueEntry(intent.actionClass)` after `action_class`
    * has passed the closed-catalogue check, never supplied by the caller. There is no
    * catalogue entry on `AuthoritativeCanonicalisationContext` any more, so a caller cannot
    * hand a `refund.create` request another class's recoverability, value_direction, adapter

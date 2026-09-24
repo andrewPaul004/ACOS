@@ -1,150 +1,150 @@
 # S1K — Contract
 
-**Pre-live control-artifact signing and the runtime integrity gate.**
+**Baseline `653e632` (the OWNER-ACCEPTED v1.3.6 architecture checkpoint). Branch
+`feature/s1k-control-artifact-integrity`. Package issue `v1.3.6`, unmodified.**
 
-**Baseline `ad8a78e` (S1J ACCEPTED). Branch `feature/s1k-control-artifact-integrity`.
-Package issue `v1.3.5`, unmodified.**
-
-**NO REAL HTTP. NO REAL ADAPTER. NO VENDOR CREDENTIAL. NO PROVIDER SANDBOX.**
-
----
-
-## 0. What S1K was asked to build
-
-The mandate's `§2`:
-
-> owner-approved artifact → canonical artifact identity → cryptographic signature →
-> trusted owner public-key verification → runtime integrity validation → fail-closed
-> pre-execution gate
-
-with the end-state:
-
-> **NO EXTERNAL-EFFECT CLAIM / MOCK DISPATCH COMPOSITION MAY PROCEED WHEN A REQUIRED
-> CONTROL ARTIFACT IS MISSING, MODIFIED, UNSIGNED OR SIGNED BY AN UNTRUSTED OWNER KEY.**
-
-over control-artifact classes 3, 17, 20, 27 and the Cedar policy artifact (class 2 / `O4`).
+**NO REAL HTTP. NO REAL ADAPTER. NO VENDOR CREDENTIAL. NO PROVIDER SANDBOX. NO
+RECONCILIATION. NO PRODUCTION PRIVATE SIGNING KEY.**
 
 ---
 
-## 1. Verdict
+## 0. What this document supersedes
 
-**PARTIAL.**
+**The previous edition of this file described the PARTIAL pass** — the pre-live
+re-evaluation that found ten blocking normative omissions in v1.3.5 and wrote no production
+code. Those ten are `S1K-C1`..`S1K-C10`, they are recorded in
+`S1K-owner-clarifications.md`, and **v1.3.6 closed all ten**. This edition describes the
+runtime slice that implements the mechanism v1.3.6 declares.
 
-**No production code changed. `src/` and `tests/` at HEAD are byte-identical to `ad8a78e`.**
-
-S1K returns PARTIAL under the mandate's own tripwires — `§5` (signature envelope),
-`§16` (continuous `I19`), `§40` (manifest recursion) and `§41` (root of trust), each of
-which directs `RETURN PARTIAL` rather than a constructed answer — and it adds four
-implementation-discovered omissions the architecture's own residual register does not
-carry.
-
-**The architecture package is unchanged. The architecture gate remains 64/64.**
+Nothing in the PARTIAL edition's findings is withdrawn. They are discharged.
 
 ---
 
-## 2. What v1.3.5 DOES declare
+## 1. The invariant this slice exists to enforce
 
-Read in full before the omissions, because the omissions are only meaningful against it.
+> **NO AUTHORITY-BEARING CONSUMER MAY USE AN UNVERIFIED CONTROL ARTIFACT.**
 
-| # | Declaration | Source |
+`50 §3f` states the same property as the reason `I19` can be called continuous without a
+timer: *"The invariant is 'continuous' because NO AUTHORITY CONSUMER CAN OBTAIN OR USE AN
+UNVERIFIED CONTROL-ARTIFACT BUNDLE, which is a structural property rather than a schedule."*
+
+---
+
+## 2. The trust chain, as built
+
+```
+deployment trust configuration
+  OWNER_ARTIFACT_ROOT_KEY, OWNER_ARTIFACT_SECOND_FACTOR_KEY, EXPECTED_ACTIVE_MANIFEST_ID
+        |                                     src/kernel/controlArtifacts/trustConfig.ts
+        v
+ACOS-CAS-SIG-V1 framing  +  SHA-256  +  Ed25519
+        |                                     casSig.ts (no imports at all), ed25519.ts
+        v
+manifest core, manifest_id, the deployment pin
+        |                                     manifestCore.ts
+        v
+per-artifact exact-byte hashes and dual signatures
+        |                                     verifier.ts
+        v
+VerifiedControlArtifactBundle  (opaque, immutable, sealed only by verification)
+        |                                     bundle.ts, registry.ts
+        v
+kernel authority mechanisms
+   class 3 -> actionCatalogue.ts        class 27 -> degradedModeThresholds.ts, mirrorState.ts
+   class 2 -> policyArtifacts.ts        class 20 -> jcs1Admission.ts -> canonicalBytes.ts
+```
+
+`50 §3g`: **no edge points upward.** `casSig.ts` has no `import` statement at all;
+`ed25519.ts` imports only `node:crypto`; nothing on the bootstrap path reaches
+`canonicalBytes.ts`. `tests/controlArtifacts/framing-and-oracle.test.ts` asserts each of
+those over the import graph rather than in prose.
+
+---
+
+## 3. What is in scope, and where it lives
+
+| Obligation | Section | Implementation |
 |---|---|---|
-| D1 | Control artifacts are **owner-signed** and hash-verified against a manifest | ADR-025 |
-| D2 | The manifest row is `{class, artifact_id, version, content_hash, signed_at, signature}` | `50 §3` |
-| D3 | The hash is over **canonicalised content**, "not the file bytes" | `50 §3` property 1 |
-| D4 | The **audit plane recomputes every hash independently** from its own copy | `50 §3` property 2 |
-| D5 | **Halt scope is per class.** Classes 2, 3, 17, 20 and 27 all declare **"All effects"** | `50 §2`, `50 §3` property 4 |
-| D6 | On mismatch: halt the class's halt scope, raise a **CRITICAL** incident, **journal the mismatch**; an `I19` failure is a **security** incident specifically | `50 §3`, `30 §6.1`, `30 §7` |
-| D7 | Classes 1, 2, 3, 5, 15, 16, 17 and **19–27 require a second factor** | `50 §4` |
-| D8 | Twenty-seven rows, twenty-five signed classes, one prohibition | `50 §2` |
-| D9 | `I19` — "Every control artifact's content hash matches the owner-signed manifest for the deployed version", enforcement **CI + RUNTIME + SCHED** | invariant registry `I19` |
-| D10 | The **manifest with owner-signed hashes across all classes, and `I19`, are sequenced at S4** | `37 §2` |
-| D11 | The owner is the **root of trust**; owner-credential compromise is **out of architectural scope** | `49 §3.9`, `50 §5` |
-| D12 | **Ed25519** is declared for exactly one signer: the **audit plane's** key, generated on and never leaving the audit-plane host, published as class 24 | `30 §5.7.1`, `50 §2` class 24 |
+| The signature envelope | `50 §3b` | `src/kernel/controlArtifacts/casSig.ts` |
+| Ed25519 and `SHA-256`, no negotiation | `50 §3a` | `controlArtifacts/ed25519.ts` |
+| Deployment trust roots and the pin | `50 §3a`, `§3e` | `controlArtifacts/trustConfig.ts` |
+| The manifest core and its identity | `50 §3d`, `§3e` | `controlArtifacts/manifestCore.ts` |
+| The closed pre-live set; class 17 refused | `50 §6`, `§2d` | `controlArtifacts/requiredSet.ts` |
+| The eight-step bootstrap ceremony | `50 §3f` occasion 1 | `controlArtifacts/verifier.ts` |
+| The verified bundle capability | `50 §3f` occasion 3 | `controlArtifacts/bundle.ts` |
+| Publication, reload, the READY gate | `50 §3f` occasion 2 | `controlArtifacts/registry.ts` |
+| The artifact parsers (closed schemas) | `50 §2a`, `§2c`, `§2e` | `controlArtifacts/artifactParsers.ts` |
+| Coarse denial, structured reason codes | `26 §2.2` doctrine | `controlArtifacts/errors.ts` |
+| The CRITICAL incident, two occasions | `50 §3f` failure | `controlArtifacts/incidents.ts` |
+| Independent audit-plane verification | `50 §3` property 2 | `src/audit/controlArtifacts/auditPlaneVerifier.ts` |
+| Class-20 admission binding | `50 §3g` | `src/kernel/canonicalisation/jcs1Admission.ts` |
+| The offline signer and assembler | `50 §3a`, mandate `§39` | `tools/control-artifacts/` |
 
-**And v1.3.5 states, in six places, that the mechanism does not exist:**
+---
 
-> "**No production owner-signing mechanism and no runtime `I19` verification exist.**"
-> — `50`'s change record, `30 §5.1a`, `51 §3.7`, `51 §3.8`, `phase2-v1.3.3-errata.md` and `phase2-v1.3.5-errata.md` preambles
+## 4. The deployed artifact package
 
-and `phase2-v1.3.5-errata.md §7` registers, as of the accepted baseline:
+`artifacts/control/` carries the bytes a deployment ships. **The manifest is NOT in this
+repository**, because it carries owner signatures and this repository holds no owner key.
 
-| Item | Status |
+| Class | File | Source of the bytes |
+|---|---|---|
+| 2 | `class-02.policy-set.json` | assembled from `src/kernel/policy/artifacts/` by `tools/control-artifacts/assemblePolicySet.ts` |
+| 3 | `class-03.action-catalogue.json` | hand-authored from `26 §5`, `26 §11.2`, `51 §2.3`, `51 §5.1` |
+| 19 | `class-19.effect-constructors.json` | the registered `ConstructorVersionRecord` identities |
+| 20 | `class-20.acos-jcs-1.spec.v1.txt` | a BYTE-IDENTICAL copy of `docs/architecture/v1.3.6/artifacts/acos-jcs-1.spec.v1.txt` |
+| 24 | *(deployment-assembled)* | the audit plane's published public key, which a repository cannot carry |
+| 27 | `class-27.degraded-mode-config.json` | hand-authored from `50 §2c`'s four quantities |
+
+`.gitattributes` marks `artifacts/control/**` as `-text`, so git performs NO line-ending
+conversion in either direction. `50 §3c` makes a line terminator an identity change, and a
+clone on a machine with `core.autocrlf=true` would otherwise invalidate every owner
+signature by rewriting files nobody edited.
+
+---
+
+## 5. The implementation-level choices, named as such
+
+**These cannot move authority, and each is recorded here rather than left to be inferred.**
+
+| Choice | Why it is not an authority decision |
 |---|---|
-| Class 20 signature | **OWED, and enlarged a third time** |
-| Class 17 signature | **OWED, enlarged by `51 §2.3`** |
-| Class 3 signature | **OWED from v1.3.3** |
-| Class 27 signature | **OWED from v1.3.3** |
-| Runtime `I19` | **OPEN. No production owner-signing mechanism exists** |
-| `O4` | **OPEN** |
-| Production key management | **OPEN** |
+| The artifact container is UTF-8 JSON, one file per class | `50 §6` calls classes 2, 3 and 27 "the assembled artifact bytes" and declares no format. `§3c` hashes EXACT BYTES, so whatever a release assembles is what both signatures bind. A different encoding is a different artifact, a different hash and a different `manifest_id`, which the deployment pin rejects. |
+| The manifest document is UTF-8 JSON | `50` declares no on-disk container for the manifest either. What is hashed and signed is never the document: it is `§3d`'s fixed framing over the parsed fields, so no property order or whitespace choice can move `manifest_id`. `JSON.parse` runs in `manifestCore.ts`; `JSON.stringify` runs nowhere in the trust chain. |
+| `artifact_id` for classes 19 and 24 | `50 §6` prints ids for classes 2, 3, 20 and 27 and names 19 and 24 without printing one. `§3b` binds `artifact_id` inside the signature and `§3d` binds every entry inside the signed core, so whichever identifier a release ceremony signs is the only one the pin admits. |
+| `artifact_version` strings for classes 2, 3, 19, 24, 27 | `50 §6` writes "the catalogue's declared version", "the configuration's declared version" and "the bundle's declared version" — a declaration the package makes, which the verifier then cross-checks against the artifact's OWN verified bytes. |
+| The deployment transport is process environment | `50 §3a` says the roots are "provisioned OUT OF BAND through the trusted deployment mechanism" and declares no transport. The reader takes a flat string map, has no network, no filesystem, no database and no default key, and has exactly one production call site per plane. |
+| The CRITICAL incident is emitted to a sink, defaulting to structured stderr | `50 §3f` requires the incident to be raised and journalled "where the current architecture permits a trusted journal to remain operational". At bootstrap it does not, and `§3f` accepts local startup evidence. No control-plane incident table exists at S1; a deployment installs a sink that journals `RELOAD` incidents. |
 
 ---
 
-## 3. Why S1K stops: ten blocking omissions
+## 6. What this slice does NOT do
 
-Each is stated as the mandate requires — with the exact wording that fails, and what a
-closing declaration would have to say. **Six are the mandate's own declared tripwires.
-Four are new and were found by reading the implementation against the manifest.**
-
-Full statements in `S1K-owner-clarifications.md`. In summary:
-
-| # | Omission | Mandate tripwire | New? |
-|---|---|---|---|
-| `S1K-C1` | The owner signature's **algorithm** is undeclared | `§5`, `§30` | — |
-| `S1K-C2` | The **signing message** is undeclared | `§5`, `§6`, `§29` | — |
-| `S1K-C3` | The **owner verification key has no declared provenance** — the root of trust is circular | **`§7`, `§41`** | — |
-| `S1K-C4` | `I19 (continuous)` has **no enforceable runtime semantics or cadence** | **`§16`** | — |
-| `S1K-C5` | "**canonicalised content**" names no canonicalisation for control artifacts, and is circular for class 20 | `§5` | — |
-| `S1K-C6` | The artifacts' **content boundaries are undeclared**, and two class pairs co-reside in one module | `§4`, `§5` | **NEW** |
-| `S1K-C7` | **Class 17's content is per-company runtime database rows**, and its declared table is wider than the deployed catalogue | `§4` | **NEW** |
-| `S1K-C8` | **Class 20 has no artifact to sign** — it exists as three conforming implementations and as prose | `§4`, `§12` | **NEW** |
-| `S1K-C9` | The **manifest's own integrity is undeclared**; per-row signatures do not protect the row set | **`§40`** | — |
-| `S1K-C10` | The **second factor** is required on every artifact in this mandate and has no declared mechanism or verifier-visible evidence | `§5`, `§24` | **NEW** |
-
-**`S1K-C3` alone is dispositive.** `§41` of the mandate:
-
-> If v1.3.5 fails to define the root of trust sufficiently to avoid circular verification:
-> **RETURN PARTIAL.** … **Do not invent a chain-of-trust model.**
+* **No production signing.** No key is generated, held, read or written under `src/`.
+  `tools/control-artifacts/` knows the FORMAT and holds no key; it is release and test
+  tooling and is not the key ceremony.
+* **No real transport.** No `fetch`, no HTTP, no socket, no vendor SDK, no credential.
+* **No provider work.** No adapter, no sandbox, no idempotency header, no provider query,
+  no reconciliation, no `I8`, no `I20` provider-side proof, no `I36`.
+* **No `I17b`.** `37 §2` is explicit that external anchoring stays at S3 and is NOT the
+  bootstrap root; `50 §3e`'s pin is what rejects a rollback. Nothing here depends on it.
+* **No class-19 key migration.** `50 §3i` declares it follow-on work. Class 19's artifact
+  is a verified manifest member; `ConstructorVersionResolver`'s caller-supplied-key
+  arrangement is untouched, and nothing here claims its trust root has moved.
+* **No symcc, no policy equivalence, no rotation mechanism.** `50 §2e` puts all three
+  outside this rule.
+* **No conformance claim for class 20.** `50 §2b`: a valid signature pair "DOES NOT PROVE
+  THAT ANY IMPLEMENTATION CONFORMS TO IT". VC-A3 is untouched and remains the mechanism.
 
 ---
 
-## 4. What S1K deliberately did NOT do
+## 7. The architecture is unchanged
 
-Each of these was available and each would have been an invention:
+`docs/architecture/v1.3.6/` is byte-identical to `653e632`. The gate runs 89 PASS / 0 FAIL
+and all 58 seeds discriminate, before and after.
 
-- **Did not** choose Ed25519 for the owner signature by analogy with class 24. Class 24 is
-  the **audit plane's** key under a **different signer** with an explicitly different trust
-  story; `50 §2` puts its public half in the manifest precisely because the owner signature
-  is the root *above* it. Borrowing its algorithm downward is not a reading, it is a choice.
-- **Did not** compile in, configure, or database-bind an owner public key. That is the
-  chain-of-trust model `§41` prohibits inventing.
-- **Did not** define a signing message over `50 §3`'s row fields. The fields are present;
-  the statement that the signature covers them, in an order, under a framing, with a
-  domain separator, is not.
-- **Did not** pick an `I19` cadence. `§16`: "Do not invent a polling interval."
-- **Did not** define class 3's, 17's, 20's or 27's canonical content bytes. A signature over
-  a boundary the architecture did not draw certifies a set the architecture did not define,
-  and would move every `content_hash` again when the real boundary is declared.
-- **Did not** write `docs/architecture/v1.3.6/`. `§44`: v1.3.5 already declares the
-  obligation, and the repository's precedent is that the implementation *reports* a
-  normative omission and an architecture pass closes it — which is exactly how `MIE-01`,
-  `SER-01`, `OBX-04` and `OBX-05` were closed between S1J's PARTIAL and S1J's PASS.
-- **Did not** build a hash-only integrity gate and call it `I19`. `§22` forbids the
-  downgrade, and a hash comparison against a manifest with no declared trust root is
-  theatre rather than a control.
-
----
-
-## 5. What remains true and unchanged
-
-- Every S1A–S1J property holds. No accepted control was disarmed.
-- `src/` contains no network client, no vendor SDK, no credential and no real adapter.
-- The pre-live gate recorded at S1I and carried at S1J **remains mandatory and remains
-  unsatisfied**:
-
-  > No later slice may enable a real external effect until the owner/control-artifact
-  > signing and integrity sequencing has been re-evaluated against the then-current
-  > architecture.
-
-  **S1K is that re-evaluation. Its finding is that the architecture cannot yet be
-  implemented against, and the gate therefore stays shut.**
+**No new normative contradiction was found.** Every load-bearing detail this slice needed —
+the algorithm, the envelope, the roots, the pin, the core, the occasions, the closed
+schemas, the class-20 artifact, the class-17 disposition and the second factor — is declared
+in v1.3.6, and the four places where the architecture deliberately leaves a choice open are
+listed in `§5` above with the argument for why each is inert.

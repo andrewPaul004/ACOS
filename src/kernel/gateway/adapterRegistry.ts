@@ -28,7 +28,7 @@ import type { ExternalEffectAdapter } from './adapterPort.js';
  *   3. `0010`'s composite foreign key makes that column a MEMBER of a key into `effect`,
  *      so the only admissible value is the one the committed effect holds.
  *   4. `effect.adapter` was written by the S1F authorising transaction from
- *      `ACTION_CATALOGUE[action_class].adapter`.
+ *      the verified catalogue entry's `adapter`.
  *
  * There is no `adapter` parameter and no `adapterId` parameter on any production function
  * in this directory. A caller may supply a REGISTRY — that is how a test installs the

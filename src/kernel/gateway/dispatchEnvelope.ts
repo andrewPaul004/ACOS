@@ -43,7 +43,7 @@ import type { DispatchIdentity } from './dispatchCapability.js';
  * `0010`: "There is deliberately NO structured payload field [...] A second representation
  * is a second thing to disagree with the hash."
  *
- * So `method` comes from `ACTION_CATALOGUE[action_class]`, the same closed source that
+ * So `method` comes from the VERIFIED class-3 catalogue entry, the same closed source that
  * assigned `adapter` in the first place, and `assertCatalogueAgreement` refuses to build
  * an envelope whose row disagrees with the catalogue about `adapter` or `recoverability`.
  * A disagreement would mean the catalogue changed under a committed effect, which is an

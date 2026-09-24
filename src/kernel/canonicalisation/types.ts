@@ -154,7 +154,7 @@ export interface AuthoritativeCanonicalisationContext {
    * changing at all.
    *
    * So the field is GONE rather than validated. The canonicaliser reads
-   * `ACTION_CATALOGUE[intent.actionClass]` itself, AFTER `action_class` has passed the
+   * `actionCatalogueEntry(intent.actionClass)` itself, AFTER `action_class` has passed the
    * closed-catalogue check, and hands the row to the constructor on `ConstructorInput`.
    * The substitution is not merely rejected — it has no expressible form.
    */

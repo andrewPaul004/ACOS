@@ -7,7 +7,7 @@ import {
   type ManifestCoreHeaderFields,
 } from './casSig.js';
 import { decodeLowercaseHex, hexOf, sha256 } from './ed25519.js';
-import { integrityFailure } from './errors.js';
+import { integrityFailure, quoted } from './errors.js';
 
 /**
  * `50 §3d`'s MANIFEST CORE, and `50 §3e`'s `manifest_id`.
@@ -235,7 +235,7 @@ export function parseManifestDocument(documentText: string): ParsedManifest {
   if (header.manifestFormatVersion !== MANIFEST_FORMAT_VERSION) {
     integrityFailure(
       'MANIFEST_MALFORMED',
-      `manifest_format_version is ${JSON.stringify(header.manifestFormatVersion)}; this ` +
+      `manifest_format_version is ${quoted(header.manifestFormatVersion)}; this ` +
         `runtime implements ${MANIFEST_FORMAT_VERSION} and negotiates no other (50 §3d)`,
     );
   }

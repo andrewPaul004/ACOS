@@ -210,18 +210,24 @@ function deepFreeze<T>(value: T): T {
 export function sealVerifiedBundle(
   contents: VerifiedBundleContents,
 ): VerifiedControlArtifactBundle {
-  const capability = Object.freeze({
-    /**
-     * `§27` of the S1K mandate: "not JSON-serializable as an authority token". A bundle
-     * that could be stringified could be posted into a queue, a log or a model response,
-     * and something downstream would eventually read it back as authority.
-     */
-    toJSON(): never {
-      throw new Error(
-        'a VerifiedControlArtifactBundle is a capability and is not serialisable (50 §3f)',
-      );
-    },
-  }) as unknown as VerifiedControlArtifactBundle;
+  const capability = Object.freeze(
+    Object.defineProperty({}, 'toJSON', {
+      /**
+       * `§27` of the S1K mandate: "not JSON-serializable as an authority token". A bundle
+       * that could be stringified could be posted into a queue, a log or a model response,
+       * and something downstream would eventually read it back as authority.
+       *
+       * NON-ENUMERABLE, so the object has no own enumerable property at all: neither
+       * `JSON.stringify`, nor `Object.keys`, nor a spread can copy anything out of it.
+       */
+      enumerable: false,
+      value(): never {
+        throw new Error(
+          'a VerifiedControlArtifactBundle is a capability and is not serialisable (50 §3f)',
+        );
+      },
+    }),
+  ) as unknown as VerifiedControlArtifactBundle;
   SEALED.set(capability, deepFreeze(contents));
   return capability;
 }

@@ -14,7 +14,7 @@ import {
 } from './bundle.js';
 import { artifactSignatureMessage, manifestSignatureMessage } from './casSig.js';
 import { hexOf, sha256, verifyControlSignature } from './ed25519.js';
-import { integrityFailure } from './errors.js';
+import { integrityFailure, quoted } from './errors.js';
 import { parseManifestDocument, type ManifestEntry } from './manifestCore.js';
 import {
   REQUIRED_PRE_LIVE_ARTIFACTS,
@@ -203,16 +203,16 @@ export function verifyControlArtifactBundle(
       integrityFailure(
         'ARTIFACT_IDENTITY_UNEXPECTED',
         `the class-${String(entry.artifactClass)} entry declares artifact_id ` +
-          `${JSON.stringify(entry.artifactId)}; 50 §6 declares ` +
-          `${JSON.stringify(required.artifactId)}`,
+          `${quoted(entry.artifactId)}; 50 §6 declares ` +
+          `${quoted(required.artifactId)}`,
       );
     }
     if (required.declaredVersion !== null && entry.artifactVersion !== required.declaredVersion) {
       integrityFailure(
         'ARTIFACT_IDENTITY_UNEXPECTED',
         `the class-${String(entry.artifactClass)} entry declares artifact_version ` +
-          `${JSON.stringify(entry.artifactVersion)}; 50 §6 declares ` +
-          `${JSON.stringify(required.declaredVersion)}`,
+          `${quoted(entry.artifactVersion)}; 50 §6 declares ` +
+          `${quoted(required.declaredVersion)}`,
       );
     }
     // The parser already refused a duplicate `(class, id, version)`. A second entry for one
@@ -360,8 +360,8 @@ function assertDeclaredVersion(
     integrityFailure(
       'ARTIFACT_IDENTITY_UNEXPECTED',
       `class ${String(artifactClass)}: the signed manifest entry declares artifact_version ` +
-        `${JSON.stringify(entry.artifactVersion)} and the artifact's own verified bytes ` +
-        `declare ${JSON.stringify(declaredInArtifact)}`,
+        `${quoted(entry.artifactVersion)} and the artifact's own verified bytes ` +
+        `declare ${quoted(declaredInArtifact)}`,
     );
   }
 }

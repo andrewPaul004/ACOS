@@ -12,7 +12,7 @@ import {
 } from '../canonicalisation/actionClasses.js';
 import { ED25519_PUBLIC_KEY_BYTES } from './casSig.js';
 import { decodeLowercaseHex, keyIdOf } from './ed25519.js';
-import { integrityFailure } from './errors.js';
+import { integrityFailure, quoted } from './errors.js';
 import type {
   VerifiedActionCatalogue,
   VerifiedActionCatalogueEntry,
@@ -144,7 +144,7 @@ function asDurationMs(value: unknown, where: string): number {
   if (match === null) {
     integrityFailure(
       'ARTIFACT_CONTENT_INVALID',
-      `${where} is ${JSON.stringify(text)}; 50 §2c's durations are PT<n>M or PT<n>S`,
+      `${where} is ${quoted(text)}; 50 §2c's durations are PT<n>M or PT<n>S`,
     );
   }
   const minutes = match[1];
@@ -167,7 +167,7 @@ function asScale2MinorUnits(value: unknown, where: string): bigint {
   if (match === null) {
     integrityFailure(
       'ARTIFACT_CONTENT_INVALID',
-      `${where} is ${JSON.stringify(text)}; a scale-2 ledger amount is <units>.<2 digits>`,
+      `${where} is ${quoted(text)}; a scale-2 ledger amount is <units>.<2 digits>`,
     );
   }
   return BigInt(match[1]!) * 100n + BigInt(match[2]!);
@@ -182,8 +182,8 @@ function artifactHeader(
   if (artifactId !== expectedArtifactId) {
     integrityFailure(
       'ARTIFACT_IDENTITY_UNEXPECTED',
-      `${where} declares artifact_id ${JSON.stringify(artifactId)}; the pre-live set ` +
-        `declares ${JSON.stringify(expectedArtifactId)} (50 §6)`,
+      `${where} declares artifact_id ${quoted(artifactId)}; the pre-live set ` +
+        `declares ${quoted(expectedArtifactId)} (50 §6)`,
     );
   }
   return asString(document.artifact_version, `${where}.artifact_version`);
@@ -262,7 +262,7 @@ function asMember<T extends string>(
   if (!(members as readonly string[]).includes(text)) {
     integrityFailure(
       'ARTIFACT_CONTENT_INVALID',
-      `${where} is ${JSON.stringify(text)}; the declared domain is [${members.join(', ')}]`,
+      `${where} is ${quoted(text)}; the declared domain is [${members.join(', ')}]`,
     );
   }
   return text as T;
@@ -311,7 +311,7 @@ export function parseClass3ActionCatalogue(bytes: Uint8Array): VerifiedActionCat
     if (!isActionClass(actionClass)) {
       integrityFailure(
         'ARTIFACT_CONTENT_INVALID',
-        `${at}.action_class is ${JSON.stringify(actionClass)}, which is outside the closed ` +
+        `${at}.action_class is ${quoted(actionClass)}, which is outside the closed ` +
           'catalogue member set this runtime can name (SR7, 50 §2a field 1)',
       );
     }
@@ -397,7 +397,7 @@ export function parseClass3ActionCatalogue(bytes: Uint8Array): VerifiedActionCat
     if (!isReasonCode(code)) {
       integrityFailure(
         'ARTIFACT_CONTENT_INVALID',
-        `${where}.reason_codes[${String(index)}] is ${JSON.stringify(code)}, outside the ` +
+        `${where}.reason_codes[${String(index)}] is ${quoted(code)}, outside the ` +
           'closed enum this runtime can name (26 §2.0)',
       );
     }
@@ -589,7 +589,7 @@ export function parseClass2PolicySet(bytes: Uint8Array): VerifiedPolicySet {
     if (previous !== undefined && !(previous < id)) {
       integrityFailure(
         'ARTIFACT_CONTENT_INVALID',
-        `${at}.id ${JSON.stringify(id)} does not follow ${JSON.stringify(previous)} in ` +
+        `${at}.id ${quoted(id)} does not follow ${quoted(previous)} in ` +
           'strictly ascending id order',
       );
     }

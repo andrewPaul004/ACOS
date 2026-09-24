@@ -138,3 +138,16 @@ export function refused(
 ): VerificationVerdict {
   return { ok: false, reasonCode, detail };
 }
+
+/**
+ * Quote a value for an INTERNAL diagnostic message.
+ *
+ * It exists so that no module in the control-artifact trust chain calls `JSON.stringify` at
+ * all. `50 §3b` requires the framing to use "no JSON and no JSON reserialization", and
+ * `tests/controlArtifacts/framing-and-oracle.test.ts` asserts that structurally over the
+ * whole directory — a rule that is only meaningful if it has no exceptions, including
+ * exceptions that only ever format an error string.
+ */
+export function quoted(value: string): string {
+  return `"${value.replace(/["\\]/g, '')}"`;
+}

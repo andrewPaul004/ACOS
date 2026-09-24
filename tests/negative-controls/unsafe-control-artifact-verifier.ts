@@ -194,7 +194,7 @@ function manifestMessage(
  * rather than total: the class-20 specification is a text file and is unaffected, and the
  * discrimination therefore has to come from a JSON artifact.
  */
-function unsafeContentDigest(bytes: Buffer): Buffer {
+export function unsafeSemanticDigest(bytes: Buffer): Buffer {
   try {
     const parsed: unknown = JSON.parse(bytes.toString('utf8'));
     return sha256(Buffer.from(JSON.stringify(sortDeep(parsed)), 'utf8'));
@@ -352,7 +352,7 @@ export function unsafeVerifyControlArtifacts(
     }
 
     const computed =
-      defect === 'SEMANTIC_NORMALISED_HASH' ? unsafeContentDigest(bytes) : sha256(bytes);
+      defect === 'SEMANTIC_NORMALISED_HASH' ? unsafeSemanticDigest(bytes) : sha256(bytes);
     if (computed.toString('hex') !== entry.content_hash) {
       return { accepted: false, reason: 'ARTIFACT_CONTENT_HASH_MISMATCH', manifestId };
     }

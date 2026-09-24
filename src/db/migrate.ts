@@ -79,7 +79,20 @@ export async function up(client: Client): Promise<string[]> {
  * the tests ever start from.
  */
 export async function down(client: Client): Promise<void> {
-  await client.query('DROP SCHEMA public CASCADE');
+  // RESIDUAL 13 — the teardown is IDEMPOTENT.
+  //
+  // `DROP SCHEMA public CASCADE` without `IF EXISTS` throws `3F000` when the schema is
+  // already absent, and the absent state is reachable: a run interrupted between the DROP
+  // and the CREATE below leaves the database with no `public`, and every subsequent
+  // `reset()` in every subsequent run then fails in `beforeEach` before a single assertion
+  // executes. The failure is indistinguishable from a product defect in the reporter's
+  // output, which is what made it worth a line of its own.
+  //
+  // `IF EXISTS` makes the teardown converge on the same state from both starting points.
+  // IT CHANGES NO MIGRATION SEMANTICS: `up()` is untouched, the migration list is untouched,
+  // the applied-migrations table is untouched, and nothing in `src/` reads a schema's
+  // existence as authority. It is a test-infrastructure correction, recorded as such.
+  await client.query('DROP SCHEMA IF EXISTS public CASCADE');
   await client.query('CREATE SCHEMA public');
 }
 

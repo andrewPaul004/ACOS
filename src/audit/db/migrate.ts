@@ -93,7 +93,8 @@ export async function auditUp(client: Client): Promise<string[]> {
  * boundary a thing the suite recreates rather than a thing it tests.
  */
 export async function auditDown(client: Client): Promise<void> {
-  await client.query('DROP SCHEMA public CASCADE');
+  // RESIDUAL 13 — idempotent teardown, for the reason `src/db/migrate.ts` records.
+  await client.query('DROP SCHEMA IF EXISTS public CASCADE');
   await client.query('CREATE SCHEMA public');
   await client.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
 }

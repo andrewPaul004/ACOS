@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { activeVerifiedControlArtifacts } from '../controlArtifacts/registry.js';
+
 import { inTransaction, type Client, type Pool } from '../../db/pool.js';
 import { fromDb, type Money } from '../exposure/money.js';
 import { isClockBearingOn, selectEvidentiaryClockOn } from '../clocks/statutoryClock.js';
@@ -280,6 +282,24 @@ export async function claimForExternalDispatchOn(
     readonly afterLock?: () => Promise<void>;
   },
 ): Promise<ClaimResult> {
+  // =================================================================================
+  // `50 §3f`'s PRE-CLAIM GATE — v1.3.6.
+  //
+  // "**external claim and dispatch cannot proceed if the verified bundle is unavailable or
+  //  invalid.**"
+  //
+  // The claim is the irreversible step: `25 §7` puts it "in a committed transaction BEFORE
+  // the HTTP call", and `CLAIMED` "HAS NO TIMEOUT, NO LEASE, NO EXPIRY AND NO RECLAIM". A
+  // claim taken while the kernel holds no verified control-artifact bundle would be an
+  // at-most-once commitment spent under authority nobody checked, so the gate is here and
+  // not only at the gateway that calls it.
+  //
+  // It THROWS rather than refusing. A refusal is a decision about an outbox row; this is a
+  // statement that the kernel is not READY, which `50 §3f` occasion 1 says must precede any
+  // authority execution at all.
+  // =================================================================================
+  activeVerifiedControlArtifacts();
+
   const locked = await client.query<OutboxDbRow>(
     `SELECT ${OUTBOX_COLUMNS} FROM dispatch_outbox
       WHERE company_id = $1 AND idempotency_key = $2

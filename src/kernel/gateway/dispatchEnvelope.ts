@@ -1,9 +1,10 @@
 import {
-  ACTION_CATALOGUE,
+  actionCatalogueEntry,
   isActionClass,
   type ActionClass,
   type Recoverability,
 } from '../canonicalisation/actionCatalogue.js';
+import type { VerifiedControlArtifactBundle } from '../controlArtifacts/bundle.js';
 import type { OutboxRow } from '../outbox/outboxState.js';
 import type { DispatchEnvelope } from './adapterPort.js';
 import type { DispatchIdentity } from './dispatchCapability.js';
@@ -109,7 +110,10 @@ const RECOVERABILITIES: readonly string[] = ['REVERSIBLE', 'COMPENSABLE', 'IRREC
  * whatever the caller's `pg` result rows hold either.
  * =================================================================================
  */
-export function buildDispatchEnvelope(row: OutboxRow): EnvelopeBuild {
+export function buildDispatchEnvelope(
+  row: OutboxRow,
+  bundle: VerifiedControlArtifactBundle,
+): EnvelopeBuild {
   if (row.status !== 'CLAIMED' || row.claimId === null) {
     return {
       kind: 'REFUSED',
@@ -128,7 +132,7 @@ export function buildDispatchEnvelope(row: OutboxRow): EnvelopeBuild {
     };
   }
   const actionClass: ActionClass = row.actionClass;
-  const entry = ACTION_CATALOGUE[actionClass];
+  const entry = actionCatalogueEntry(actionClass, bundle);
   if (entry.adapter !== row.adapter || entry.recoverability !== row.recoverability) {
     return {
       kind: 'REFUSED',

@@ -1,65 +1,94 @@
+import {
+  verifiedDegradedModeConfiguration,
+  type VerifiedControlArtifactBundle,
+} from '../controlArtifacts/bundle.js';
+import { activeVerifiedControlArtifacts } from '../controlArtifacts/registry.js';
 import type { Money } from '../exposure/money.js';
 
 /**
- * `51 §3.7` and `51 §3.8`, specified in `30 §5.1a` — THE THREE QUANTITIES THE DISPATCH
- * PRECEDENCE RULE READS. S1H, completed under package issue v1.3.3.
+ * `50 §2c`'s FOUR STATIC QUANTITIES — read from the SIGNED class-27 artifact, and from
+ * nowhere else.
  *
  * =================================================================================
- * WHY THIS FILE EXISTS, AND WHAT IT REPLACED.
+ * WHAT THIS FILE WAS, AND WHAT v1.3.6 REQUIRES IT TO BE
  *
- * At v1.3.2 none of the three was declared anywhere. `30 §5.1` item 4 row 2 compared
- * against "the per-action approval floor" and item 5 against "threshold" and "a longer
- * threshold", and `51` declared no row for any of them. `§42` of the S1H mandate forbids
- * inventing an undeclared quantity, so S1H took row 2's predicate as a CALLER-SUPPLIED
- * BOOLEAN and did not build the full-halt posture at all — reported as `S1H-C1` and
- * `S1H-C10` and as PARTIAL in `S1H-result.md`.
+ * S1H wrote this module under package issue v1.3.3, which declared the three quantities for
+ * the first time, and said so in its own header: "**THESE ARE READ, NEVER WRITTEN, AND TWO
+ * CONTROL-ARTIFACT SIGNATURES ARE OWED.** [...] **no production owner-signing mechanism and
+ * no runtime `I19` verification exist in this implementation.**"
  *
- * v1.3.3 declares all three. This file is their transcription and the ONLY place in `src/`
- * that carries their values, and the boolean escape hatch is gone: `classifyDispatchPrecedence`
- * derives both predicates here, from operands trusted code owns.
+ * v1.3.6 closes that. `50 §2c` gives class 27 a CLOSED schema of exactly four quantities —
+ * the two timing thresholds, the approval floor moved here from class 3, and
+ * `corroboration_signal_max_age`, which "was previously owned by no signed class at all" —
+ * and `50 §3f` makes the signed bytes the deployed authority source for it.
+ *
+ * SO THE THREE `export const`s ARE GONE. `DEGRADED_PER_ACTION_APPROVAL_FLOOR` and
+ * `DEGRADED_MODE_TIMING` were exactly the arrangement `50 §3c` forbids: "**A signed control
+ * artifact and a separate hard-coded production literal may not both be authority
+ * sources**". `tests/negative-controls/unsafe-unsigned-authority-literals.ts` keeps a copy of
+ * them with a $500.00 floor and an eight-hour halt threshold, and
+ * `tests/controlArtifacts/class-27-authority.test.ts` runs both readers over one fixture to
+ * prove which one production uses.
+ *
  * =================================================================================
+ * THE THREE PREDICATE FUNCTIONS KEEP THEIR SIGNATURES, AND THEIR BOUNDARY SEMANTICS
  *
- * =================================================================================
- * THESE ARE READ, NEVER WRITTEN, AND TWO CONTROL-ARTIFACT SIGNATURES ARE OWED.
+ * `50 §2c`'s boundary column is transcribed here exactly as declared, and the two
+ * conventions remain deliberately different:
  *
- * The approval floor is a field of control artifact `50 §2` class 3, whose `content_hash`
- * moves because v1.3.3 gives the field a value for the first time. The two thresholds are
- * class 27, new in v1.3.3. Both need an owner signature with a second factor before any
- * deployment, **and no production owner-signing mechanism and no runtime `I19` verification
- * exist in this implementation.** `S1H-result.md §16` carries all of that forward alongside
- * the class-20 residual, and nothing here claims otherwise.
+ *   quantity 1  `mirror_lag >= PT15M`                       INCLUSIVE
+ *   quantity 2  `continuous_unreachability >= PT30M`        INCLUSIVE
+ *   quantity 3  `total_exposure > 20.00`                    STRICT
+ *   quantity 4  `now() - observed_at <= max_age`            INCLUSIVE
+ *
+ * Each is transcribed as `50 §2c` declares it rather than as a house style. The ordering
+ * coherence `30 §5.1` item 5 depends on — the halt threshold being the LONGER of the two —
+ * is now checked over the VERIFIED bytes in `controlArtifacts/artifactParsers.ts`, before a
+ * bundle can be sealed, rather than by a test over two constants.
  * =================================================================================
  */
 
+function configuration(bundle?: VerifiedControlArtifactBundle) {
+  return verifiedDegradedModeConfiguration(bundle ?? activeVerifiedControlArtifacts());
+}
+
 /**
- * `51 §3.7`, `DESIGN LIMIT — OWNER DECISION`, transcribed from the fixture table.
+ * `50 §2c` quantity 3 — `degraded_per_action_approval_floor_monetary`, `USD 20.00`.
  *
- * > `degraded_per_action_approval_floor_monetary` | **USD 20.00**
+ * `50 §2c`: "**Row 3 moved from class 3 to class 27, and that is an OWNERSHIP correction, not
+ * a value change.** The floor is a **global degraded-mode threshold**, not a per-action
+ * catalogue field: one quantity for the whole company, read only by `30 §5.1` item 4 row 2,
+ * evaluated only inside a declared mirror state."
  *
  * In the `Money` scale-2 minor unit, so `$20.00` is `2000n`. `30 §5.3` and
- * `exposure/money.ts` both forbid a monetary value ever being a `number`.
+ * `exposure/money.ts` both forbid a monetary value ever being a `number`, and the class-27
+ * parser reads the artifact's decimal text straight into minor units for the same reason.
  */
-export const DEGRADED_PER_ACTION_APPROVAL_FLOOR: Money = 2000n as Money;
+export function degradedPerActionApprovalFloor(bundle?: VerifiedControlArtifactBundle): Money {
+  return configuration(bundle).degradedPerActionApprovalFloorMinorUnits as Money;
+}
+
+/** `50 §2c` quantities 1 and 2, in milliseconds. */
+export function degradedModeTiming(bundle?: VerifiedControlArtifactBundle): {
+  readonly mirrorLagCriticalMs: number;
+  readonly auditUnreachableFullHaltMs: number;
+} {
+  const config = configuration(bundle);
+  return {
+    mirrorLagCriticalMs: config.mirrorLagCriticalThresholdMs,
+    auditUnreachableFullHaltMs: config.auditUnreachableFullHaltThresholdMs,
+  };
+}
+
+/** `50 §2c` quantity 4 — `corroboration_signal_max_age`, `PT5M`. */
+export function corroborationSignalMaxAgeMs(bundle?: VerifiedControlArtifactBundle): number {
+  return configuration(bundle).corroborationSignalMaxAgeMs;
+}
 
 /**
- * `51 §3.8`, `DESIGN LIMIT — OWNER DECISION`, transcribed from the fixture table.
+ * `30 §5.1` item 4 row 2's PREDICATE, derived from the VERIFIED floor.
  *
- * > `mirror_lag_critical_threshold` | **15 minutes** | `PT15M`
- * > `audit_unreachable_full_halt_threshold` | **30 minutes** | `PT30M`
- *
- * `PT30M > PT15M` is required by `30 §5.1` item 5's own "a longer threshold" and is asserted
- * as ARITHMETIC on these two constants by `degraded-mode-thresholds.test.ts`, so a future
- * edit to either cannot silently collapse the escalation into the halt.
- */
-export const DEGRADED_MODE_TIMING = Object.freeze({
-  /** `mirror_lag_critical_threshold` = `PT15M`. */
-  mirrorLagCriticalMs: 15 * 60 * 1000,
-  /** `audit_unreachable_full_halt_threshold` = `PT30M`. */
-  auditUnreachableFullHaltMs: 30 * 60 * 1000,
-});
-
-/**
- * `30 §5.1` item 4 row 2's PREDICATE, derived. `51 §3.7`:
+ * `51 §3.7`, and `50 §2c` quantity 3's boundary column:
  *
  * > **Comparison semantics.** `total_exposure > 20.00` is ABOVE the floor. The comparison is
  * > **strict**, evaluated in minor units of the single ledger currency (`51 §1`), so
@@ -75,19 +104,16 @@ export const DEGRADED_MODE_TIMING = Object.freeze({
  * `classifyDispatchPrecedence`, reads it out of `PrecedenceOperands.totalExposure`, which is
  * the effect's own `exposure.total_exposure`.
  *
- * `51 §3.1` already declares the same operand for `per_action_max` — "compared against
- * `exposure.total_exposure`, not `exposure.vendor_amount` (SR-C1, `26 §8`)" — for the same
- * reason: the cap bounds economic loss, and economic loss includes the fee that does not
- * come back. `vendor-amount-policy-binding.test.ts` has asserted that for the Cedar bound
- * since S1C; `dispatch-precedence-approval-floor.test.ts` asserts it here.
- *
- * A NON-MONETARY EFFECT IS NOT ABOVE THE FLOOR. `51 §3.7`: a rate class reserves `0.00`
- * (`26 §2.1.3`) and a class with no monetary field carries `total_exposure = 0.00`, so the
- * predicate is false. The floor is a monetary predicate and is exhaustively so.
+ * A NON-MONETARY EFFECT IS NOT ABOVE THE FLOOR. A rate class reserves `0.00` (`26 §2.1.3`)
+ * and a class with no monetary field carries `total_exposure = 0.00`, so the predicate is
+ * false. The floor is a monetary predicate and is exhaustively so.
  * ---------------------------------------------------------------------------------
  */
-export function isAboveDegradedApprovalFloor(totalExposure: Money): boolean {
-  return totalExposure > DEGRADED_PER_ACTION_APPROVAL_FLOOR;
+export function isAboveDegradedApprovalFloor(
+  totalExposure: Money,
+  bundle?: VerifiedControlArtifactBundle,
+): boolean {
+  return totalExposure > degradedPerActionApprovalFloor(bundle);
 }
 
 /** `30 §5.1a`'s mirror-lag condition. Two values; there is no third. */
@@ -96,14 +122,14 @@ export const MIRROR_LAG_CONDITIONS = ['WITHIN_THRESHOLD', 'CRITICAL'] as const;
 export type MirrorLagCondition = (typeof MIRROR_LAG_CONDITIONS)[number];
 
 /**
- * `30 §5.1` item 5's FIRST rule, and `30 §5.1a`'s statement of its boundary.
+ * `30 §5.1` item 5's FIRST rule, and `50 §2c` quantity 1's boundary.
  *
  * > `mirror_lag >= 15 minutes` **is at or over the threshold** and raises
  * > `AUDIT_MIRROR_DEGRADED` at CRITICAL urgency. `mirror_lag < 15 minutes` does not.
  *
  * The comparison is `>=`, INCLUSIVE, and it is the OPPOSITE convention from the approval
- * floor's `>` — because `51 §3.7` declares one strict and `51 §3.8` declares the other
- * inclusive, and each is transcribed as declared rather than as a house style.
+ * floor's `>` — because `50 §2c` declares one strict and the other inclusive, and each is
+ * transcribed as declared.
  *
  * ---------------------------------------------------------------------------------
  * WHAT THIS FUNCTION CANNOT DO, WHICH IS THE WHOLE OF `§5.1a`'s "escalation and state
@@ -112,23 +138,26 @@ export type MirrorLagCondition = (typeof MIRROR_LAG_CONDITIONS)[number];
  * It returns a CONDITION. It does not resolve a mirror state, does not construct a
  * `HeldCorroboration`, does not touch `mirror_corroboration`, does not grant or extend a
  * `DegradedModeOverride` and does not read or write any monetary limit — and it takes no
- * argument through which it could. `30 §5.1a`: "It **cannot** create
- * `CORROBORATED_DEGRADED`, **cannot** fabricate or substitute for a
- * `MirrorInputStallSignal`, **cannot** grant or extend a `DegradedModeOverride`, and
- * **cannot** move any monetary limit."
- *
- * `mirror-lag-critical.test.ts` asserts each of those as a property of the resolved state
- * and of the durable tables, not merely of this signature.
+ * argument through which it could.
  * ---------------------------------------------------------------------------------
  */
-export function classifyMirrorLag(lagMs: number): MirrorLagCondition {
-  return lagMs >= DEGRADED_MODE_TIMING.mirrorLagCriticalMs ? 'CRITICAL' : 'WITHIN_THRESHOLD';
+export function classifyMirrorLag(
+  lagMs: number,
+  bundle?: VerifiedControlArtifactBundle,
+): MirrorLagCondition {
+  return lagMs >= degradedModeTiming(bundle).mirrorLagCriticalMs ? 'CRITICAL' : 'WITHIN_THRESHOLD';
 }
 
 /**
- * `30 §5.1` item 5's SECOND rule, and `30 §5.1a`'s FULL-HALT POSTURE.
+ * `30 §5.1` item 5's SECOND rule, and `30 §5.1a`'s FULL-HALT POSTURE, against the VERIFIED
+ * threshold.
  *
  * > `continuous_unreachability >= 30 minutes` **enters the FULL-HALT POSTURE**.
+ *
+ * `50 §2c` on why this quantity is the one that most needs a signature: "The 30-minute
+ * quantity is the operand of `30 §5.1a`'s FULL-HALT POSTURE, so widening it removes the halt
+ * that stops the company when the record cannot be made, and narrowing it halts a healthy
+ * company."
  *
  * ---------------------------------------------------------------------------------
  * THE OPERAND, AND WHY IT IS THE DECLARATION RATHER THAN A TIMER OF ITS OWN.
@@ -138,24 +167,16 @@ export function classifyMirrorLag(lagMs: number): MirrorLagCondition {
  *   continuous_unreachability = now() − declaration.opened_at   , for the open declaration
  *   continuous_unreachability = 0                               , when no declaration is open
  *
- *   "**The timer STARTS when a declaration opens and RESETS only when one closes.** It is
- *    not reset by a state change between `UNCORROBORATED_STALL` and
- *    `CORROBORATED_DEGRADED`, by a signal arriving or expiring, by a re-issued signal, by a
- *    restart of either plane, or by the passage of an attestation interval — none of those
- *    closes a declaration."
+ *   "**The timer STARTS when a declaration opens and RESETS only when one closes.**"
  *
  * So there is NO TIMER OBJECT and no elapsed counter to reset. The operand is a subtraction
- * over a durable instant that already existed: `mirror_declaration.opened_at`, NOT NULL, with
- * `mirror_declaration_one_open_per_company` making at most one open per company so the
- * interval is single-valued. Every "reset" case in the sentence above is a case that leaves
- * `opened_at` alone, which is why the semantics fall out of the schema rather than needing
- * code — and `full-halt-posture.test.ts` asserts each of them against real PostgreSQL.
- *
- * A MODEL CANNOT SUPPLY, ADVANCE OR RESET IT. `36 §6` makes the control database clock
- * authoritative; `now` is read from it by the caller and `opened_at` is written by the
- * declaration path. No argument here could stand in for either.
+ * over a durable instant that already existed: `mirror_declaration.opened_at`, NOT NULL,
+ * with `mirror_declaration_one_open_per_company` making at most one open per company.
  * ---------------------------------------------------------------------------------
  */
-export function isFullHaltPosture(continuousUnreachabilityMs: number): boolean {
-  return continuousUnreachabilityMs >= DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs;
+export function isFullHaltPosture(
+  continuousUnreachabilityMs: number,
+  bundle?: VerifiedControlArtifactBundle,
+): boolean {
+  return continuousUnreachabilityMs >= degradedModeTiming(bundle).auditUnreachableFullHaltMs;
 }

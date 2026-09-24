@@ -4,7 +4,11 @@ import {
   type OptionDescriptionField,
 } from '../../enumeration/contextSpec.js';
 import { refundLiveEnumerator } from '../../enumeration/refundEnumeration.js';
-import { REASON_CODE_SCOPES, type ReasonCode } from '../actionCatalogue.js';
+import {
+  reasonCodeScopeFor,
+  semanticOptionDigestFieldsFor,
+  type ReasonCode,
+} from '../actionCatalogue.js';
 import { computed } from '../brands.js';
 import { canonicalHash, hex } from '../canonicalBytes.js';
 import { deny } from '../errors.js';
@@ -83,7 +87,40 @@ export const REFUND_CREATE_CONSTRUCTOR_ID = 'ctor.refund.create';
  * object was built.
  * ---------------------------------------------------------------------------------
  */
+/**
+ * `50 §2a` record 13's declared ordered field list for `refund.create`, as this constructor
+ * implements it.
+ *
+ * `26 §2.2`: the digest's covered fields are "**Declared per class in the action
+ * catalogue**", and v1.3.6 makes that declaration SIGNED content. The list below is the
+ * constructor's own statement of what it hashes, in the order it hashes it, and
+ * `refundSemanticOptionDigest` checks it against the verified artifact before hashing.
+ *
+ * A constructor that quietly dropped a field — `26 §2.2`'s "An option whose digest omits a
+ * money-bounding field is a catalogue defect" — therefore fails closed against the owner's
+ * declaration instead of silently minting colliding `option_id`s.
+ */
+const REFUND_SEMANTIC_OPTION_DIGEST_FIELDS: readonly string[] = Object.freeze([
+  'line_id',
+  'parent_transaction_id',
+  'amount',
+  'instrument',
+  'reason_code_scope',
+]);
+
 export function refundSemanticOptionDigest(option: SelectedAuthoritativeRefundOption): Buffer {
+  const declared = semanticOptionDigestFieldsFor('refund.create');
+  if (
+    declared.length !== REFUND_SEMANTIC_OPTION_DIGEST_FIELDS.length ||
+    declared.some((field, index) => field !== REFUND_SEMANTIC_OPTION_DIGEST_FIELDS[index])
+  ) {
+    throw new Error(
+      'refund.create: the verified class-3 artifact declares semantic_option_digest_fields ' +
+        `[${declared.join(', ')}] and this constructor covers ` +
+        `[${REFUND_SEMANTIC_OPTION_DIGEST_FIELDS.join(', ')}]; a digest that does not cover ` +
+        'the owner-declared fields is a catalogue defect (26 §2.2, 50 §2a record 13)',
+    );
+  }
   return canonicalHash('acos.semantic_option_digest.refund.create.v1', [
     { kind: 'text', value: option.lineId },
     { kind: 'text', value: option.parentTransactionId },
@@ -189,7 +226,8 @@ function assertRefundInputCohesion(input: ConstructorInput): void {
   // The brand is dropped by assignment, not by a cast: a `PermittedIntentField<ReasonCode>`
   // IS a `ReasonCode`, and the asymmetry brands.ts relies on runs the other way.
   const reasonCode: ReasonCode = permitted.reasonCode;
-  if (REASON_CODE_SCOPES[reasonCode] !== option.reasonCodeScope) {
+  // v1.3.6 (`50 §2a` record 12): the scope map is VERIFIED class-3 content, not a literal.
+  if (reasonCodeScopeFor(reasonCode) !== option.reasonCodeScope) {
     deny(
       'SELECTOR_INVALID',
       'REASON_CODE_SCOPE_MISMATCH',

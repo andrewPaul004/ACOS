@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MIRROR_STATES,
-  SIGNAL_MAX_AGE_MS,
+  signalMaxAgeMs,
   isCorroborationFresh,
   resolveMirrorState,
   type HeldCorroboration,
@@ -26,7 +26,7 @@ function held(observedAt: Date, options?: { companyId?: string; signalId?: strin
     signalId: options?.signalId ?? 'signal:1',
     companyId: options?.companyId ?? COMPANY,
     observedAt,
-    expiresAt: new Date(observedAt.getTime() + SIGNAL_MAX_AGE_MS),
+    expiresAt: new Date(observedAt.getTime() + signalMaxAgeMs()),
     intervalStart: new Date(observedAt.getTime() - 60_000),
     reason: 'ATTESTATION_STALL',
   };
@@ -65,9 +65,9 @@ describe('`30 §5.6` declares exactly three states and no convenience fourth', (
     // Asserted as ARITHMETIC over the two constants rather than as two literals, so a future
     // edit to either cannot silently break the declared relationship. The 15-minute figure
     // comes from the AUDIT side's own transcription of `30 §5.4`, which is a second reading.
-    expect(SIGNAL_MAX_AGE_MS).toBe(5 * 60 * 1000);
+    expect(signalMaxAgeMs()).toBe(5 * 60 * 1000);
     expect(ATTESTATION_STALL_BOUND_MS).toBe(15 * 60 * 1000);
-    expect(SIGNAL_MAX_AGE_MS).toBeLessThan(ATTESTATION_STALL_BOUND_MS);
+    expect(signalMaxAgeMs()).toBeLessThan(ATTESTATION_STALL_BOUND_MS);
   });
 });
 
@@ -98,7 +98,7 @@ describe('every LEGAL transition of `30 §5.6`', () => {
     // entry**."
     const signal = held(T0);
     expect(resolve(true, signal, T0)).toBe('CORROBORATED_DEGRADED');
-    const later = new Date(T0.getTime() + SIGNAL_MAX_AGE_MS + 1);
+    const later = new Date(T0.getTime() + signalMaxAgeMs() + 1);
     expect(resolve(true, signal, later)).toBe('UNCORROBORATED_STALL');
   });
 
@@ -144,7 +144,7 @@ describe('every ILLEGAL transition — what the resolver refuses to produce', ()
   });
 
   it('a STALE signal never reaches CORROBORATED_DEGRADED', () => {
-    const stale = held(new Date(T0.getTime() - SIGNAL_MAX_AGE_MS - 1));
+    const stale = held(new Date(T0.getTime() - signalMaxAgeMs() - 1));
     expect(resolve(true, stale, T0)).toBe('UNCORROBORATED_STALL');
   });
 
@@ -158,7 +158,7 @@ describe('every ILLEGAL transition — what the resolver refuses to produce', ()
   });
 
   it('an expired signal against an open declaration is REPORTED, not merely dropped', () => {
-    const expired = held(new Date(T0.getTime() - SIGNAL_MAX_AGE_MS - 1));
+    const expired = held(new Date(T0.getTime() - signalMaxAgeMs() - 1));
     const resolution = resolveMirrorState({
       companyId: COMPANY,
       declarationOpen: true,
@@ -200,17 +200,17 @@ describe("`30 §5.7.1`'s FRESHNESS RULE, at the boundary", () => {
   const signal = held(T0);
 
   it('one millisecond inside `max_age` — FRESH', () => {
-    expect(isCorroborationFresh(signal, new Date(T0.getTime() + SIGNAL_MAX_AGE_MS - 1))).toBe(
+    expect(isCorroborationFresh(signal, new Date(T0.getTime() + signalMaxAgeMs() - 1))).toBe(
       true,
     );
   });
 
   it('EXACTLY at `observed_at + max_age` — NOT fresh, because `now < expires_at` is strict', () => {
-    expect(isCorroborationFresh(signal, new Date(T0.getTime() + SIGNAL_MAX_AGE_MS))).toBe(false);
+    expect(isCorroborationFresh(signal, new Date(T0.getTime() + signalMaxAgeMs()))).toBe(false);
   });
 
   it('one millisecond past — NOT fresh', () => {
-    expect(isCorroborationFresh(signal, new Date(T0.getTime() + SIGNAL_MAX_AGE_MS + 1))).toBe(
+    expect(isCorroborationFresh(signal, new Date(T0.getTime() + signalMaxAgeMs() + 1))).toBe(
       false,
     );
   });
@@ -231,7 +231,7 @@ describe("`30 §5.7.1`'s FRESHNESS RULE, at the boundary", () => {
       ...signal,
       expiresAt: new Date(T0.getTime() + 24 * 60 * 60 * 1000),
     };
-    expect(isCorroborationFresh(rewritten, new Date(T0.getTime() + SIGNAL_MAX_AGE_MS + 1))).toBe(
+    expect(isCorroborationFresh(rewritten, new Date(T0.getTime() + signalMaxAgeMs() + 1))).toBe(
       false,
     );
   });

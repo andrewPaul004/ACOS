@@ -1,7 +1,7 @@
 import {
-  ACTION_CATALOGUE,
   ACTION_CLASSES,
   INTERNAL_ONLY_ADAPTER,
+  actionCatalogueEntry,
 } from '../canonicalisation/actionCatalogue.js';
 import type { Recoverability } from '../canonicalisation/actionCatalogue.js';
 import type { ExternalEffectAdapter } from './adapterPort.js';
@@ -84,7 +84,7 @@ export interface AdapterRegistry {
 export function catalogueAdapterIds(): readonly string[] {
   const ids = new Set<string>();
   for (const actionClass of ACTION_CLASSES) {
-    const adapter = ACTION_CATALOGUE[actionClass].adapter;
+    const adapter = actionCatalogueEntry(actionClass).adapter;
     if (adapter !== INTERNAL_ONLY_ADAPTER) ids.add(adapter);
   }
   return [...ids].sort();

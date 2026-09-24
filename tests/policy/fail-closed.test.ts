@@ -1,15 +1,13 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { PolicyEngine } from '../../src/kernel/policy/policyEngine.js';
 import { PolicyEvaluationDefect } from '../../src/kernel/policy/errors.js';
 import { evaluateWithCedar } from '../../src/kernel/policy/cedarEngine.js';
 import { buildCedarRequest, type CedarRequest } from '../../src/kernel/policy/cedarRequest.js';
 import {
-  DEFAULT_ARTIFACT_ROOT,
   loadPolicyArtifacts,
   type LoadedPolicyArtifacts,
 } from '../../src/kernel/policy/policyArtifacts.js';
@@ -22,6 +20,7 @@ import {
   makeRefundOption,
 } from '../support/canonicalisationFixture.js';
 import { canonicalEffectAt } from '../support/policyFixture.js';
+import { stagedPolicyBundle } from '../support/controlArtifactFixture.js';
 
 /**
  * FAIL-CLOSED, on every path the S1D mandate names.
@@ -44,18 +43,30 @@ import { canonicalEffectAt } from '../support/policyFixture.js';
 
 const engine = new PolicyEngine();
 const artifacts = loadPolicyArtifacts();
-const scratch: string[] = [];
+/**
+ * v1.3.6 (`50 §2e`): a staged policy set is now a SIGNED CLASS-2 BUNDLE, not a directory.
+ *
+ * `50 §2e`'s O4 rule makes the Cedar bundle an owner-signed artifact admitted only after its
+ * content hash and both signatures verify, so "write a broken policy file into a directory"
+ * is no longer something a deployment can do and is no longer what these cases should model.
+ * Each staged set below is edited, RE-SIGNED by the test-only roots, verified through the
+ * full `50 §3f` ceremony, and then handed to the loader — so what is under test remains the
+ * POLICY LOADER's behaviour over a set the owner signed, which is the case that can still
+ * happen.
+ */
+function stagedArtifacts(
+  edit: (policies: { id: string; source: string }[]) => { id: string; source: string }[],
+): LoadedPolicyArtifacts {
+  return loadPolicyArtifacts(
+    stagedPolicyBundle((document) => ({ ...document, policies: edit(document.policies) })),
+  );
+}
 
-afterAll(() => {
-  for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
-});
-
-function stagedArtifacts(mutate: (root: string) => void): LoadedPolicyArtifacts {
-  const root = mkdtempSync(join(tmpdir(), 'acos-failclosed-'));
-  scratch.push(root);
-  cpSync(DEFAULT_ARTIFACT_ROOT, root, { recursive: true });
-  mutate(root);
-  return loadPolicyArtifacts(root);
+function replacingPolicy(
+  id: string,
+  source: string,
+): (policies: { id: string; source: string }[]) => { id: string; source: string }[] {
+  return (policies) => policies.map((policy) => (policy.id === id ? { id, source } : policy));
 }
 
 /** Assert an outcome is not a permit, whichever fail-closed shape it takes. */
@@ -123,7 +134,9 @@ describe('NO APPLICABLE POLICY', () => {
     // whose only remaining policy is the `forbid` would deny every refund — an outage, and
     // `26 §11` P6 is explicit that an outage is not a passing policy set.
     expect(() =>
-      stagedArtifacts((root) => rmSync(join(root, 'policies', 'acos.refund.create.grant.cedar'))),
+      stagedArtifacts((policies) =>
+        policies.filter((policy) => policy.id !== 'acos.refund.create.grant'),
+      ),
     ).toThrow(/missing \[acos\.refund\.create\.grant\]/);
   });
 });
@@ -341,15 +354,15 @@ describe('CEDAR EVALUATION ERROR', () => {
     // A policy reading an optional attribute without a `has` guard errors at runtime. Cedar
     // then reports a decision AND an error, and a decision taken over an errored policy set
     // is not a decision.
-    const errored = stagedArtifacts((root) => {
-      writeFileSync(
-        join(root, 'policies', 'acos.refund.create.grant.cedar'),
+    const errored = stagedArtifacts(
+      replacingPolicy(
+        'acos.refund.create.grant',
         `permit(principal in Acos::Role::"support_reasoner",
                 action == Acos::Action::"refund.create",
                 resource is Acos::Order)
          when { context.customer_novelty == "RETURNING" };\n`,
-      );
-    });
+      ),
+    );
     const effect = canonicalEffectAt({ vendorAmount: '10.00', retainedFee: '1.03' });
     const { canonicaliser } = makeCanonicaliser();
     const option = makeRefundOption({ amount: money('10.00') });
@@ -370,13 +383,13 @@ describe('CEDAR EVALUATION ERROR', () => {
   it('a FORBID that errors is a defect too — the most dangerous case', () => {
     // If a permit errors, Cedar denies and the outcome is safe by luck. If the FORBID errors
     // the outcome could be a permit, so the error check runs before the decision is read.
-    const errored = stagedArtifacts((root) => {
-      writeFileSync(
-        join(root, 'policies', 'acos.refund.create.per_action_max.cedar'),
+    const errored = stagedArtifacts(
+      replacingPolicy(
+        'acos.refund.create.per_action_max',
         `forbid(principal, action == Acos::Action::"refund.create", resource)
          unless { context.customer_novelty == "NOBODY" };\n`,
-      );
-    });
+      ),
+    );
     const { canonicaliser } = makeCanonicaliser();
     const option = makeRefundOption({ amount: money('10.00') });
     const noNovelty = canonicaliser.canonicalise(
@@ -390,12 +403,12 @@ describe('CEDAR EVALUATION ERROR', () => {
   });
 
   it('a deployed forbid with NO registered denial terminal is a defect, not a category guess', () => {
-    const unmapped = stagedArtifacts((root) => {
-      writeFileSync(
-        join(root, 'policies', 'acos.refund.create.grant.cedar'),
+    const unmapped = stagedArtifacts(
+      replacingPolicy(
+        'acos.refund.create.grant',
         `forbid(principal, action == Acos::Action::"refund.create", resource);\n`,
-      );
-    });
+      ),
+    );
     const effect = canonicalEffectAt({ vendorAmount: '10.00', retainedFee: '1.03' });
     expect(() => new PolicyEngine(unmapped).evaluate(effect)).toThrow(
       /no registered denial terminal: acos\.refund\.create\.grant/,

@@ -31,6 +31,7 @@ import {
   unsafeMapperDroppingCorrelationTag,
   unsafeMapperDroppingUnmirroredTag,
 } from '../../negative-controls/unsafe-dispatch-envelope.js';
+import { activeVerifiedControlArtifacts } from '../../../src/kernel/controlArtifacts/registry.js';
 
 /**
  * `§10`, `§11`, `§32` — THE EXACT PERSISTED PAYLOAD, THE TAG, AND IMMUTABILITY.
@@ -278,7 +279,7 @@ describe('`§11` — THE CORRELATION TAG CROSSES THE PORT UNCHANGED', () => {
       now: NOW,
     });
     const row = (await outboxRows(h.control))[0]!;
-    const built = buildDispatchEnvelope(row);
+    const built = buildDispatchEnvelope(row, activeVerifiedControlArtifacts());
     expect(built.kind).toBe('BUILT');
     if (built.kind !== 'BUILT') return;
 
@@ -335,7 +336,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
     // And what a SECOND reader sees is the original. This is `§32`'s "the request another
     // adapter would see", asserted directly.
     const row = (await outboxRows(h.control))[0]!;
-    const rebuilt = buildDispatchEnvelope(row);
+    const rebuilt = buildDispatchEnvelope(row, activeVerifiedControlArtifacts());
     expect(rebuilt.kind).toBe('BUILT');
     if (rebuilt.kind !== 'BUILT') return;
     expect(rebuilt.envelope.payloadCanonicalBytes.toString('hex')).toBe(persisted);
@@ -352,7 +353,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
       now: NOW,
     });
     const row = (await outboxRows(h.control))[0]!;
-    const built = buildDispatchEnvelope(row);
+    const built = buildDispatchEnvelope(row, activeVerifiedControlArtifacts());
     if (built.kind !== 'BUILT') throw new Error('envelope did not build');
 
     const first = built.envelope.payloadCanonicalBytes;
@@ -368,7 +369,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
     const effect = await enqueuedRefund('no-alias');
     const rows = await outboxRows(h.control);
     const row = rows[0]!;
-    const built = buildDispatchEnvelope({ ...row, status: 'CLAIMED', claimId: 'claim:x' });
+    const built = buildDispatchEnvelope({ ...row, status: 'CLAIMED', claimId: 'claim:x' }, activeVerifiedControlArtifacts());
     // Not claimed in the database, so the build refuses — which is itself the point of the
     // `ROW_NOT_CLAIMED` refusal, and is asserted below. Claim it properly first.
     expect(built.kind).toBe('BUILT');
@@ -380,7 +381,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
       now: NOW,
     });
     const claimedRow = (await outboxRows(h.control))[0]!;
-    const rebuilt = buildDispatchEnvelope(claimedRow);
+    const rebuilt = buildDispatchEnvelope(claimedRow, activeVerifiedControlArtifacts());
     if (rebuilt.kind !== 'BUILT') throw new Error('envelope did not build');
     // Mutating the ROW's buffer does not change the envelope's snapshot.
     const before = rebuilt.envelope.payloadCanonicalBytes.toString('hex');
@@ -393,7 +394,7 @@ describe('`§32` — THE ENVELOPE IS IMMUTABLE, AND HOLDS NO ALIAS TO THE ROW', 
     expect(effect.idempotencyKey).toBeTruthy();
     const row = (await outboxRows(h.control))[0]!;
     expect(row.status).toBe('ENQUEUED');
-    const built = buildDispatchEnvelope(row);
+    const built = buildDispatchEnvelope(row, activeVerifiedControlArtifacts());
     expect(built.kind).toBe('REFUSED');
     if (built.kind === 'REFUSED') expect(built.reason).toBe('ROW_NOT_CLAIMED');
   });
@@ -410,7 +411,7 @@ describe('`§12` — THE UNMIRRORED REQUIREMENT IS CARRIED, AND CANNOT BE SUPPRE
       now: NOW,
     });
     const row = (await outboxRows(h.control))[0]!;
-    const built = buildDispatchEnvelope(row);
+    const built = buildDispatchEnvelope(row, activeVerifiedControlArtifacts());
     if (built.kind !== 'BUILT') throw new Error('envelope did not build');
 
     const dropped = unsafeMapperDroppingUnmirroredTag(built.envelope);

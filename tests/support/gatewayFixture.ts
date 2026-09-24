@@ -8,6 +8,7 @@ import {
 } from '../../src/kernel/gateway/adapterRegistry.js';
 import type { ExternalEffectAdapter } from '../../src/kernel/gateway/adapterPort.js';
 import { COMPANY_ID } from './fixture.js';
+import { activeVerifiedControlArtifacts } from '../../src/kernel/controlArtifacts/registry.js';
 
 /**
  * The three catalogue adapter identities the S1 closed catalogue names.
@@ -59,6 +60,11 @@ export function dispatchEnv(
     registry: createAdapterRegistry(adapters),
     leases: new DispatchLeaseManager({ pool: h.control }),
     enumerator: h.kernel.enumerator,
+    // `50 §3f`'s pre-live external-effect gate. The capability is a REQUIRED member of
+    // `DispatchEnvironment`, so a fixture cannot build a dispatch path without one either —
+    // which is the property `§51` of the S1K mandate asks for: a future real-adapter
+    // composition must not be able to bypass it.
+    controlArtifacts: activeVerifiedControlArtifacts(),
   };
 }
 
@@ -77,6 +83,11 @@ export function dispatchEnvWith(
     registry,
     leases: new DispatchLeaseManager({ pool: h.control }),
     enumerator: h.kernel.enumerator,
+    // `50 §3f`'s pre-live external-effect gate. The capability is a REQUIRED member of
+    // `DispatchEnvironment`, so a fixture cannot build a dispatch path without one either —
+    // which is the property `§51` of the S1K mandate asks for: a future real-adapter
+    // composition must not be able to bypass it.
+    controlArtifacts: activeVerifiedControlArtifacts(),
   };
 }
 

@@ -1,5 +1,5 @@
 import { toDb } from '../exposure/money.js';
-import { ACTION_CATALOGUE, type ActionCatalogueEntry } from './actionCatalogue.js';
+import { actionCatalogueEntry, type ActionCatalogueEntry } from './actionCatalogue.js';
 import { computed } from './brands.js';
 import {
   canonicalBytes,
@@ -105,7 +105,10 @@ export class EffectCanonicaliser {
     // S1B.2 finding 1B. `action_class` has already passed the closed-catalogue check in
     // `parseProposedIntent` (step C), so this lookup is total. Nothing upstream may
     // substitute a different row for the same class, because the context carries none.
-    const catalogueEntry = ACTION_CATALOGUE[intent.actionClass];
+    // v1.3.6 (`50 §2a`, `50 §3f`): resolved from the ACTIVE VERIFIED BUNDLE. The lookup is
+    // still total and still by class; what changed is that the row it returns is parsed from
+    // owner-signed bytes rather than from a literal in this tree.
+    const catalogueEntry = actionCatalogueEntry(intent.actionClass);
 
     // --- the authoritative inputs must describe this intent -----------------------------
     //

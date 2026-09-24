@@ -20,7 +20,7 @@ import {
   type SignalWire,
 } from '../../../src/kernel/mirror/corroborationSignal.js';
 import {
-  SIGNAL_MAX_AGE_MS,
+  signalMaxAgeMs,
   resolveMirrorState,
 } from '../../../src/kernel/mirror/mirrorState.js';
 
@@ -190,7 +190,7 @@ describe('consuming a signal is JOURNALED and REPLAY-PROTECTED', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.signalId).toBe('signal:one');
     expect(rows[0]!.reason).toBe('ATTESTATION_STALL');
-    expect(rows[0]!.expiresAt?.getTime()).toBe(T0.getTime() + SIGNAL_MAX_AGE_MS);
+    expect(rows[0]!.expiresAt?.getTime()).toBe(T0.getTime() + signalMaxAgeMs());
   });
 
   it('the SAME `signal_id` cannot re-enter the state machine', async () => {
@@ -224,7 +224,7 @@ describe('consuming a signal is JOURNALED and REPLAY-PROTECTED', () => {
           [
             COMPANY_ID,
             T0,
-            new Date(T0.getTime() + SIGNAL_MAX_AGE_MS),
+            new Date(T0.getTime() + signalMaxAgeMs()),
             Buffer.alloc(AUDIT_KEY_PLACEHOLDER_LENGTH),
           ],
         ),
@@ -287,7 +287,7 @@ describe('THE PERSISTED VALUE NEVER DISAGREES WITH A FRESH DERIVATION', () => {
     expect(await derive(T0)).toBe('CORROBORATED_DEGRADED');
 
     // AGE OUT. `30 §5.7.1`: evaluated at EVERY state evaluation.
-    const past = new Date(T0.getTime() + SIGNAL_MAX_AGE_MS + 1);
+    const past = new Date(T0.getTime() + signalMaxAgeMs() + 1);
     const reverted = await evaluateState(h.control, COMPANY_ID, past);
     expect(reverted.state).toBe('UNCORROBORATED_STALL');
     expect((await persistedState(h.control, COMPANY_ID))!.state).toBe('UNCORROBORATED_STALL');

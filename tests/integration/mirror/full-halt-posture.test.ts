@@ -31,7 +31,7 @@ import {
   mirrorDispatchOperands,
   openDeclarationOpenedAt,
 } from '../../../src/kernel/mirror/mirrorStateMachine.js';
-import { DEGRADED_MODE_TIMING } from '../../../src/kernel/mirror/degradedModeThresholds.js';
+import { degradedModeTiming } from '../../../src/kernel/mirror/degradedModeThresholds.js';
 import { money } from '../../../src/kernel/exposure/money.js';
 import { sign as signEd25519, type KeyObject } from 'node:crypto';
 
@@ -67,7 +67,7 @@ const T0 = new Date('2026-03-01T12:00:00.000Z');
 const HOUR = 60 * 60 * 1000;
 
 /** The declared threshold, and the two instants either side of it. */
-const T = DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs;
+const T = degradedModeTiming().auditUnreachableFullHaltMs;
 /** `29:59.999` after the declaration opened. */
 const JUST_INSIDE = new Date(T0.getTime() + T - 1);
 /** Exactly `30:00.000` after the declaration opened. */

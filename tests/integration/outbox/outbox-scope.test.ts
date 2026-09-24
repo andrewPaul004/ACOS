@@ -14,13 +14,24 @@ import {
 } from '../../support/outboxFixture.js';
 import { enqueueDispatch, readByEffect } from '../../../src/kernel/outbox/enqueue.js';
 import {
-  ACTION_CATALOGUE,
+  actionCatalogue,
   ACTION_CLASSES,
   INTERNAL_ONLY_ADAPTER,
   requiresExternalDispatch,
   requiresExternalDispatchFor,
   type ActionCatalogueEntry,
 } from '../../../src/kernel/canonicalisation/actionCatalogue.js';
+
+/**
+ * v1.3.6 (`50 §2a`, `50 §3f`): the catalogue is READ FROM THE ACTIVE VERIFIED BUNDLE.
+ *
+ * Before S1K this was a frozen literal imported from `actionCatalogue.ts`. `50 §3f`'s single
+ * source of authority rule moved it into the signed class-3 artifact, so this binding now
+ * resolves the same rows out of the bundle `tests/support/controlArtifactSetup.ts`
+ * bootstrapped — which is what production reads.
+ */
+const ACTION_CATALOGUE = actionCatalogue().entries;
+
 
 /**
  * `S1I-C5` RESOLVED — THE OUTBOX APPLIES TO EVERY EXTERNAL-WRITE EFFECT AND ONLY THOSE.

@@ -1,4 +1,5 @@
 import type { Pool } from '../../db/pool.js';
+import type { VerifiedControlArtifactBundle } from '../controlArtifacts/bundle.js';
 import type { EffectEnumerator } from '../enumeration/enumerateEffects.js';
 import { withSerialisationRetry } from '../exposure/retry.js';
 import { claimForExternalDispatchOn } from '../outbox/claim.js';
@@ -165,6 +166,24 @@ import {
 export interface DispatchEnvironment {
   readonly control: Pool;
   readonly registry: AdapterRegistry;
+  /**
+   * `50 §3f`'s PRE-LIVE EXTERNAL-EFFECT GATE — v1.3.6, and it is a REQUIRED field.
+   *
+   * `50 §3f`, the pre-authority / pre-claim gate, verbatim: "**external claim and dispatch
+   * cannot proceed if the verified bundle is unavailable or invalid.**"
+   *
+   * The capability is a required member of the environment rather than something this
+   * module fetches, so the dependency is TYPE-LEVEL: a composition that wired a real
+   * adapter into this gateway could not construct a `DispatchEnvironment` without holding a
+   * bundle that `50 §3f` occasion 1 or 2 produced, and the bundle cannot be manufactured
+   * (`controlArtifacts/bundle.ts`). `§51` of the S1K mandate: "A future real-adapter
+   * composition must not be able to bypass this."
+   *
+   * It is also the bundle the dispatch path READS its catalogue authority from — the
+   * adapter and recoverability the envelope is checked against — so the gate is not a token
+   * carried beside the decision but the source of it.
+   */
+  readonly controlArtifacts: VerifiedControlArtifactBundle;
   /** `25 §14.1` Epoch B. NEVER an `EntityLeaseManager` handed in as "the lease". */
   readonly leases: DispatchLeaseManager;
   /** The ACCEPTED S1C enumeration core, for `25 §14.1`'s live re-enumeration. */
@@ -491,7 +510,7 @@ export async function dispatchAuthorisedEffect(
       // `dispatch-lease-crash.test.ts` is the regression that an old `CLAIMED` row plus a
       // newly acquired dispatch lease still cannot dispatch.
       // -----------------------------------------------------------------------------
-      const built = buildDispatchEnvelope(claim.claim.row);
+      const built = buildDispatchEnvelope(claim.claim.row, env.controlArtifacts);
       if (built.kind === 'REFUSED') {
         return { kind: 'ENVELOPE_REFUSED', reason: built.reason, detail: built.detail };
       }

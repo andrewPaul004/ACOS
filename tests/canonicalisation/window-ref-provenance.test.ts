@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ACTION_CATALOGUE,
+  actionCatalogue,
   type ActionCatalogueEntry,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import { CanonicalisationDenied } from '../../src/kernel/canonicalisation/errors.js';
@@ -19,6 +19,17 @@ import {
   makeRefundOption,
 } from '../support/canonicalisationFixture.js';
 import { VC_C1_EXPECTED_WINDOW_REFS } from '../support/canonicalisationOracle.js';
+
+/**
+ * v1.3.6 (`50 §2a`, `50 §3f`): the catalogue is READ FROM THE ACTIVE VERIFIED BUNDLE.
+ *
+ * Before S1K this was a frozen literal imported from `actionCatalogue.ts`. `50 §3f`'s single
+ * source of authority rule moved it into the signed class-3 artifact, so this binding now
+ * resolves the same rows out of the bundle `tests/support/controlArtifactSetup.ts`
+ * bootstrapped — which is what production reads.
+ */
+const ACTION_CATALOGUE = actionCatalogue().entries;
+
 
 /**
  * S1B.1 — `window_refs` provenance, before Cedar. Owner clarification S1B-C5a.

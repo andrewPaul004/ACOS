@@ -5,6 +5,7 @@ import type { AdapterRegistry } from '../../src/kernel/gateway/adapterRegistry.j
 import { resolveAdapterFor } from '../../src/kernel/gateway/adapterRegistry.js';
 import { buildDispatchEnvelope } from '../../src/kernel/gateway/dispatchEnvelope.js';
 import type { AdapterOutcome } from '../../src/kernel/gateway/adapterPort.js';
+import { activeVerifiedControlArtifacts } from '../../src/kernel/controlArtifacts/registry.js';
 
 /**
  * TEST-ONLY. THE TWO EPOCH-B DEFECTS `25 §14.1` EXISTS TO PREVENT — `§29`, `§32`.
@@ -62,7 +63,7 @@ export async function unsafeDispatchWithoutRevalidation(
   });
   if (claim.kind === 'REFUSED') return { claim, invoked: false, outcome: null };
 
-  const built = buildDispatchEnvelope(claim.claim.row);
+  const built = buildDispatchEnvelope(claim.claim.row, activeVerifiedControlArtifacts());
   if (built.kind === 'REFUSED') return { claim, invoked: false, outcome: null };
 
   const resolution = resolveAdapterFor(registry, {
@@ -151,7 +152,7 @@ export async function unsafeDispatchOnPersistedClaim(
       claimClockRef: dbRow['claim_clock_ref'] as string | null,
     };
 
-    const built = buildDispatchEnvelope(claiming as never);
+    const built = buildDispatchEnvelope(claiming as never, activeVerifiedControlArtifacts());
     if (built.kind === 'REFUSED') return { invoked: false, outcome: null };
 
     const resolution = resolveAdapterFor(registry, {

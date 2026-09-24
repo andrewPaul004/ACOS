@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { toDb, type Money } from '../exposure/money.js';
+import { assertJcs1SpecificationAdmitted } from './jcs1Admission.js';
 
 /**
  * Canonical bytes for canonicaliser structures, under the `ACOS-JCS-1` rules.
@@ -367,6 +368,25 @@ function fieldValueBytes(field: CanonicalField): Buffer | null {
  * reserved word.
  */
 export function canonicalBytes(kind: string, fields: CanonicalStructure): Buffer {
+  // =================================================================================
+  // `50 §3g`'s CLASS-20 ADMISSION GATE — v1.3.6.
+  //
+  // `50 §3f`: "`ACOS-JCS-1` consumers are bound to the **verified class-20 specification
+  // identity**." `50 §3g`: "**After class-20 artifact verification succeeds, the
+  // `ACOS-JCS-1` implementations may be admitted and used for journal canonicalisation.**"
+  //
+  // This module is the TypeScript `ACOS-JCS-1` implementation `50 §6`'s class-20 row names
+  // as a runtime consumer, so the gate is here, at its one structural entry point. Until a
+  // verified bundle carrying class 20 at `ACOS-JCS-1` is active, this function refuses —
+  // canonicalisation does not operate as an authority mechanism under an unverified or
+  // wrong specification identity.
+  //
+  // THERE IS NO CIRCULARITY. `50 §3g` requires that manifest verification not depend on
+  // `ACOS-JCS-1`, and it does not: `controlArtifacts/casSig.ts` has no imports at all and
+  // nothing on the bootstrap path reaches this file.
+  // =================================================================================
+  assertJcs1SpecificationAdmitted();
+
   const parts: Buffer[] = [];
   const emit = (value: Buffer | null): void => {
     if (value === null) {

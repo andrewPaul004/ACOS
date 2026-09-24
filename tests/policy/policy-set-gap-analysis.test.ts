@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ACTION_CATALOGUE,
+  actionCatalogue,
   ACTION_CLASSES,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import {
@@ -13,6 +13,17 @@ import { evaluateWithCedar } from '../../src/kernel/policy/cedarEngine.js';
 import { loadPolicyArtifacts } from '../../src/kernel/policy/policyArtifacts.js';
 import { PolicyEngine } from '../../src/kernel/policy/policyEngine.js';
 import { canonicalEffectAt } from '../support/policyFixture.js';
+
+/**
+ * v1.3.6 (`50 §2a`, `50 §3f`): the catalogue is READ FROM THE ACTIVE VERIFIED BUNDLE.
+ *
+ * Before S1K this was a frozen literal imported from `actionCatalogue.ts`. `50 §3f`'s single
+ * source of authority rule moved it into the signed class-3 artifact, so this binding now
+ * resolves the same rows out of the bundle `tests/support/controlArtifactSetup.ts`
+ * bootstrapped — which is what production reads.
+ */
+const ACTION_CATALOGUE = actionCatalogue().entries;
+
 
 /**
  * POLICY-SET GAP ANALYSIS.

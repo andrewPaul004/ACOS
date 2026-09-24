@@ -1,379 +1,271 @@
+import {
+  verifiedActionCatalogue,
+  type VerifiedActionCatalogue,
+  type VerifiedActionCatalogueEntry,
+  type VerifiedControlArtifactBundle,
+} from '../controlArtifacts/bundle.js';
+import { activeVerifiedControlArtifacts } from '../controlArtifacts/registry.js';
+import {
+  ACTION_CLASSES,
+  INTERNAL_ONLY_ADAPTER,
+  type ActionClass,
+  type ReasonCode,
+  type ReasonCodeScope,
+} from './actionClasses.js';
+
 /**
- * The closed action catalogue, and the closed reason-code enum.
+ * THE CLOSED ACTION CATALOGUE — read from `50 §2a`'s SIGNED class-3 artifact, and from
+ * nowhere else.
  *
- * SR7 and ADR-006: the catalogue is the single extension point. ADR-006, verbatim:
+ * =================================================================================
+ * WHAT THIS FILE WAS BEFORE S1K, AND WHY IT COULD NOT STAY THAT WAY
  *
- *   "It also makes the closed action catalogue (SR7) the single extension point, so adding
- *    a capability is a deliberate act with a policy consequence rather than an incidental
- *    tool registration."
+ * Until this slice, `ACTION_CATALOGUE` was a frozen TypeScript literal in this module, and
+ * every authority consumer read it: `stepR.ts` took `irrecoverable_units` from it,
+ * `enqueue.ts` derived `I66`'s outbox scope predicate from its `adapter`,
+ * `adapterRegistry.ts` resolved adapters from it, `canonicaliser.ts` copied `recoverability`
+ * and `value_direction` out of it, and `refundCreate.ts` read the reason-code scope map
+ * beside it. The manifest declared class 3 signed and NOTHING VERIFIED ANYTHING, so the
+ * deployed authority was a literal a code change could move.
  *
- * `37 §2` S1 scope, verbatim:
+ * `50 §3f`, the single source of authority, verbatim:
  *
- *   "Closed action catalogue with exactly three classes: one REVERSIBLE, one COMPENSABLE,
- *    one IRRECOVERABLE, all against a mock adapter — plus one rate-based class against a
- *    mock, because a rate cannot be tested with an amount."
+ *   "**For classes 3 and 27 the signed artifact bytes ARE the deployed authority source.**
+ *    Production code may parse them into frozen typed structures **after** verification.
+ *    **It may not maintain a signed artifact value and a hard-coded production literal as
+ *    two authority sources with equality asserted only in tests** — that leaves the unsigned
+ *    literal authoritative in the path that matters. **Migrating today's frozen literals
+ *    onto the verified bundle is required S1K runtime work** and is listed as such in
+ *    `37 §2`."
  *
- * So four classes. S1B registers a constructor for exactly ONE of them — `refund.create`,
- * the money-bearing one. The other three are in the catalogue and have no constructor, so
- * they deny `NOT_CANONICALISABLE` at step C2, which is the behaviour `36 §2` asks for:
+ * =================================================================================
+ * SO: THERE IS NO CATALOGUE LITERAL IN THIS FILE, AND THAT ABSENCE IS THE CONTROL
  *
- *   "an action class with no registered constructor must produce DENY: NOT_CANONICALISABLE."
+ * Every function below resolves through `activeVerifiedControlArtifacts()`, which throws
+ * `NO_ACTIVE_VERIFIED_BUNDLE` when `50 §3f` occasion 1 has not completed. There is no
+ * fallback table, no default entry, no `?? DEFAULT`, and no cached copy that could outlive a
+ * failed reload.
+ *
+ * `tests/negative-controls/unsafe-unsigned-authority-literals.ts` is the discriminating
+ * control: it carries the v1.3.5 literal with `fulfilment.reship` moved to `0` irrecoverable
+ * units and `internal_only`, and `tests/controlArtifacts/class-3-authority.test.ts` runs
+ * both readers over one fixture in which the signed artifact says `1` and `mock_commerce`.
+ * The unsafe reader answers `0` and "no outbox row"; production answers `1` and "one outbox
+ * row". If production still held a literal the two would agree, and the control would prove
+ * nothing.
+ *
+ * =================================================================================
+ * WHAT REMAINS A CONSTANT, AND WHY THAT IS NOT THE SAME MISTAKE
+ *
+ * The closed MEMBER SETS and the type unions moved to `actionClasses.ts` and are re-exported
+ * here so every existing import keeps working. `§17` of the S1K mandate permits exactly
+ * that: "TypeScript enum names; parser machinery; structural schemas". A member set decides
+ * which names can be written down; it decides no recoverability, no adapter, no unit count
+ * and no tolerance, and the class-3 parser REFUSES an artifact whose membership disagrees
+ * with it rather than silently taking either side.
+ * =================================================================================
  */
 
-/** `26 §5`. Assigned per action class in the catalogue, never per request, never by a model. */
-export type Recoverability = 'REVERSIBLE' | 'COMPENSABLE' | 'IRRECOVERABLE';
+export {
+  ACTION_CLASSES,
+  INTERNAL_ONLY_ADAPTER,
+  REASON_CODES,
+  isActionClass,
+  isReasonCode,
+} from './actionClasses.js';
 
-/** `26 §2.1`. "From the catalogue, never null (I59)." */
-export type ValueDirection =
-  | 'NONE'
-  | 'INBOUND_ORIGINAL_INSTRUMENT'
-  | 'OUTBOUND_TO_COUNTERPARTY'
-  | 'INTERNAL_LIABILITY'
-  | 'OUTBOUND_TO_THIRD_PARTY_BENEFICIARY'
-  | 'OUTBOUND_GOODS_TO_ADDRESS';
+export type {
+  ActionClass,
+  ReasonCode,
+  ReasonCodeScope,
+  Recoverability,
+  SettlementTolerance,
+  ValueDirection,
+} from './actionClasses.js';
 
-export const ACTION_CLASSES = [
-  'campaign.pause',
-  'refund.create',
-  'fulfilment.reship',
-  'campaign.budget.set',
-] as const;
+/**
+ * One class's verified catalogue record — `50 §2a` Part A's exactly ten fields.
+ *
+ * It is the parsed representation of signed bytes, so the type is the bundle's own. There is
+ * deliberately no constructor for it in `src/`: the only way to obtain one is to verify a
+ * package.
+ */
+export type ActionCatalogueEntry = VerifiedActionCatalogueEntry;
 
-export type ActionClass = (typeof ACTION_CLASSES)[number];
-
-const ACTION_CLASS_SET: ReadonlySet<string> = new Set<string>(ACTION_CLASSES);
-
-export function isActionClass(value: string): value is ActionClass {
-  return ACTION_CLASS_SET.has(value);
+/**
+ * Resolve the verified catalogue.
+ *
+ * The optional `bundle` parameter exists for call sites that already hold the capability —
+ * `50 §3f` occasion 3's "Production authority code receives only a
+ * `VerifiedControlArtifactBundle`" — and defaults to the active published one. It is NOT a
+ * route to an unverified catalogue: the parameter's type is the sealed capability, which
+ * only verification produces.
+ */
+export function actionCatalogue(
+  bundle: VerifiedControlArtifactBundle = activeVerifiedControlArtifacts(),
+): VerifiedActionCatalogue {
+  return verifiedActionCatalogue(bundle);
 }
 
 /**
- * The closed `reason_code` enum for the S1B fixture catalogue.
+ * One class's verified record.
  *
- * `26 §2.0`, verbatim: "reason_code       // from a closed enum". `26 §8`'s refund policy
- * sketch reads `context.reason_code in ApprovedReasons`. The architecture requires the
- * enum to be closed and never enumerates its members, so S1B declares a fixture set and
- * records that as a clarification rather than an architecture claim — see
- * docs/implementation/S1B-owner-clarifications.md S1B-C6.
- *
- * The point of the closure is that `reason_code` is NOT free text, which is what leaves
- * `rationale` as the only free text on the model-facing surface.
+ * `50 §2a` declares the per-class record "for every member of the closed action catalogue",
+ * and the parser refuses an artifact that omits one, so this lookup is total over
+ * `ActionClass` by construction. The throw below is an ASSERTION on that construction, not
+ * a fallback: `51 §2.3`'s rule that "a class present in the catalogue with no declared value
+ * is a catalogue-validation failure, not a class with a value of one" applies to every field
+ * of the record, not only to the unit count.
  */
-export const REASON_CODES = [
-  'CUSTOMER_REPORTED_DAMAGE',
-  'CUSTOMER_REPORTED_NOT_RECEIVED',
-  'ITEM_RETURNED',
-  'DUPLICATE_CHARGE',
-  'PRICING_ERROR',
-] as const;
-
-export type ReasonCode = (typeof REASON_CODES)[number];
-
-const REASON_CODE_SET: ReadonlySet<string> = new Set<string>(REASON_CODES);
-
-export function isReasonCode(value: string): value is ReasonCode {
-  return REASON_CODE_SET.has(value);
+export function actionCatalogueEntry(
+  actionClass: ActionClass,
+  bundle?: VerifiedControlArtifactBundle,
+): ActionCatalogueEntry {
+  const entry = actionCatalogue(bundle).entries[actionClass];
+  if (entry === undefined) {
+    throw new Error(
+      `${actionClass} has no record in the verified class-3 action catalogue; an ` +
+        'undeclared class has no authority and no implicit default may widen it ' +
+        '(50 §2a, 51 §2.3)',
+    );
+  }
+  return entry;
 }
 
 /**
- * `reason_code_scope` — the coarser grouping the `refund.create` semantic option digest
- * covers (`26 §2.2`). Two reason codes in one scope select the same effect; a scope change
- * makes it a different effect and therefore a different `option_id`.
+ * `50 §2a` record 12 — the TOTAL map from `reason_code` to `reason_code_scope`.
+ *
+ * `refundCreate.ts` reads it to check that a proposed reason code belongs to the scope the
+ * selected option was addressed under. Before S1K that map was a literal beside the
+ * catalogue; it is now signed content, so a deployment cannot widen which reasons reach
+ * which refund option by editing a TypeScript file.
  */
-export type ReasonCodeScope = 'GOODS_FAULT' | 'GOODS_RETURNED' | 'BILLING_ERROR';
-
-export const REASON_CODE_SCOPES: Readonly<Record<ReasonCode, ReasonCodeScope>> = Object.freeze({
-  CUSTOMER_REPORTED_DAMAGE: 'GOODS_FAULT',
-  CUSTOMER_REPORTED_NOT_RECEIVED: 'GOODS_FAULT',
-  ITEM_RETURNED: 'GOODS_RETURNED',
-  DUPLICATE_CHARGE: 'BILLING_ERROR',
-  PRICING_ERROR: 'BILLING_ERROR',
-});
-
-export interface ActionCatalogueEntry {
-  readonly actionClass: ActionClass;
-  /** `26 §5`. */
-  readonly recoverability: Recoverability;
-  /** `26 §2.1`, `26 §11.2`, `I59`. */
-  readonly valueDirection: ValueDirection;
-  /**
-   * Whether the dispatched vendor request carries a monetary field at all.
-   *
-   * `I18a`, verbatim: "Where the vendor request carries a monetary field,
-   * dispatch_payload.monetary_effect == exposure.vendor_amount. Where it does not, both
-   * are NULL."
-   */
-  readonly carriesVendorMonetaryField: boolean;
-  /**
-   * `I18c`, verbatim: "with equality only for action classes declaring an empty
-   * cost_components[] in the catalogue."
-   */
-  readonly costComponentFree: boolean;
-  /** `26 §2.1.3` — a rate class reserves `0.00` and carries its economics in `I3` term 2. */
-  readonly rateBased: boolean;
-  /**
-   * THERE IS DELIBERATELY NO WINDOW FIELD ON THIS TYPE — S1B.1, clarification S1B-C5a.
-   *
-   * The original S1B carried `declaredWindows` here and the refund constructor read it into
-   * `window_refs`. `26 §2.1` defines `window_refs` as "every named window the matching
-   * grants reference", and catalogue membership is not grant resolution: the catalogue says
-   * what a class CAN touch, a grant says what this principal MAY touch, and only the second
-   * answers the question the field asks. Rather than leave a field whose only plausible
-   * reader is the wrong one, the field is gone. `window_refs` arrive through
-   * `grantWindows.ts`'s authoritative boundary, and
-   * `tests/canonicalisation/window-ref-provenance.test.ts` asserts the catalogue cannot
-   * manufacture a different set.
-   */
-  /**
-   * `51 §2.3`'s per-action-class irrecoverable-unit count — v1.3.5 (MIE-01, S1J-C1).
-   *
-   * =================================================================================
-   * THE DECLARATION, VERBATIM
-   *
-   * `51 §2.3`: "**`irrecoverable_units` is declared here, per action class, as part of the
-   * closed catalogue's execution metadata.**" and, on ownership:
-   *
-   *   "**THE VALUE IS KERNEL- AND CATALOGUE-OWNED AND IS NEVER MODEL- OR CALLER-SUPPLIED.**
-   *    It is a property of the action class in exactly the sense `26 §5`'s recoverability
-   *    is [...] **There is no generic caller parameter for it, and no request field carries
-   *    one.** A REVERSIBLE or COMPENSABLE class declares `0` and therefore moves the
-   *    irrecoverable ledger not at all."
-   *
-   * `25 §10.1` is the lifecycle it feeds: step R reserves this many units against EVERY
-   * applicable MIE window instance, `PRESUMED_EXECUTED` moves them `reserved → presumed`,
-   * and `DISPATCH_NOT_SENT_CONFIRMED` releases them.
-   * =================================================================================
-   *
-   * =================================================================================
-   * IT IS A FIELD OF THE FROZEN ENTRY AND NOT AN ARGUMENT ANYWHERE
-   *
-   * `src/kernel/exposure/stepR.ts` reads it through `irrecoverableUnitsFor(actionClass)`
-   * and NOT from its request object, so the reservation writer cannot be handed a unit
-   * count. `tests/type-negative/mie-units-as-argument.ts` asserts that no worker-facing or
-   * kernel-facing reservation surface accepts one, and
-   * `tests/integration/exposure/mie-reservation.test.ts` asserts the catalogue's values
-   * against a HAND-AUTHORED transcription of `51 §2.3`'s table.
-   *
-   * `bigint`, matching the `BIGINT` ledger columns `24 §3` K5 declares, so no unit count
-   * ever passes through a `number` on the way to the ledger.
-   * =================================================================================
-   */
-  readonly irrecoverableUnits: bigint;
-  /** `51 §5.1`'s settlement tolerance. Recorded; `I18d` is not implemented in S1B. */
-  readonly settlementTolerance: 'EXACT' | 'BAND' | 'NONE';
-  /** The mock adapter and method this class dispatches through. No adapter exists in S1B. */
-  readonly adapter: string;
-  readonly method: string;
+export function reasonCodeScopeFor(
+  reasonCode: ReasonCode,
+  bundle?: VerifiedControlArtifactBundle,
+): ReasonCodeScope {
+  const scope = actionCatalogue(bundle).reasonCodeScopes[reasonCode];
+  if (scope === undefined) {
+    throw new Error(
+      `${reasonCode} has no scope in the verified class-3 catalogue; 50 §2a record 12 ` +
+        'declares a TOTAL map and a missing entry is a catalogue-validation failure',
+    );
+  }
+  return scope;
 }
 
 /**
- * `26 §5`'s worked assignments and `26 §11.2`'s hand-proof table, transcribed. Every row
- * below is quoted in docs/implementation/S1B-contract.md §7.1.
+ * `50 §2a` record 13 — per class, the DECLARED ORDERED field list the semantic option digest
+ * covers.
+ *
+ * `26 §2.2`: "the digest must cover every field whose change would make the option a
+ * different effect. **Declared per class in the action catalogue**, and a change to any
+ * digest definition is a semantic constructor bump."
+ *
+ * The constructor computes the digest; this is the SIGNED declaration of what it must cover,
+ * and `constructors/refundCreate.ts` asserts its own field order against this list before
+ * hashing. A constructor that quietly dropped a field from the digest would then fail
+ * closed rather than start minting colliding `option_id`s.
  */
-export const ACTION_CATALOGUE: Readonly<Record<ActionClass, ActionCatalogueEntry>> = Object.freeze({
-  // `26 §5`: "campaign.pause | REVERSIBLE". `26 §11.2` row 6: value_direction NONE,
-  // "Out of scope — zero exposure, REVERSIBLE".
-  'campaign.pause': Object.freeze({
-    actionClass: 'campaign.pause',
-    recoverability: 'REVERSIBLE',
-    valueDirection: 'NONE',
-    carriesVendorMonetaryField: false,
-    costComponentFree: true,
-    rateBased: false,
-    // `51 §2.3`: "`campaign.pause` | REVERSIBLE | **0**".
-    irrecoverableUnits: 0n,
-    settlementTolerance: 'NONE',
-    adapter: 'mock_ads',
-    method: 'campaignPause',
-  }),
-  // `26 §5`: "refund.create | COMPENSABLE | Money left; the goods relationship persists."
-  // `26 §11.2` row 3: INBOUND_ORIGINAL_INSTRUMENT.
-  // `51 §5.1`: EXACT — "Settled cost is fully determined pre-dispatch: refund amount plus
-  // the processor's published retained fee."
-  'refund.create': Object.freeze({
-    actionClass: 'refund.create',
-    recoverability: 'COMPENSABLE',
-    valueDirection: 'INBOUND_ORIGINAL_INSTRUMENT',
-    carriesVendorMonetaryField: true,
-    costComponentFree: false,
-    rateBased: false,
-    // `51 §2.3`: "`refund.create` | COMPENSABLE | **0**".
-    irrecoverableUnits: 0n,
-    settlementTolerance: 'EXACT',
-    adapter: 'mock_processor',
-    method: 'refundCreate',
-  }),
-  // `26 §5`: "fulfilment.reship | IRRECOVERABLE, discretionary".
-  // `26 §11.2` row 9: OUTBOUND_GOODS_TO_ADDRESS.
-  // `26 §2.1.1` names it as the class whose vendor request "contains no money field at
-  // all", which is I18a's null branch.
-  'fulfilment.reship': Object.freeze({
-    actionClass: 'fulfilment.reship',
-    recoverability: 'IRRECOVERABLE',
-    valueDirection: 'OUTBOUND_GOODS_TO_ADDRESS',
-    carriesVendorMonetaryField: false,
-    costComponentFree: false,
-    rateBased: false,
-    // `51 §2.3`: "`fulfilment.reship` | IRRECOVERABLE | **1**". The only class in this
-    // catalogue that moves ledger 3 at all.
-    irrecoverableUnits: 1n,
-    settlementTolerance: 'BAND',
-    adapter: 'mock_commerce',
-    method: 'fulfilmentReship',
-  }),
-  // `26 §5`: "campaign.budget.set | COMPENSABLE, and rate-based".
-  // `26 §2.1.3`: vendor_amount NULL, total_exposure 0.00, forward_integral carries the
-  // economics through I3 term 2. `51 §5.1`: BAND(standing_cap).
-  'campaign.budget.set': Object.freeze({
-    actionClass: 'campaign.budget.set',
-    recoverability: 'COMPENSABLE',
-    valueDirection: 'OUTBOUND_TO_COUNTERPARTY',
-    carriesVendorMonetaryField: false,
-    costComponentFree: true,
-    rateBased: true,
-    // `51 §2.3`: "`campaign.budget.set` | COMPENSABLE (rate) | **0**".
-    irrecoverableUnits: 0n,
-    settlementTolerance: 'BAND',
-    adapter: 'mock_ads',
-    method: 'campaignBudgetSet',
-  }),
-});
-
+export function semanticOptionDigestFieldsFor(
+  actionClass: ActionClass,
+  bundle?: VerifiedControlArtifactBundle,
+): readonly string[] {
+  const fields = actionCatalogue(bundle).semanticOptionDigestFields[actionClass];
+  if (fields === undefined) {
+    throw new Error(
+      `${actionClass} has no semantic_option_digest_fields in the verified class-3 ` +
+        'catalogue (50 §2a record 13)',
+    );
+  }
+  return fields;
+}
 
 /**
- * `I66` / `25 §7`'s OUTBOX SCOPE PREDICATE — v1.3.4 (OBX-02), resolving `S1I-C5`.
+ * `50 §2a` record 14 — per class, the enumeration `max_age` checked at C'.
  *
- * =================================================================================
- * THE DECLARATION, VERBATIM
- *
- * `25 §7`: "**The ACOS dispatch outbox applies to every effect that will cross an
- * external-write boundary** (`48`), whatever its recoverability class. [...] **The scope
- * predicate is `effect requires external dispatch`.** It is **not**
- * `effect.recoverability == IRRECOVERABLE`, and it is **not** every catalogue action
- * unconditionally [...] **The predicate is derived from the closed action catalogue's
- * execution metadata**, so it is a property of the catalogue that a model cannot choose
- * and a caller cannot pass."
- *
- * `I66`: "Every effect that will cross an external-write boundary takes exactly one
- * outbox row, and an internal-only effect takes none."
- * =================================================================================
- *
- * =================================================================================
- * WHY IT IS DERIVED FROM THE ADAPTER AND NOT DECLARED AS A FLAG
- *
- * A boolean field on the catalogue entry would be a second place the fact lives, and
- * `48 §2`'s perimeter enumeration already decides it: a class executes by calling an
- * ADAPTER, and an adapter is by construction a component in the integration plane whose
- * rows in `48 §2` are the external writes. So the predicate reads the execution metadata
- * that already has to be right for the class to execute at all — `26 §5`'s catalogue
- * assignment of `adapter` and `method` — rather than a flag someone must remember to set
- * correctly beside it.
- *
- * **`INTERNAL_ONLY_ADAPTER` IS THE EXPLICIT REPRESENTATION OF AN INTERNAL-ONLY CLASS.**
- * `37` S1's closed catalogue has no such class today — all four run against a mock
- * adapter standing in for a real external one — so at S1 the predicate is TRUE for every
- * catalogue member and the existing enqueue behaviour already conforms. It is declared
- * anyway, and tested through `requiresExternalDispatchFor`, because `I66` has two halves
- * and a predicate whose false branch is unrepresentable proves only one of them.
- * `outbox-scope.test.ts` exercises both.
- * =================================================================================
- *
- * THERE IS NO OVERRIDE AND NO PARAMETER. This function takes an `ActionClass` and reads
- * the frozen catalogue. It has no options argument, no allow list and no escape, so
- * `I66`'s "never a caller's or a model's choice" is a property of the signature rather
- * than of a check inside it.
+ * `26 §2.0.1`'s staleness bound. It was an S1C fixture constant; it is signed content now,
+ * so a deployment cannot make a model reason about a world that has moved by editing a
+ * number in `enumerationMaxAge.ts`.
  */
-export const INTERNAL_ONLY_ADAPTER = 'internal_only';
+export function enumerationMaxAgeSecondsFor(
+  actionClass: ActionClass,
+  bundle?: VerifiedControlArtifactBundle,
+): number {
+  const seconds = actionCatalogue(bundle).enumerationMaxAgeSeconds[actionClass];
+  if (seconds === undefined) {
+    throw new Error(
+      `${actionClass} has no enumeration max_age in the verified class-3 catalogue ` +
+        '(50 §2a record 14); a lookup that returned undefined would make the staleness ' +
+        'check silently unbounded',
+    );
+  }
+  return seconds;
+}
 
+/**
+ * `I66` / `25 §7`'s OUTBOX SCOPE PREDICATE, derived from `50 §2a` FIELD 9.
+ *
+ * `50 §2f`, on this exact derivation: "**`I66`'s outbox scope is DERIVED FROM `adapter`**,
+ * not separately stored; `adapter = internal_only` removes an effect from the outbox
+ * entirely". The operand's owner is the signed catalogue, which is why the predicate could
+ * not stay derived from a literal: an edit to `adapter` is an edit to whether an effect
+ * crosses the external-write perimeter at all.
+ *
+ * THERE IS NO OVERRIDE AND NO PARAMETER. This function takes an entry and reads one field.
+ */
 export function requiresExternalDispatch(entry: ActionCatalogueEntry): boolean {
   return entry.adapter !== INTERNAL_ONLY_ADAPTER;
 }
 
-/** The same predicate, resolved from the closed catalogue by class. */
-export function requiresExternalDispatchFor(actionClass: ActionClass): boolean {
-  return requiresExternalDispatch(ACTION_CATALOGUE[actionClass]);
+/** The same predicate, resolved from the VERIFIED catalogue by class. */
+export function requiresExternalDispatchFor(
+  actionClass: ActionClass,
+  bundle?: VerifiedControlArtifactBundle,
+): boolean {
+  return requiresExternalDispatch(actionCatalogueEntry(actionClass, bundle));
 }
 
-
 /**
- * `51 §2.3`'s unit count, RESOLVED FROM THE CLOSED CATALOGUE BY CLASS — v1.3.5 (MIE-01).
+ * `51 §2.3`'s unit count, RESOLVED FROM THE VERIFIED CATALOGUE BY CLASS — v1.3.5 (MIE-01),
+ * re-rooted on the signed artifact by v1.3.6 (`50 §2a` field 7).
  *
  * =================================================================================
- * THE SIGNATURE IS THE AUTHORITY PROPERTY. READ IT BEFORE THE BODY.
+ * THE SIGNATURE IS STILL THE AUTHORITY PROPERTY. READ IT BEFORE THE BODY.
  *
- * One parameter, an `ActionClass`. There is no units argument, no options bag, no override,
- * no allow list and no default parameter, so `51 §2.3`'s "**there is no generic caller
- * parameter for it, and no request field carries one**" is a property of this signature
- * rather than of a check inside it. `26 §1` Corollary 3 — "the request must be built by the
- * ceiling's enforcer, not by its subject" — applied to a ceiling whose subject is an
- * authorised effect.
+ * One required parameter, an `ActionClass`. There is no units argument, no options bag, no
+ * override, no allow list and no default parameter, so `51 §2.3`'s "**there is no generic
+ * caller parameter for it, and no request field carries one**" remains a property of this
+ * signature. The optional second parameter is the sealed `VerifiedControlArtifactBundle`,
+ * which a caller cannot manufacture.
  *
  * `src/kernel/exposure/stepR.ts` is the only production caller, and
  * `tests/integration/gateway/no-real-transport-boundary.test.ts` asserts that no reservation
  * surface under `src/` accepts a unit count as an argument.
- * =================================================================================
  *
  * =================================================================================
- * A CLASS WITH NO DECLARED VALUE THROWS. IT DOES NOT DEFAULT — `51 §2.3`.
- *
- * "**A future action class needing a value other than 1 must declare it here, and `NO
- *  IMPLICIT DEFAULT MAY WIDEN AUTHORITY.`** A class present in the catalogue with no
- *  declared value is a **catalogue-validation failure, not a class with a value of one** —
- *  the same fail-closed rule SR7 applies to every other undeclared catalogue dimension."
- *
- * TypeScript makes the field mandatory on `ActionCatalogueEntry`, so the omission cannot
- * compile; the runtime throw below covers the one remaining route — an entry reaching this
- * function from outside the frozen literal — and it is an ASSERTION, not a fallback.
- * =================================================================================
- */
-export function irrecoverableUnitsFor(actionClass: ActionClass): bigint {
-  const entry = ACTION_CATALOGUE[actionClass];
-  if (entry === undefined) {
-    throw new Error(
-      `${actionClass} is not in the closed action catalogue; an undeclared class has no ` +
-        'irrecoverable_units and no implicit default may widen authority (51 §2.3)',
-    );
-  }
-  const units = entry.irrecoverableUnits;
-  if (typeof units !== 'bigint' || units < 0n) {
-    throw new Error(
-      `${actionClass} declares no valid irrecoverable_units; a catalogued class with no ` +
-        'declared value is a catalogue-validation failure, not a class with a value of ' +
-        'one (51 §2.3)',
-    );
-  }
-  return units;
-}
-
-/**
- * `51 §2.3`'s COHERENCE RULE, checked at module load.
+ * `51 §2.3`'s COHERENCE RULE IS NOW CHECKED AT VERIFICATION, NOT AT MODULE LOAD
  *
  * "**For every IRRECOVERABLE class in the current catalogue the declared value is `1`, and
- *  for every REVERSIBLE and COMPENSABLE class it is `0`.**" (`25 §10.1` prints the same
- * sentence.)
+ *  for every REVERSIBLE and COMPENSABLE class it is `0`.**"
  *
- * A REVERSIBLE class declaring a positive count would move ledger 3 for an effect that is
- * not irrecoverable, and an IRRECOVERABLE class declaring `0` would remove the class from
- * the MIE ceiling entirely — `51 §2.3` names exactly that as the reason the table is signed
- * control-artifact class 17 content. Both are startup failures rather than runtime
- * surprises, for the same reason `preReservation.ts` asserts its step order at construction.
+ * That check used to run at module load over the literal. It now runs inside
+ * `controlArtifacts/artifactParsers.ts`, over the VERIFIED bytes, before the bundle can be
+ * sealed — so a signed artifact that declared a REVERSIBLE class with a positive count, or
+ * an IRRECOVERABLE class with `0`, fails the bootstrap ceremony instead of being loaded and
+ * then complained about.
+ * =================================================================================
  */
-for (const actionClass of ACTION_CLASSES) {
-  const entry = ACTION_CATALOGUE[actionClass];
-  const units = entry.irrecoverableUnits;
-  if (entry.recoverability === 'IRRECOVERABLE') {
-    if (units < 1n) {
-      throw new Error(
-        `catalogue defect: ${actionClass} is IRRECOVERABLE and declares ` +
-          `irrecoverable_units = ${String(units)}; 51 §2.3 declares 1 for every current ` +
-          'IRRECOVERABLE class and a 0 would remove the class from the MIE ceiling',
-      );
-    }
-  } else if (units !== 0n) {
-    throw new Error(
-      `catalogue defect: ${actionClass} is ${entry.recoverability} and declares ` +
-        `irrecoverable_units = ${String(units)}; 51 §2.3 declares 0 for every REVERSIBLE ` +
-        'and COMPENSABLE class, which move the irrecoverable ledger not at all',
-    );
-  }
+export function irrecoverableUnitsFor(
+  actionClass: ActionClass,
+  bundle?: VerifiedControlArtifactBundle,
+): bigint {
+  return actionCatalogueEntry(actionClass, bundle).irrecoverableUnits;
+}
+
+/** Every catalogue member's verified record, in `ACTION_CLASSES` order. */
+export function actionCatalogueEntries(
+  bundle?: VerifiedControlArtifactBundle,
+): readonly ActionCatalogueEntry[] {
+  return ACTION_CLASSES.map((actionClass) => actionCatalogueEntry(actionClass, bundle));
 }

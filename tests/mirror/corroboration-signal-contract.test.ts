@@ -7,7 +7,7 @@ import {
   verifyCorroborationSignal,
   type SignalWire,
 } from '../../src/kernel/mirror/corroborationSignal.js';
-import { SIGNAL_MAX_AGE_MS } from '../../src/kernel/mirror/mirrorState.js';
+import { signalMaxAgeMs } from '../../src/kernel/mirror/mirrorState.js';
 import {
   frameField,
   jcsInt,
@@ -52,7 +52,7 @@ function fields(over: Partial<Omit<SignalWire, 'signature'>> = {}): Omit<SignalW
     lastAttestationSeq: 42n,
     lastAttestationReceivedAt: new Date(T0.getTime() - 16 * 60_000),
     reason: 'ATTESTATION_STALL',
-    expiresAt: new Date(T0.getTime() + SIGNAL_MAX_AGE_MS),
+    expiresAt: new Date(T0.getTime() + signalMaxAgeMs()),
     auditInstanceId: AUDIT_INSTANCE,
     ...over,
   };
@@ -122,7 +122,7 @@ describe('the SIGNED FIELD SET is `30 §5.7.1`s struct, and the signature is not
         lastAttestationSeq: 0n,
         lastAttestationReceivedAt: null,
         reason: 'ATTESTATION_STALL',
-        expiresAt: new Date(T0.getTime() + SIGNAL_MAX_AGE_MS),
+        expiresAt: new Date(T0.getTime() + signalMaxAgeMs()),
         auditInstanceId: AUDIT_INSTANCE,
       }),
     );
@@ -213,7 +213,7 @@ describe("`§7`'s EIGHT ADVERSARIAL ARTIFACTS — every one fails closed", () =>
     const bothMoved: SignalWire = {
       ...genuine,
       observedAt: new Date(T0.getTime() + 10 * 60_000),
-      expiresAt: new Date(T0.getTime() + 10 * 60_000 + SIGNAL_MAX_AGE_MS),
+      expiresAt: new Date(T0.getTime() + 10 * 60_000 + signalMaxAgeMs()),
     };
     const movedResult = verifyCorroborationSignal(
       bothMoved,
@@ -326,7 +326,7 @@ describe("`§8`'s FRESHNESS/REPLAY BOUNDARY, on genuinely signed artifacts", () 
       genuine,
       COMPANY,
       auditKey.publicKey,
-      new Date(T0.getTime() + SIGNAL_MAX_AGE_MS - 1),
+      new Date(T0.getTime() + signalMaxAgeMs() - 1),
     );
     expect(result.ok).toBe(true);
   });
@@ -336,7 +336,7 @@ describe("`§8`'s FRESHNESS/REPLAY BOUNDARY, on genuinely signed artifacts", () 
       genuine,
       COMPANY,
       auditKey.publicKey,
-      new Date(T0.getTime() + SIGNAL_MAX_AGE_MS),
+      new Date(T0.getTime() + signalMaxAgeMs()),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.rejection).toBe('SIGNAL_STALE');
@@ -347,7 +347,7 @@ describe("`§8`'s FRESHNESS/REPLAY BOUNDARY, on genuinely signed artifacts", () 
       genuine,
       COMPANY,
       auditKey.publicKey,
-      new Date(T0.getTime() + SIGNAL_MAX_AGE_MS + 1),
+      new Date(T0.getTime() + signalMaxAgeMs() + 1),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.rejection).toBe('SIGNAL_STALE');

@@ -20,7 +20,7 @@ import {
   declareMirrorDegraded,
   evaluateState,
 } from '../../src/kernel/mirror/mirrorStateMachine.js';
-import { SIGNAL_MAX_AGE_MS } from '../../src/kernel/mirror/mirrorState.js';
+import { signalMaxAgeMs } from '../../src/kernel/mirror/mirrorState.js';
 import { classifyDispatchPrecedence } from '../../src/kernel/mirror/dispatchPrecedence.js';
 import { unsafeSignatureOnlyResolver } from './unsafe-mirror-state-machine.js';
 import { PERMISSIVENESS } from '../support/mirrorPrecedenceTable.js';
@@ -112,7 +112,7 @@ describe('STEPS 1 AND 2 — the signal is GENUINE and, while fresh, it WORKS', (
       COMPANY_ID,
       signal,
       h.auditKey.publicKey,
-      new Date(signal.observedAt.getTime() + SIGNAL_MAX_AGE_MS - 1),
+      new Date(signal.observedAt.getTime() + signalMaxAgeMs() - 1),
     );
     expect(outcome.kind).toBe('SIGNAL_CONSUMED');
     expect(outcome.resolution.state).toBe('CORROBORATED_DEGRADED');
@@ -140,8 +140,8 @@ describe('STEPS 3, 4 AND 5 — the outage resolves, the signal ages, the control
 
     // 4. And it really is beyond `max_age`: four times it, exactly.
     const ageMs = RECOVERED_AT.getTime() - signal.observedAt.getTime();
-    expect(ageMs).toBeGreaterThan(SIGNAL_MAX_AGE_MS);
-    expect(ageMs).toBe(4 * SIGNAL_MAX_AGE_MS);
+    expect(ageMs).toBeGreaterThan(signalMaxAgeMs());
+    expect(ageMs).toBe(4 * signalMaxAgeMs());
   });
 
   it('PRODUCTION REFUSES IT — `SIGNAL_STALE`, and the state stays `UNCORROBORATED_STALL`', async () => {
@@ -323,7 +323,7 @@ describe('AND REPLAY IS BOUNDED A SECOND WAY — the consumed `signal_id`', () =
     expect((await evaluateState(h.control, COMPANY_ID, STALLED_AT)).state).toBe(
       'CORROBORATED_DEGRADED',
     );
-    const past = new Date(signal.observedAt.getTime() + SIGNAL_MAX_AGE_MS);
+    const past = new Date(signal.observedAt.getTime() + signalMaxAgeMs());
     expect((await evaluateState(h.control, COMPANY_ID, past)).state).toBe('UNCORROBORATED_STALL');
   });
 });

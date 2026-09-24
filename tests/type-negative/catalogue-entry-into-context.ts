@@ -18,12 +18,12 @@
  * makes it a test rather than a comment.
  */
 
-import { ACTION_CATALOGUE } from '../../src/kernel/canonicalisation/actionCatalogue.js';
+import { actionCatalogueEntry } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import { computed } from '../../src/kernel/canonicalisation/brands.js';
 import type { AuthoritativeCanonicalisationContext } from '../../src/kernel/canonicalisation/types.js';
 
 /** Another class's row, exactly as a mis-wired caller would have had it to hand. */
-const anotherClassesRow = ACTION_CATALOGUE['campaign.pause'];
+const anotherClassesRow = actionCatalogueEntry('campaign.pause');
 
 // EXPECT_ERROR: AuthoritativeCanonicalisationContext has no `catalogueEntry` member, so a
 // `refund.create` request cannot acquire campaign.pause's recoverability, value_direction,

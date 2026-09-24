@@ -11,7 +11,18 @@ import {
 import { proposeAndAuthorise } from '../../support/localAuthorisationFixture.js';
 import { S1E_PASS_ORDER } from '../../support/authorityFixture.js';
 import { mieRows, unsafeAuthoriseWithoutReserving } from '../../negative-controls/unsafe-mie-movements.js';
-import { ACTION_CATALOGUE, irrecoverableUnitsFor } from '../../../src/kernel/canonicalisation/actionCatalogue.js';
+import { actionCatalogue, irrecoverableUnitsFor } from '../../../src/kernel/canonicalisation/actionCatalogue.js';
+
+/**
+ * v1.3.6 (`50 §2a`, `50 §3f`): the catalogue is READ FROM THE ACTIVE VERIFIED BUNDLE.
+ *
+ * Before S1K this was a frozen literal imported from `actionCatalogue.ts`. `50 §3f`'s single
+ * source of authority rule moved it into the signed class-3 artifact, so this binding now
+ * resolves the same rows out of the bundle `tests/support/controlArtifactSetup.ts`
+ * bootstrapped — which is what production reads.
+ */
+const ACTION_CATALOGUE = actionCatalogue().entries;
+
 
 /**
  * `§4`, `§5`, `§6`, `§37` — STEP R RESERVES THE IRRECOVERABLE UNIT, AND `I20` CAN COUNT IT.

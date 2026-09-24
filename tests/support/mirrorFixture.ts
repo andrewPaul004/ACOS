@@ -9,7 +9,7 @@ import {
   type OverrideRequest,
 } from '../../src/kernel/mirror/degradedModeOverride.js';
 import type { SignalWire } from '../../src/kernel/mirror/corroborationSignal.js';
-import { SIGNAL_MAX_AGE_MS } from '../../src/kernel/mirror/mirrorState.js';
+import { signalMaxAgeMs } from '../../src/kernel/mirror/mirrorState.js';
 
 /**
  * The S1H MIRROR fixture.
@@ -238,7 +238,7 @@ export function signalFieldsAt(
         : options.lastAttestationReceivedAt,
     reason: options?.reason ?? 'ATTESTATION_STALL',
     // `30 §5.7.1`: "`expires_at` — `observed_at + max_age`", `max_age` = 5 minutes.
-    expiresAt: new Date(observedAt.getTime() + SIGNAL_MAX_AGE_MS),
+    expiresAt: new Date(observedAt.getTime() + signalMaxAgeMs()),
     auditInstanceId: AUDIT_INSTANCE_ID,
   };
 }

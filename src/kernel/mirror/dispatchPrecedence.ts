@@ -1,6 +1,6 @@
 import {
-  DEGRADED_MODE_TIMING,
-  DEGRADED_PER_ACTION_APPROVAL_FLOOR,
+  degradedModeTiming,
+  degradedPerActionApprovalFloor,
   isAboveDegradedApprovalFloor,
   isFullHaltPosture,
 } from './degradedModeThresholds.js';
@@ -576,7 +576,7 @@ function classifyWithinState(o: PrecedenceOperands): WithinStateDecision {
       recoverability: o.recoverability,
       clockBearing: o.clockBearing,
       totalExposure: toDb(o.totalExposure),
-      approvalFloor: toDb(DEGRADED_PER_ACTION_APPROVAL_FLOOR),
+      approvalFloor: toDb(degradedPerActionApprovalFloor()),
     })}`,
   );
 }
@@ -670,8 +670,8 @@ export function classifyDispatchPrecedence(o: PrecedenceOperands): PrecedenceDec
       explanation:
         `${within.explanation}; the FULL-HALT POSTURE holds (continuous unreachability ` +
         `${String(unreachableMs)}ms >= ${String(
-          DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs,
-        )}ms, 51 §3.8) and row ${String(within.matchedRow)} is inside the override's scope, ` +
+          degradedModeTiming().auditUnreachableFullHaltMs,
+        )}ms, 50 §2c) and row ${String(within.matchedRow)} is inside the override's scope, ` +
         'which 30 §5.1 item 5 makes the only escape from the halt (30 §5.1a)',
     };
   }
@@ -694,7 +694,7 @@ export function classifyDispatchPrecedence(o: PrecedenceOperands): PrecedenceDec
       `row ${String(within.matchedRow)} in ${o.mirrorState} resolved ${within.disposition}, ` +
       'and the FULL-HALT POSTURE reduces it to HALT: continuous unreachability ' +
       `${String(unreachableMs)}ms >= audit_unreachable_full_halt_threshold ` +
-      `${String(DEGRADED_MODE_TIMING.auditUnreachableFullHaltMs)}ms (51 §3.8), which halts ` +
+      `${String(degradedModeTiming().auditUnreachableFullHaltMs)}ms (50 §2c), which halts ` +
       'all classes including REVERSIBLE (30 §5.1 item 5, §5.1a)',
     fullHaltPosture: true,
     haltedByFullHaltPosture: true,

@@ -4,7 +4,7 @@ import { COMPANY_ID } from '../../support/fixture.js';
 import { createMirrorHarness, type MirrorHarness } from '../../support/mirrorFixture.js';
 import { ORACLE_MIRROR_LAG_CRITICAL_MS } from '../../support/mirrorPrecedenceTable.js';
 import {
-  DEGRADED_MODE_TIMING,
+  degradedModeTiming,
   classifyMirrorLag,
 } from '../../../src/kernel/mirror/degradedModeThresholds.js';
 import {
@@ -47,7 +47,7 @@ import { emitAttestation } from '../../../src/replication/attestation.js';
 let h: MirrorHarness;
 
 const T0 = new Date('2026-03-01T12:00:00.000Z');
-const T = DEGRADED_MODE_TIMING.mirrorLagCriticalMs;
+const T = degradedModeTiming().mirrorLagCriticalMs;
 
 beforeAll(async () => {
   h = await createMirrorHarness();

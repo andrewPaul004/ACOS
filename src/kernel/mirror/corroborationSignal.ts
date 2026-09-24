@@ -3,7 +3,7 @@ import { verify as verifyEd25519, type KeyObject } from 'node:crypto';
 import { canonicalBytes, type CanonicalStructure } from '../canonicalisation/canonicalBytes.js';
 import {
   CORROBORATION_REASONS,
-  SIGNAL_MAX_AGE_MS,
+  signalMaxAgeMs,
   isCorroborationFresh,
   type CorroborationReason,
   type HeldCorroboration,
@@ -204,7 +204,7 @@ export function verifyCorroborationSignal(
       detail: `reason ${String(signal.reason)} is outside 30 §5.7.1's closed enum`,
     };
   }
-  if (signal.expiresAt.getTime() !== signal.observedAt.getTime() + SIGNAL_MAX_AGE_MS) {
+  if (signal.expiresAt.getTime() !== signal.observedAt.getTime() + signalMaxAgeMs()) {
     return {
       ok: false,
       rejection: 'SIGNAL_EXPIRY_NOT_MAX_AGE',
@@ -289,7 +289,7 @@ export function verifyCorroborationSignal(
       rejection: 'SIGNAL_STALE',
       detail:
         `age ${String(now.getTime() - signal.observedAt.getTime())}ms against a declared ` +
-        `max_age of ${String(SIGNAL_MAX_AGE_MS)}ms, or now >= expires_at (30 §5.7.1)`,
+        `max_age of ${String(signalMaxAgeMs())}ms, or now >= expires_at (30 §5.7.1)`,
     };
   }
 

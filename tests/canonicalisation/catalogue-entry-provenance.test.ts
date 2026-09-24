@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ACTION_CATALOGUE,
+  actionCatalogue,
   type ActionCatalogueEntry,
 } from '../../src/kernel/canonicalisation/actionCatalogue.js';
 import { parseProposedIntent } from '../../src/kernel/canonicalisation/intent.js';
@@ -14,6 +14,17 @@ import {
   makeRawIntent,
   makeRefundOption,
 } from '../support/canonicalisationFixture.js';
+
+/**
+ * v1.3.6 (`50 §2a`, `50 §3f`): the catalogue is READ FROM THE ACTIVE VERIFIED BUNDLE.
+ *
+ * Before S1K this was a frozen literal imported from `actionCatalogue.ts`. `50 §3f`'s single
+ * source of authority rule moved it into the signed class-3 artifact, so this binding now
+ * resolves the same rows out of the bundle `tests/support/controlArtifactSetup.ts`
+ * bootstrapped — which is what production reads.
+ */
+const ACTION_CATALOGUE = actionCatalogue().entries;
+
 
 /**
  * S1B.2, FINDING 1B — the action catalogue entry is not arbitrary context.
@@ -88,9 +99,14 @@ describe('1 — the substitution has no expressible form', () => {
     }
   });
 
-  it('the canonicaliser reads the closed catalogue, keyed by the validated action class', () => {
+  it('the canonicaliser reads the VERIFIED catalogue, keyed by the validated action class', () => {
+    // v1.3.6 (`50 §2a`, `50 §3f`): the row comes from the signed class-3 artifact through
+    // `actionCatalogueEntry`, not from a frozen literal. The key is still the validated
+    // `intent.actionClass` and nothing else, which is what this assertion has always been
+    // about.
     const code = codeOf(join(CANONICALISATION_ROOT, 'canonicaliser.ts'));
-    expect(code).toContain('ACTION_CATALOGUE[intent.actionClass]');
+    expect(code).toContain('actionCatalogueEntry(intent.actionClass)');
+    expect(code).not.toContain('ACTION_CATALOGUE');
   });
 });
 

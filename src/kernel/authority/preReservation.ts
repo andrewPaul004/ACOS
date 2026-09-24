@@ -1,5 +1,8 @@
 import { computed } from '../canonicalisation/brands.js';
-import { ACTION_CATALOGUE } from '../canonicalisation/actionCatalogue.js';
+import {
+  actionCatalogueEntry,
+  isActionClass,
+} from '../canonicalisation/actionCatalogue.js';
 import { CanonicalisationDenied } from '../canonicalisation/errors.js';
 import type { ProposedIntent } from '../canonicalisation/intent.js';
 import type { TaskContextSpec } from '../enumeration/contextSpec.js';
@@ -220,7 +223,21 @@ export class PreReservationAuthorityPipeline {
       // from the intent". The row is read by CLASS, exactly as `canonicaliser.ts` reads it —
       // there is no catalogue-entry parameter anywhere in S1E for the same reason S1B.2
       // removed one from the canonicalisation context.
-      const catalogueEntry = ACTION_CATALOGUE[actionClass as keyof typeof ACTION_CATALOGUE];
+      // v1.3.6 (`50 §2a`): the row comes from the VERIFIED class-3 artifact.
+      //
+      // The membership check is explicit rather than implied by an index type. A canonical
+      // effect's `action_class` has already passed the closed-catalogue check at step C, so
+      // this is an ASSERTION on that construction — and it throws rather than denying,
+      // because a committed effect naming a class outside the catalogue means kernel state
+      // and the signed catalogue disagree, which is not a decision to report to a worker.
+      if (!isActionClass(actionClass)) {
+        throw new Error(
+          `${actionClass} is not a member of the closed action catalogue; a committed ` +
+            'effect cannot carry a class the verified class-3 artifact does not declare ' +
+            '(SR7, 50 §2a)',
+        );
+      }
+      const catalogueEntry = actionCatalogueEntry(actionClass);
 
       // =================================================================================
       // STEP E — categorical prohibitions. BEFORE grants, and unappealable.

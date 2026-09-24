@@ -1,3 +1,5 @@
+import { corroborationSignalMaxAgeMs } from './degradedModeThresholds.js';
+
 /**
  * `30 §5.6` — THE MIRROR STATE MACHINE, INVERTED. The pure resolution.
  *
@@ -54,7 +56,23 @@ export type MirrorState = (typeof MIRROR_STATES)[number];
  * consequence and `corroboration-signal-contract.test.ts` asserts it as an arithmetic
  * property of the two constants, so a future edit to either cannot silently break it.
  */
-export const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
+/**
+ * v1.3.6 (`50 §2c` quantity 4): `corroboration_signal_max_age` is SIGNED class-27 content.
+ *
+ * `50 §2c`: "**Row 4 was previously owned by no signed class at all.**
+ * `corroboration_signal_max_age` gates entry to `CORROBORATED_DEGRADED` — degraded-mode
+ * authority — so `§6`'s rule that no authority-bearing field may sit outside every signed
+ * artifact boundary requires it to be owned."
+ *
+ * So the constant is gone and the value is read from the active verified bundle. `50 §2c`
+ * also declares the one duplication in the whole inventory: "**The audit plane holds its own
+ * copy, and the two copies being equal is a cross-plane obligation, not a second owner.**"
+ * — which `src/audit/controlArtifacts/auditPlaneVerifier.ts` reads from ITS OWN verified
+ * class-27 bytes rather than from this module.
+ */
+export function signalMaxAgeMs(): number {
+  return corroborationSignalMaxAgeMs();
+}
 
 /**
  * The corroboration a state resolution may rest on: a signal the control plane has ALREADY
@@ -171,7 +189,7 @@ export interface MirrorStateResolution {
 export function isCorroborationFresh(signal: HeldCorroboration, now: Date): boolean {
   const ageMs = now.getTime() - signal.observedAt.getTime();
   if (ageMs < 0) return false; // S1H-C6, and strictly stricter than the declared rule.
-  if (ageMs > SIGNAL_MAX_AGE_MS) return false; // now() − observed_at ≤ max_age
+  if (ageMs > signalMaxAgeMs()) return false; // now() − observed_at ≤ max_age
   return now.getTime() < signal.expiresAt.getTime(); // now() < expires_at
 }
 

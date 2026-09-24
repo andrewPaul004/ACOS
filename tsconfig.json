@@ -20,7 +20,12 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "spikes/**/*.ts", "*.config.ts"],
+  // `tools/**` is the OFFLINE control-artifact signer and assembler (`50 §3a`'s release
+  // ceremony tooling, `§39` of the S1K mandate). It is typechecked and linted like
+  // everything else — it forms owner signature messages and a mistake in it is a mistake in
+  // a release package — and `tests/controlArtifacts/signer-boundary.test.ts` asserts that
+  // nothing under `src/` imports anything under `tools/`.
+  "include": ["src/**/*.ts", "tests/**/*.ts", "tools/**/*.ts", "spikes/**/*.ts", "*.config.ts"],
   // tests/type-negative/ is the I21 compile-negative fixture set. Its files are REQUIRED
   // to fail type checking, and they are compiled by their own project from
   // tests/canonicalisation/i21-type-boundary.test.ts. Including them here would make the

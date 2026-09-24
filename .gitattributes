@@ -13,5 +13,18 @@
 # files are committed LF, like v1.3.1's.
 docs/architecture/** -text
 
+# The deployed control-artifact bytes. `50 §3c`: `content_hash = SHA-256(EXACT_ARTIFACT_
+# BYTES)`, and "Any byte difference — including a line terminator, a trailing newline or a
+# byte-order mark — changes the digest and therefore changes the artifact's identity."
+# `50 §2b` says the same of the class-20 specification specifically: "LF (`0x0A`) line
+# terminators exclusively; the file contains no `0x0D` byte. A CRLF copy is a different
+# artifact and fails verification."
+#
+# `eol=lf` above would already produce LF on checkout. `-text` is stronger and is what this
+# directory needs: git performs NO conversion in either direction, so a clone on a machine
+# with `core.autocrlf=true` cannot move a content hash and cannot invalidate an owner
+# signature by rewriting a file nobody edited.
+artifacts/control/** -text
+
 _input/*.zip binary
 package-lock.json -diff

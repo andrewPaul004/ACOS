@@ -1,0 +1,86 @@
+{
+  "artifact_id": "acos.control.action_catalogue",
+  "artifact_version": "acos.action_catalogue.2026-09-24",
+  "action_classes": [
+    {
+      "action_class": "campaign.pause",
+      "recoverability": "REVERSIBLE",
+      "value_direction": "NONE",
+      "carries_vendor_monetary_field": false,
+      "cost_component_free": true,
+      "rate_based": false,
+      "irrecoverable_units": "0",
+      "settlement_tolerance": "NONE",
+      "adapter": "mock_ads",
+      "method": "campaignPause"
+    },
+    {
+      "action_class": "refund.create",
+      "recoverability": "COMPENSABLE",
+      "value_direction": "INBOUND_ORIGINAL_INSTRUMENT",
+      "carries_vendor_monetary_field": true,
+      "cost_component_free": false,
+      "rate_based": false,
+      "irrecoverable_units": "0",
+      "settlement_tolerance": "EXACT",
+      "adapter": "mock_processor",
+      "method": "refundCreate"
+    },
+    {
+      "action_class": "fulfilment.reship",
+      "recoverability": "IRRECOVERABLE",
+      "value_direction": "OUTBOUND_GOODS_TO_ADDRESS",
+      "carries_vendor_monetary_field": false,
+      "cost_component_free": false,
+      "rate_based": false,
+      "irrecoverable_units": "1",
+      "settlement_tolerance": "BAND",
+      "adapter": "mock_commerce",
+      "method": "fulfilmentReship"
+    },
+    {
+      "action_class": "campaign.budget.set",
+      "recoverability": "COMPENSABLE",
+      "value_direction": "OUTBOUND_TO_COUNTERPARTY",
+      "carries_vendor_monetary_field": false,
+      "cost_component_free": true,
+      "rate_based": true,
+      "irrecoverable_units": "0",
+      "settlement_tolerance": "BAND",
+      "adapter": "mock_ads",
+      "method": "campaignBudgetSet"
+    }
+  ],
+  "reason_codes": [
+    "CUSTOMER_REPORTED_DAMAGE",
+    "CUSTOMER_REPORTED_NOT_RECEIVED",
+    "ITEM_RETURNED",
+    "DUPLICATE_CHARGE",
+    "PRICING_ERROR"
+  ],
+  "reason_code_scopes": {
+    "CUSTOMER_REPORTED_DAMAGE": "GOODS_FAULT",
+    "CUSTOMER_REPORTED_NOT_RECEIVED": "GOODS_FAULT",
+    "ITEM_RETURNED": "GOODS_RETURNED",
+    "DUPLICATE_CHARGE": "BILLING_ERROR",
+    "PRICING_ERROR": "BILLING_ERROR"
+  },
+  "semantic_option_digest_fields": {
+    "campaign.pause": [],
+    "refund.create": [
+      "line_id",
+      "parent_transaction_id",
+      "amount",
+      "instrument",
+      "reason_code_scope"
+    ],
+    "fulfilment.reship": [],
+    "campaign.budget.set": []
+  },
+  "enumeration_max_age_seconds": {
+    "campaign.pause": 120,
+    "refund.create": 120,
+    "fulfilment.reship": 120,
+    "campaign.budget.set": 120
+  }
+}

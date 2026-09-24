@@ -1,0 +1,292 @@
+ACOS-JCS-1
+Journal canonicalisation specification
+artifact_class: 20
+artifact_id: acos.control.jcs1_specification
+artifact_version: ACOS-JCS-1
+issued_under: ACOS Operating Spine v1.3, package issue v1.3.6
+
+--------------------------------------------------------------------------------
+0. STATUS OF THIS ARTIFACT
+--------------------------------------------------------------------------------
+
+This file IS control artifact class 20. Its exact bytes, as stored, are the
+input to its content hash. It is the specification. It is not an implementation
+of the specification, and no implementation of the specification is this
+artifact.
+
+Line terminator: LF (0x0A) exclusively. No CR (0x0D) byte appears in this file.
+A copy carrying CRLF is a different byte sequence, hashes differently, and fails
+verification. Encoding: US-ASCII, which is also valid UTF-8 NFC.
+
+The control plane and the audit plane each hold a byte-identical COPY of this
+file. Holding identical copies of one specification is not a loss of
+implementation independence: the implementations remain independently authored
+and are never derived from one another. See section 9.
+
+--------------------------------------------------------------------------------
+1. VERSION IDENTITY
+--------------------------------------------------------------------------------
+
+specification_name    = ACOS-JCS-1
+specification_version = ACOS-JCS-1
+
+The version is carried in the name. A change to any rule in this file is a new
+specification, a chain break by construction, and requires a declared chain
+migration with a re-anchor. The artifact's identity under the control-artifact
+manifest is its content hash, not its name.
+
+--------------------------------------------------------------------------------
+2. FIELD FRAMING
+--------------------------------------------------------------------------------
+
+A canonicalised row is the concatenation, in declared field order, of the framed
+encoding of each of its fields. There are no separators, no padding and no
+trailing bytes.
+
+2.1 The framing word
+
+Every field begins with a 4-byte big-endian unsigned integer word.
+
+  0xFFFFFFFF                    RESERVED. Means NULL. The field is that word
+                                alone, with no payload bytes.
+  0x00000000 .. 0xFFFFFFFE      The payload length in bytes. The field is
+                                uint32_be(payload_length) then payload.
+
+A payload whose length would reach 0xFFFFFFFF is NOT REPRESENTABLE. An
+implementation encountering one MUST FAIL CLOSED. It MUST NOT truncate, wrap,
+split, or substitute NULL.
+
+2.2 Injectivity
+
+The reserved word lies outside the range of every non-null length word, so the
+NULL encoding and the set of all non-null encodings are disjoint by
+construction. No payload, of any type, of any length, of any content, can
+produce the four bytes a NULL produces. Injectivity of the field encoding
+therefore reduces to injectivity of each type's payload rule in section 3, and
+no payload rule needs to exclude a byte value in order to stay clear of NULL.
+
+2.3 The five representations that must never collapse
+
+  SQL NULL                         FF FF FF FF
+  empty string                     00 00 00 00
+  empty bytea                      00 00 00 00
+  bytea of one byte, value zero    00 00 00 01 00
+  JSON literal null in a
+    JSON-valued column             00 00 00 04 6E 75 6C 6C
+
+The empty string and the empty bytea are the same bytes deliberately: both are
+zero-length values of the field's declared type, and the type is fixed by the
+row kind's declared field order rather than carried in the encoding.
+
+2.4 Absence
+
+An ABSENT optional structure member, where the row kind's schema makes absence a
+state distinct from a present null, is a field-level NULL and frames as
+FF FF FF FF. Where the row kind's schema makes a field mandatory there is no
+absent state and none may be invented.
+
+--------------------------------------------------------------------------------
+3. TYPE PAYLOAD RULES
+--------------------------------------------------------------------------------
+
+3.1 text
+
+UTF-8, normalised to Unicode Normalization Form C (NFC). The payload is the
+UTF-8 bytes of the NFC form. U+0000 is excluded from text values; a text value
+containing it is rejected BEFORE NFC normalisation and before UTF-8 encoding.
+
+3.2 bytes
+
+The payload is the octets themselves. No normalisation, no transformation, and
+no length restriction other than section 2.1's.
+
+3.3 int
+
+Rendered as a decimal ASCII string with no leading zeros, no leading plus sign,
+and a leading minus sign only for a negative value. Zero is the single character
+0. The payload is the ASCII bytes of that string.
+
+3.4 numeric (decimal)
+
+Rendered as a string at the column's DECLARED DECIMAL SCALE, exactly. The scale
+is a property of the column and is declared with the row kind. 25.0 and 25.00
+are DIFFERENT BYTES, deliberately: a scale change in a money field is a semantic
+change. No thousands separator, no exponent form, no trailing-zero trimming, and
+no rounding at encode time. A leading minus sign only for a negative value.
+
+3.5 ts (timestamp)
+
+RFC 3339, UTC, EXACTLY six fractional digits, Z suffix. Form:
+
+  YYYY-MM-DDThh:mm:ss.ffffffZ
+
+No other zone designator is admissible. No other fractional precision is
+admissible; a value with fewer significant fractional digits is zero-padded to
+six, and a value with more is a defect rather than a rounding case.
+
+3.6 bool
+
+The single ASCII byte t for true, the single ASCII byte f for false.
+
+3.7 json
+
+RFC 8785 (JSON Canonicalization Scheme) applied to the field's value. The
+payload is the RFC 8785 output bytes. A JSON literal null inside a JSON-valued
+column is an ORDINARY NON-NULL FIELD carrying the four bytes null; it is not a
+field-level NULL and does not use the reserved word.
+
+--------------------------------------------------------------------------------
+4. NORMALIZATION RULES, COLLECTED
+--------------------------------------------------------------------------------
+
+  Unicode form            UTF-8, NFC.
+  Decimal scale           Per-column declared scale, serialised at that scale.
+  Timestamp               RFC 3339, UTC, 6 fractional digits, Z.
+  JSON                    RFC 8785.
+  Field order             Fixed, declared per row kind, in section 6 of this
+                          artifact. Never the physical column order, which a
+                          migration reorders.
+  Object insertion order  MUST NOT influence any encoding. An implementation
+                          whose output depends on a map's or an object's
+                          iteration order does not conform.
+
+--------------------------------------------------------------------------------
+5. WHAT IS HASHED, AND THE CHAIN
+--------------------------------------------------------------------------------
+
+5.1 Hash function
+
+SHA-256, over the concatenated framed fields of section 2, in the declared field
+order of section 6.
+
+5.2 On the wire
+
+THE TRANSMITTED BYTES ARE WHAT IS HASHED. The audit store re-chains over the
+bytes it received, not over a re-serialisation of its own parsed columns. A
+parse-then-reserialise step at the receiving end reintroduces every hazard this
+specification exists to remove.
+
+5.3 The chain link
+
+The final field of every declared row kind is prev_hash, of type bytes, carrying
+the preceding row's hash in the same company-scoped gap-free sequence. The first
+row of a company's chain carries the declared genesis value for that chain.
+
+--------------------------------------------------------------------------------
+6. REGISTERED ROW KINDS AND THEIR DECLARED FIELD ORDERS
+--------------------------------------------------------------------------------
+
+Two row kinds are registered. A row kind in service without a declared order in
+this section is a defect of control-artifact class 20.
+
+6.1 acos.journal.outbox_claimed.v1
+
+   1  acos.journal.outbox_claimed.v1     text   literal domain tag
+   2  company_id                         text
+   3  journal_seq                        int
+   4  OUTBOX_CLAIMED                     text   literal row kind
+   5  outbox_id                          text
+   6  outbox_claim_id                    text
+   7  outbox_correlation_tag             text
+   8  effect_id                          text
+   9  authorisation_id                   text
+  10  idempotency_key                    text
+  11  action_class                       text
+  12  resource_ref                       text
+  13  dispatch_payload_hash              text
+  14  outbox_matched_row                 int
+  15  outbox_mirror_state                text
+  16  outbox_requires_unmirrored_tag     bool
+  17  override_id                        text   NULLABLE
+  18  outbox_claim_clock_ref             text   NULLABLE
+  19  occurred_at                        ts
+  20  prev_hash                          bytes
+
+  Required-absent on this kind: decision_id, reservation_id, approval_id,
+  verdict, vendor_amount, total_exposure, forward_integral, is_rate_class, the
+  constructor version, policy_version, the attestation triple, the mirror and
+  corroboration columns, override_event, override_actor, case_ref.
+
+  Every field is a scalar. Section 3.7's RFC 8785 rule is not engaged.
+
+6.2 acos.journal.dispatch_outcome.v1
+
+   1  acos.journal.dispatch_outcome.v1   text   literal domain tag
+   2  company_id                         text
+   3  journal_seq                        int
+   4  DISPATCH_OUTCOME                   text   literal row kind
+   5  outbox_id                          text
+   6  outbox_claim_id                    text
+   7  outbox_correlation_tag             text
+   8  effect_id                          text
+   9  authorisation_id                   text
+  10  idempotency_key                    text
+  11  action_class                       text
+  12  resource_ref                       text
+  13  dispatch_payload_hash              text
+  14  dispatch_adapter                   text
+  15  dispatch_outcome_kind              text
+  16  dispatch_effect_status             text
+  17  outbox_requires_unmirrored_tag     bool   REQUIRED-PRESENT
+  18  override_id                        text   NULLABLE
+  19  occurred_at                        ts
+  20  prev_hash                          bytes
+
+  Fields 15 and 16 are adjacent, same-typed and semantically distinct. A swap of
+  the two leaves the table well-formed and produces a different chain. The
+  cross-implementation byte-identity fixture must fail on a seeded swap of
+  exactly that pair.
+
+  Required-absent on this kind: decision_id, reservation_id, approval_id,
+  verdict, vendor_amount, total_exposure, forward_integral, is_rate_class, the
+  constructor version, policy_version, the attestation triple, the mirror and
+  corroboration columns, override_event, override_actor, outbox_matched_row,
+  outbox_mirror_state, outbox_claim_clock_ref.
+
+  No MIE quantity is a field of this row. The outcome row records the STATE that
+  implies the ledger movement; the ledger records the movement.
+
+  Every field is a scalar. Section 3.7's RFC 8785 rule is not engaged.
+
+--------------------------------------------------------------------------------
+7. WITHDRAWN RULES
+--------------------------------------------------------------------------------
+
+The one-byte 0x00 NULL sentinel is WITHDRAWN. It framed as 00 00 00 01 00 and so
+collided with a bytea value whose content is exactly the one byte 0x00. The
+encoding was not injective over the generic field types this specification
+declares. Section 2.1's reserved word replaces it. No non-null payload rule
+changed when the sentinel was withdrawn.
+
+--------------------------------------------------------------------------------
+8. CONFORMANCE OBLIGATIONS ON AN IMPLEMENTATION
+--------------------------------------------------------------------------------
+
+An implementation conforms only if all of the following hold.
+
+  C-1  It transcribes section 6's field orders independently. It does not read
+       another implementation's order, and it does not read a shared
+       canonicalisation helper that would make agreement automatic.
+  C-2  Its output does not depend on any object's or map's insertion order.
+  C-3  It fails closed on a payload length reaching 0xFFFFFFFF.
+  C-4  It distinguishes all five of section 2.3's representations.
+  C-5  It emits every timestamp at exactly six fractional digits, UTC, Z.
+  C-6  It emits every numeric at the column's declared scale with no trimming.
+
+--------------------------------------------------------------------------------
+9. WHAT A SIGNATURE ON THIS ARTIFACT PROVES, AND WHAT IT DOES NOT
+--------------------------------------------------------------------------------
+
+A valid owner signature over this artifact's content hash proves exactly one
+thing: THIS IS THE OWNER-APPROVED ACOS-JCS-1 SPECIFICATION.
+
+IT DOES NOT PROVE THAT ANY IMPLEMENTATION CONFORMS TO IT. Conformance is proved
+by cross-implementation validation, in which independently authored
+implementations serialise the same fixture rows and their output bytes are
+compared. Signature verification of this artifact does not replace that
+validation and does not weaken its requirements.
+
+The control-plane PL/pgSQL implementation, the audit-plane PL/pgSQL
+implementation, the TypeScript implementation and the independent test oracle
+remain four separately authored artefacts. Each may hold a byte-identical copy
+of this file. Same specification; independent implementations.

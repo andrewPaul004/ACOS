@@ -1,0 +1,8 @@
+{
+  "artifact_id": "acos.control.degraded_mode_config",
+  "artifact_version": "acos.degraded_mode_config.2026-09-24",
+  "mirror_lag_critical_threshold": "PT15M",
+  "audit_unreachable_full_halt_threshold": "PT30M",
+  "degraded_per_action_approval_floor_monetary": "20.00",
+  "corroboration_signal_max_age": "PT5M"
+}

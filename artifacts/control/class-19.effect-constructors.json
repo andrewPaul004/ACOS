@@ -1,0 +1,12 @@
+{
+  "artifact_id": "acos.control.effect_constructors",
+  "artifact_version": "acos.effect_constructors.2026-09-24",
+  "records": [
+    {
+      "constructor_id": "acos.constructor.refund.create",
+      "action_class": "refund.create",
+      "semantic_major": 1,
+      "non_semantic_minor": 0
+    }
+  ]
+}

@@ -231,6 +231,15 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
       '../exposure/retry.js',
       './dispatchLease.js',
       './dispatchRevalidation.js',
+      // v1.3.6 (`50 §3f`). ONE new dependency, and it is the pre-live external-effect gate:
+      // `DispatchEnvironment` carries a `VerifiedControlArtifactBundle`, and
+      // `dispatchEnvelope.ts` reads the catalogue entry out of THAT bundle rather than out
+      // of a literal. `50 §3f`: "external claim and dispatch cannot proceed if the verified
+      // bundle is unavailable or invalid." It is a TYPE-ONLY import of the capability; the
+      // gateway reaches no verifier, no loader, no trust configuration and no artifact
+      // package, and `tests/controlArtifacts/boundaries.test.ts` asserts that each of those
+      // has exactly one production call site, in `registry.ts`.
+      '../controlArtifacts/bundle.js',
     ];
     const files = await gatewaySourceOf();
     const seen = new Set<string>();
@@ -244,6 +253,18 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
     // The ACCEPTED claim IS imported, which is `§13`'s requirement rather than a leak.
     expect(seen).toContain('../outbox/claim.js');
     expect(seen).toContain('../canonicalisation/actionCatalogue.js');
+    // And the verified-bundle capability IS imported, which is `50 §3f`'s requirement.
+    expect(seen).toContain('../controlArtifacts/bundle.js');
+    // AND THE RAW LOADERS ARE ABSENT. The gateway may hold the capability; it may not
+    // produce one, configure one, or read an artifact package.
+    for (const forbidden of [
+      '../controlArtifacts/verifier.js',
+      '../controlArtifacts/trustConfig.js',
+      '../controlArtifacts/artifactPackage.js',
+      '../controlArtifacts/registry.js',
+    ]) {
+      expect(seen, `the gateway imports ${forbidden}`).not.toContain(forbidden);
+    }
     // AND THE CANONICALISER IS STILL ABSENT — `25 §14.1`: revalidation "constructs no
     // payload" and "the persisted payload remains the exact authorised payload". A gateway
     // that imported the constructor registry or the live selector could rebuild dispatch

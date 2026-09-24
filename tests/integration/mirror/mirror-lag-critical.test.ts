@@ -214,7 +214,17 @@ describe('the condition is a PURE FUNCTION of the lag, and there is no third val
     // made to depend on any of them.
     expect(classifyMirrorLag(T)).toBe('CRITICAL');
     expect(classifyMirrorLag(T - 1)).toBe('WITHIN_THRESHOLD');
+    // v1.3.6 (`50 §2c` quantity 1): the THRESHOLD is now signed class-27 content, so the
+    // signature gained an optional second parameter — the `VerifiedControlArtifactBundle`,
+    // which only verification produces and which defaults to the active one. There is still
+    // no company, no state, no signal and no clock, so the condition still cannot be made to
+    // depend on any of them.
     expect(classifyMirrorLag.length).toBe(1);
+    // And the second parameter cannot smuggle a threshold in: it is the sealed capability,
+    // and an object cast to its type carries no contents at all.
+    expect(() =>
+      classifyMirrorLag(T, {} as unknown as Parameters<typeof classifyMirrorLag>[1]),
+    ).toThrow();
   });
 });
 

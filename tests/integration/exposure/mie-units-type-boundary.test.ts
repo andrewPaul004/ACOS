@@ -164,12 +164,26 @@ describe('`51 §2.3` — NO RESERVATION SURFACE ACCEPTS A UNIT COUNT', () => {
       ).toBe(false);
     }
 
-    // AND THE CATALOGUE DOES DECLARE IT — the positive half, so the check above cannot pass
-    // by the field having been deleted entirely.
+    // AND THE VERIFIED CATALOGUE ENTRY DOES DECLARE IT — the positive half, so the check
+    // above cannot pass by the field having been deleted entirely.
+    //
+    // v1.3.6 (`50 §2a` field 7) moved the DECLARATION with the authority: the field is now a
+    // member of the parsed representation of the signed class-3 artifact, in
+    // `controlArtifacts/bundle.ts`, which `actionCatalogue.ts` re-exports as
+    // `ActionCatalogueEntry`. That is a stronger position for it than a literal in the
+    // canonicalisation tree, and it is still not a request field anywhere.
+    const verifiedEntry = await read.readFile(
+      'src/kernel/controlArtifacts/bundle.ts',
+      'utf8',
+    );
+    expect(/readonly\s+irrecoverableUnits\s*:\s*bigint/.test(verifiedEntry)).toBe(true);
+
+    // And `actionCatalogue.ts` still exposes it by that type, so a consumer reaches the same
+    // field through the same name it always did.
     const catalogue = await read.readFile(
       'src/kernel/canonicalisation/actionCatalogue.ts',
       'utf8',
     );
-    expect(/readonly\s+irrecoverableUnits\s*:\s*bigint/.test(catalogue)).toBe(true);
+    expect(catalogue).toContain('export type ActionCatalogueEntry = VerifiedActionCatalogueEntry;');
   });
 });

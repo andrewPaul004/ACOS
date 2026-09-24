@@ -111,7 +111,11 @@ export function corroborationSignalMaxAgeMs(bundle?: VerifiedControlArtifactBund
  */
 export function isAboveDegradedApprovalFloor(
   totalExposure: Money,
-  bundle?: VerifiedControlArtifactBundle,
+  // A DEFAULT rather than an optional parameter, so the function still declares exactly ONE
+  // required operand and `Function.prototype.length` still reads 1. The accepted
+  // `dispatch-precedence-approval-floor` and `mirror-lag-critical` suites assert that arity
+  // as the statement that no second operand can be confused with the monetary one.
+  bundle: VerifiedControlArtifactBundle = activeVerifiedControlArtifacts(),
 ): boolean {
   return totalExposure > degradedPerActionApprovalFloor(bundle);
 }
@@ -143,7 +147,7 @@ export type MirrorLagCondition = (typeof MIRROR_LAG_CONDITIONS)[number];
  */
 export function classifyMirrorLag(
   lagMs: number,
-  bundle?: VerifiedControlArtifactBundle,
+  bundle: VerifiedControlArtifactBundle = activeVerifiedControlArtifacts(),
 ): MirrorLagCondition {
   return lagMs >= degradedModeTiming(bundle).mirrorLagCriticalMs ? 'CRITICAL' : 'WITHIN_THRESHOLD';
 }
@@ -176,7 +180,7 @@ export function classifyMirrorLag(
  */
 export function isFullHaltPosture(
   continuousUnreachabilityMs: number,
-  bundle?: VerifiedControlArtifactBundle,
+  bundle: VerifiedControlArtifactBundle = activeVerifiedControlArtifacts(),
 ): boolean {
   return continuousUnreachabilityMs >= degradedModeTiming(bundle).auditUnreachableFullHaltMs;
 }

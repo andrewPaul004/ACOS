@@ -157,6 +157,17 @@ describe('`§40` — NO NETWORK, SCOPED TO THE EXTERNAL-EFFECT PATH', () => {
       './correlationTag.js',
       './outboxState.js',
       './enqueue.js',
+      // v1.3.6 (`50 §3f`'s pre-claim gate). ONE new dependency: `claim.ts` asserts an ACTIVE
+      // verified control-artifact bundle before the irreversible step, because `25 §7` puts
+      // the claim "in a committed transaction BEFORE the HTTP call" and `CLAIMED` has no
+      // timeout, lease, expiry or reclaim. A claim taken while the kernel holds no verified
+      // bundle would be an at-most-once commitment spent under authority nobody checked.
+      //
+      // It imports the REGISTRY's accessor and not a loader: `registry.ts` is the only
+      // module that can verify or publish, and `boundaries.test.ts` asserts that the
+      // verifier, the trust configuration and the artifact package each have exactly one
+      // production call site there.
+      '../controlArtifacts/registry.js',
     ];
     const files = await outboxSourceOf();
     const seen = new Set<string>();

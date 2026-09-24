@@ -316,7 +316,59 @@ remaining signed classes whose consumers arrive at S4, and class 19's key migrat
 
 ## 19. Verification
 
-*(Filled from the final run on the final tree; see `§20` for scope.)*
+**Run on the final tree, `67d5502`, with no other verify process running.**
+
+| | |
+|---|---|
+| architecture gate | **89 PASS / 0 FAIL** |
+| architecture seeds | **58 run, 58 exit non-zero, 0 fail to discriminate** |
+| `docs/architecture/` diff against `653e632` | **empty** |
+| `npm run verify` | **exit 0** |
+| typecheck | **green** (`tsc --noEmit`) |
+| lint | **green** (`eslint . --max-warnings 0`) |
+| test files | **156** (accepted baseline 147; +9 new) |
+| tests | **2222** (accepted baseline 2057; +165) |
+| passed | **2222** |
+| failed | **0** |
+| skipped | **0** |
+| duration | 8320s |
+
+**Focused S1K tests — 166 across nine files:**
+
+| File | Tests |
+|---|---|
+| `tests/controlArtifacts/roots-and-manifest.test.ts` | 32 |
+| `tests/controlArtifacts/boundaries.test.ts` | 25 |
+| `tests/controlArtifacts/i19-occasions.test.ts` | 24 |
+| `tests/controlArtifacts/class-authority.test.ts` | 22 |
+| `tests/controlArtifacts/framing-and-oracle.test.ts` | 21 |
+| `tests/controlArtifacts/cedar-o4.test.ts` | 17 |
+| `tests/controlArtifacts/audit-plane.test.ts` | 14 |
+| `tests/controlArtifacts/signature-is-not-conformance.test.ts` | 8 |
+| `tests/policy/policy-set-bundle-assembly.test.ts` | 3 |
+
+**By kind:**
+
+| Kind | Count |
+|---|---|
+| cryptographic vector and framing-oracle tests | 21 |
+| tamper and adversarial tests (manifest, bytes, signatures, Cedar, class 20) | 79 |
+| reload, publication and concurrency tests | 24 |
+| control-plane / audit-plane independence tests | 14 |
+| source-boundary and confinement tests | 25 |
+| **vulnerable controls, all discriminating** | **18** |
+
+**Accepted suites whose assertions were updated rather than relaxed:** four boundary
+allow-lists (`mie-units-type-boundary`, `mirror-lag-critical`,
+`no-real-transport-boundary`, `no-transport-boundary`), each of which exists so that a new
+dependency FAILS rather than slips past a pattern. Each gained exactly one entry, named for
+the declaration that requires it, and two of the four were STRENGTHENED in the same edit —
+the gateway now asserts the verifier, the trust configuration, the artifact package and the
+registry are each ABSENT from it, and `classifyMirrorLag`'s one-required-operand arity was
+preserved by making the bundle a default parameter rather than an optional one.
+
+**Residual 13's repair was validated before the final run**: `tests/negative-controls`
+(14 files, 118 tests) passed end to end, which it could not do beforehand.
 
 ---
 
@@ -367,5 +419,5 @@ remaining signed classes whose consumers arrive at S4, and class 19's key migrat
 | 29 | no real HTTP or vendor work exists | YES |
 | 30 | architecture gate remains 89/89 | YES |
 | 31 | all 58 seeds still discriminate | YES |
-| 32 | `npm run verify` green | see `§19` |
+| 32 | `npm run verify` green | YES — 156 files, 2222 tests, 0 failed, 0 skipped, exit 0 |
 | 33 | no new architecture ambiguity is hidden | YES — the four open choices are named in `S1K-contract.md §5` with the argument for why each is inert |

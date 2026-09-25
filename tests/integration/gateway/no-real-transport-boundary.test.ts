@@ -336,33 +336,99 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
 });
 
 describe('`§7`, `§9` — THERE IS EXACTLY ONE PRODUCTION INVOCATION SURFACE, AND NO ADAPTER', () => {
-  it('`src/` contains NO `ExternalEffectAdapter` implementation at all', async () => {
+  it('the ONLY `ExternalEffectAdapter` in `src/` is the credential-free transport proxy', async () => {
     /*
-     * `§7`: "Do NOT implement a real adapter. The deterministic mock implementation belongs
-     * under test/support or another explicitly non-production test location."
+     * =============================================================================
+     * S1N AMENDS THIS ASSERTION, OUT LOUD. THE ACCEPTED VERSION SAID:
      *
-     * Asserted structurally: nothing in `src/` declares a `dispatch(` method or an
-     * `adapterId` field, so there is no object that satisfies the port. The port itself is a
-     * TYPE declaration, and `adapterPort.ts` is exempted from the `dispatch(` pattern
-     * because the interface member IS the declaration being asserted about.
+     *     "`src/` contains NO `ExternalEffectAdapter` implementation at all"
+     *
+     * and its sibling assertion below said, in its own words, that "a future slice that adds
+     * one has to change this assertion out loud." THIS IS THAT SLICE.
+     *
+     * =============================================================================
+     * WHY THE PROPERTY CHANGED, AND WHY THE NEW ONE IS STRONGER RATHER THAN WEAKER
+     *
+     * The accepted absence was a proxy for the property that actually matters: nothing in
+     * the control process can present a vendor credential. S1J could state that as an
+     * absence because there was no other way to state it — the repository had ONE process,
+     * so "an adapter in `src/`" and "an adapter in the control process" were the same
+     * sentence.
+     *
+     * `I25` is the real property and it is about a PROCESS: "**No process in the control
+     * plane holds a vendor credential.**" S1M returned PARTIAL because no process existed
+     * that could satisfy it. S1N builds one, and the object that remains in `src/` is a
+     * TRANSPORT PROXY: it forwards a validated envelope to a separate OS process and
+     * translates a closed reply back. It presents no credential, reaches no vendor and has
+     * no route to either.
+     *
+     * SO THE ASSERTION BECOMES AN ALLOWLIST OF EXACTLY ONE FILE, PLUS FOUR NARROWING CHECKS
+     * THAT DID NOT EXIST BEFORE. The permitted file must contain no secret loader, no
+     * provider client, no network primitive and no environment read, and it must be the ONLY
+     * file in `src/` that spawns a process. A second adapter implementation, or a credential
+     * appearing in this one, fails this test exactly as before.
+     * =============================================================================
      */
+    const PERMITTED = join('src', 'integration', 'control', 'integrationClient.ts');
+
     const files = await sourceOf();
     const offenders: string[] = [];
     for (const { path, code } of files) {
       if (path.endsWith(`${sep}adapterPort.ts`)) continue;
+      if (relative(path) === PERMITTED) continue;
       for (const pattern of [
         /adapterId\s*:\s*['"]/,
         /resolutionCapabilities\s*:\s*\[/,
         /async\s+dispatch\s*\(/,
         /dispatch\s*\(\s*envelope\s*:/,
+        // S1N ADDS THIS PATTERN, because the S1N shape — an object literal whose `dispatch`
+        // is an arrow property — is one the four accepted patterns do not see. Without it
+        // the amendment would be cosmetic: a second proxy could be added anywhere in `src/`
+        // and this test would stay green.
+        /\bdispatch\s*:\s*\(/,
       ]) {
         if (pattern.test(code)) offenders.push(`${relative(path)} (${String(pattern)})`);
       }
     }
     expect(
       offenders,
-      `an adapter implementation in src/:\n  ${offenders.join('\n  ')}`,
+      `an adapter implementation in src/ outside ${PERMITTED}:\n  ${offenders.join('\n  ')}`,
     ).toEqual([]);
+
+    // AND THE PERMITTED FILE IS NARROWED, so the carve-out is smaller than the hole it opens.
+    const proxy = files.find(({ path }) => relative(path) === PERMITTED);
+    expect(proxy, `${PERMITTED} is missing`).toBeDefined();
+    for (const forbidden of [
+      /readFileSync/,
+      /readFile\s*\(/,
+      /process\.env/,
+      /dotenv/i,
+      /SecretsManager/i,
+      /vault/i,
+      /\bsecret\b/i,
+      /globalThis\.fetch/,
+      /(?<![.\w$])fetch\s*\(/,
+      /from\s+['"](node:)?https?['"]/,
+      /from\s+['"](node:)?net['"]/,
+      /from\s+['"](node:)?tls['"]/,
+      /from\s+['"]axios['"]/,
+      /from\s+['"]undici['"]/,
+      /Authorization/,
+      /Bearer/,
+      /apiKey/i,
+      /accessToken/i,
+      /https?:\/\//,
+      // It transports; it does not load an adapter. The dynamic import lives in the CHILD.
+      /await\s+import\s*\(/,
+    ]) {
+      expect(proxy!.code, `${PERMITTED} (${String(forbidden)})`).not.toMatch(forbidden);
+    }
+
+    // AND IT IS THE ONLY FILE IN `src/` THAT SPAWNS A PROCESS.
+    const spawners = files
+      .filter(({ code }) => /from\s+['"]node:child_process['"]/.test(code))
+      .map(({ path }) => relative(path));
+    expect(spawners).toEqual([PERMITTED]);
   });
 
   it('production’s own registry is EMPTY, so a production process can invoke nothing', () => {

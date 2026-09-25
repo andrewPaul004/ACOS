@@ -22,6 +22,7 @@
     "spike": "vitest run spikes/durable-execution",
     "release:control": "tsx tools/control-release/cli.ts",
     "prelive:verify": "tsx tools/prelive/cli.ts",
+    "verify:postmark-sandbox": "tsx tools/postmark-sandbox/cli.ts",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {

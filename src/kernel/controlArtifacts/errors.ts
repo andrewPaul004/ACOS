@@ -68,6 +68,14 @@ export const CONTROL_ARTIFACT_REASON_CODES = [
   'ARTIFACT_CONTENT_INVALID',
   // `50 §3f` occasion 3 — the capability boundary.
   'NO_ACTIVE_VERIFIED_BUNDLE',
+  // `50 §3i` (S1L) — class-19 admission. Constructor MEMBERSHIP is decided by the VERIFIED
+  // class-19 artifact and never by a caller-supplied verification key. These are the three
+  // ways that boundary can be violated: a record the owner did not sign, a manifested record
+  // the deployment failed to supply, and two records for one manifested version — which would
+  // otherwise let registration order decide which signed record wins.
+  'CONSTRUCTOR_RECORD_NOT_MANIFESTED',
+  'MANIFESTED_CONSTRUCTOR_MISSING',
+  'CONSTRUCTOR_RECORD_DUPLICATED',
 ] as const;
 
 export type ControlArtifactReasonCode = (typeof CONTROL_ARTIFACT_REASON_CODES)[number];

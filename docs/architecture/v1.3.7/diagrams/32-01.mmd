@@ -1,0 +1,17 @@
+graph TB
+    subgraph DEPLOY["One deployable — control plane"]
+      K["Kernel modules K1–K15"]
+      DB0["DBOS Transact<br/>(library, same Postgres)"]
+      CED["Cedar<br/>(library, in-process)"]
+    end
+    PG[("Postgres<br/>state · exposure · effects · finance · queues · workflow journal")]
+    AU[("Audit Postgres<br/>separate instance, separate creds")]
+    W["Worker processes<br/>sandboxed · no creds"]
+    AD["Adapter processes<br/>credential-holding"]
+    EXT[("External systems")]
+
+    DEPLOY --- PG
+    DEPLOY --> AU
+    DEPLOY <--> W
+    DEPLOY --> AD --> EXT
+    EXT -->|webhooks / polls| DEPLOY

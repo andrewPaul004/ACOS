@@ -424,11 +424,78 @@ describe('`§7`, `§9` — THERE IS EXACTLY ONE PRODUCTION INVOCATION SURFACE, A
       expect(proxy!.code, `${PERMITTED} (${String(forbidden)})`).not.toMatch(forbidden);
     }
 
-    // AND IT IS THE ONLY FILE IN `src/` THAT SPAWNS A PROCESS.
+    /*
+     * =============================================================================
+     * S1O AMENDS THIS ASSERTION, OUT LOUD. THE S1N VERSION SAID:
+     *
+     *     "AND IT IS THE ONLY FILE IN `src/` THAT SPAWNS A PROCESS."
+     *
+     * =============================================================================
+     * WHY THERE ARE NOW TWO, AND WHY THE PROPERTY IS UNCHANGED
+     *
+     * The count was never the property. The property is that **every process this
+     * repository spawns is a credential boundary that the spawning process cannot see
+     * into**, and S1N could state it as "exactly one" because there was exactly one such
+     * boundary to build.
+     *
+     * S1O builds the second, in the OTHER PLANE. `48 §2` row 13 — "Audit plane vendor
+     * reads" — described a capability with no component, and `48 §3.6`'s "read-only,
+     * separately provisioned, and attempted-write-tested" was a requirement with nothing to
+     * hold it. The audit plane now forks its own reader, and that reader holds a credential
+     * the audit plane's own parent process must not be able to read — the same sentence
+     * `I25` makes about the control plane, one plane over.
+     *
+     * SO THE ASSERTION BECOMES AN ALLOWLIST OF EXACTLY TWO, ONE PER PLANE, AND EACH IS
+     * NARROWED BY THE SAME CHECKS. A third spawner, or a credential appearing in either of
+     * these two, fails this test exactly as before.
+     *
+     * AND THE TWO ARE IN DIFFERENT PLANES BY CONSTRUCTION, which is asserted rather than
+     * assumed: one under `src/integration/`, one under `src/audit/`. A second spawner
+     * appearing in the SAME plane would mean one plane had two credential boundaries, which
+     * is the shape `23 §7`'s per-credential isolation forbids.
+     * =============================================================================
+     */
+    const AUDIT_PERMITTED = join('src', 'audit', 'provider', 'plane', 'auditReadClient.ts');
+
     const spawners = files
       .filter(({ code }) => /from\s+['"]node:child_process['"]/.test(code))
-      .map(({ path }) => relative(path));
-    expect(spawners).toEqual([PERMITTED]);
+      .map(({ path }) => relative(path))
+      .sort();
+    expect(spawners).toEqual([AUDIT_PERMITTED, PERMITTED].sort());
+
+    // ONE PER PLANE, asserted rather than assumed.
+    expect(spawners.filter((path) => path.includes(join('src', 'integration')))).toHaveLength(1);
+    expect(spawners.filter((path) => path.includes(join('src', 'audit')))).toHaveLength(1);
+
+    // AND THE AUDIT SPAWNER IS NARROWED BY THE SAME CHECKS AS THE INTEGRATION ONE, so the
+    // second carve-out is no wider than the first.
+    const auditProxy = files.find(({ path }) => relative(path) === AUDIT_PERMITTED);
+    expect(auditProxy, `${AUDIT_PERMITTED} is missing`).toBeDefined();
+    for (const forbidden of [
+      /readFileSync/,
+      /readFile\s*\(/,
+      /process\.env/,
+      /dotenv/i,
+      /SecretsManager/i,
+      /vault/i,
+      /\bsecret\b/i,
+      /globalThis\.fetch/,
+      /(?<![.\w$])fetch\s*\(/,
+      /from\s+['"](node:)?https?['"]/,
+      /from\s+['"](node:)?net['"]/,
+      /from\s+['"](node:)?tls['"]/,
+      /from\s+['"]axios['"]/,
+      /from\s+['"]undici['"]/,
+      /Authorization/,
+      /Bearer/,
+      /apiKey/i,
+      /accessToken/i,
+      /https?:\/\//,
+      // It transports; it does not load a reader. The dynamic import lives in the CHILD.
+      /await\s+import\s*\(/,
+    ]) {
+      expect(auditProxy!.code, `${AUDIT_PERMITTED} (${String(forbidden)})`).not.toMatch(forbidden);
+    }
   });
 
   it('production’s own registry is EMPTY, so a production process can invoke nothing', () => {

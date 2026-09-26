@@ -1,0 +1,103 @@
+# ACOS Operating Spine v1.2 — Changelog
+
+**Issued 2026-09-03. Supersedes v1.1 (2026-09-02), which superseded v1.0 (2026-09-01).**
+Produced in response to `57-second-redteam-remediation.md`. Scope: apply all **22 BLOCKING (T1)** findings from the narrow second independent red team. No production code, no schemas, no repository, no vendor provisioning.
+
+---
+
+## 1. What v1.2 is
+
+The second red team returned **CONDITIONAL PASS — zero FATAL, 22 BLOCKING, 24 MATERIAL, 6 MINOR, 4 WORDING**, with 10 constructed attacks defeated by the v1.1 design as written. v1.2 applies all 22 BLOCKING items: **15 APPLIED**, **7 APPLIED WITH EXPLICIT RESIDUAL**, **0 NOT APPLIED**. Every residual is a named, bounded consequence recorded in an artifact rather than an unresolved defect.
+
+Two authority-boundary escapes drove the CONDITIONAL verdict, and both are closed:
+
+- **Path A — headroom laundering.** An `I32` starvation override released reservations, refilled the window, changed no signed quantity and therefore fired no re-signature, multiplying realisable refund loss while the owner believed they were answering a liquidity question.
+- **Path B — self-declared degraded mode.** The control plane decided when it was degraded, and degradation *relaxed* the dispatch rule for clock-bearing effects. The audited party chose when the audit applied.
+
+## 2. The shape of the v1.1 defects
+
+v1.1's arithmetic was independently reproduced and found correct in all ten figures (`54 §2.1`). What v1.1 got wrong was **semantics**, and one pattern accounts for most of it:
+
+> **A quantity or threshold a mechanism needs, that the artifact declaring quantities does not declare.**
+
+`min()` against an undeclared window cap. An `I3` "window ceiling" that existed in no artifact. A 30-day basis against a calendar-month window. A `boundary_kind` never stated. A canonical serialisation never specified. A `cessation_lag` never measured. Each was invisible to review because each read as complete prose.
+
+The second pattern is **an invariant asserting a property it does not entail** — `I18`'s three-way equality between quantities that are unequal whenever a cost component exists, and four citations of `I31` for a property `I31` does not state. Registry check **C5b (entailment)** is new in v1.2 for exactly this.
+
+## 3. Changes by finding group
+
+### R1 / Canonicaliser — SR-C1..C4
+
+`I18` **retired**, replaced by `I18a`–`I18d` over a split `exposure { vendor_amount (nullable), total_exposure }`. Per-action caps now compare against `total_exposure`, so a $25.00 refund carrying a $1.03 retained fee **denies**. `enumerate_effects` becomes a named, journaled, `context_spec`-filtered, rate-limited READ capability with an `EnumeratedOptionSet` return type. Selectors become content-addressed `(enumeration_id, option_id)` pairs; the kernel **never substitutes** (I53). Constructors gain a `ConstructorVersionRecord` and become control-artifact class 19; `ACOS-JCS-1` becomes class 20.
+
+### R2 / Standing — SR-S1..S4
+
+Every window declares `boundary_kind`; **all nine production windows are DISCRETE** and ROLLING is defined but `NOT_ADMISSIBLE_AT_MVP`. Five-state machine with a declared transition table; forward exposure retained in **every non-`REVOKED` status**; `REVOKED` requires cessation verification (I54) and is **structurally unavailable at MVP** because `cessation_lag` is `UNMEASURED`. `StandingRevocationAuthority` (I55) resolves the pause deadlock. Forward exposure moves to the **exposure-remainder** form.
+
+### R3 / Audit — SR-A1..A6
+
+`I17` restated as **transport** completeness; the unqualified claim moves to `I8`. `JournalAttestation` at 5-minute cadence, k=3, new `I17e`. Three-state mirror machine in which the uncorroborated state is **stricter** (new `I17f`, two-sided). `ACOS-JCS-1` canonical serialisation. `journal_counter` row allocator with a declared lock order. Idempotent re-push. The five-row halt table becomes an **ordered first-match precedence list**.
+
+### R8 / Limits — SR-L1..L4
+
+`max_monetary : Money | UNBOUNDED`, **not nullable**. Grants narrow; the window binds. `window_balance` rows with a `CHECK` under `FOR UPDATE` replace the unimplementable exclusion constraint. Order-driven irrecoverable cost becomes a fifth displayed quantity and a seventh exclusion (I57). `PRESUMED_SETTLED` closes Path A.
+
+### R9 + R17-P4 — SR-R1..R4
+
+Reservation TTL derives from the tier SLA; OWNER reservations exempt from reaping. Seven-state Approval machine with a unique partial index on `RESUMING` (I60). `RemedyObligation` (I58). `settlement_direction` becomes **`value_direction`** with six values; P4 restated over three outbound values; **P8** added for `INTERNAL_LIABILITY`. Hand proof extended to **22 classes, five explicit exclusions and a P6 reachability column**. New `I51`, DB-enforced.
+
+## 4. Deliberate deviation from the remediation spec
+
+**One.** `57 §2` SR-S4 specifies `rate × remaining_periods × (1 + overdelivery_allowance)`. Under a $6.00/day rate in a 31-day January with $12.00 of documented day-1 overdelivery, that form computes `12 + 29×6 = 186 > 180` and **the campaign still pauses on day 2** — the attack the finding was raised to close. v1.2 uses `forward = max(0, standing_cap − realised)` with `standing_cap(MONTH) = rate × max(days_in_window, monthly_basis_multiplier)`, which re-reserves at exactly $186.00 and does not pause. Recorded in the ledger under SR-S4 and raised as question **B8** of the third brief.
+
+## 5. New identifiers
+
+`I17e`, `I17f`, `I18a`–`I18d`, `I51`–`I61`. `I18` retired. Registry totals: **68 identifiers, 55 MVP / 13 excluded, 22 audit-owned, 21 DB-enforced** (enumerated by name in `phase2-v1.2-invariant-registry.md §2.8`).
+
+## 6. New and rebuilt artifacts
+
+| Artifact | Status |
+|---|---|
+| `phase2-v1.2-remediation-ledger.md` | New |
+| `phase2-v1.2-invariant-registry.md` | New; supersedes the v1.1 registry |
+| `phase2-v1.2-third-redteam-brief.md` | New |
+| `phase2-v1.2-changelog.md` | This file |
+| `deliverables/51-limits-fixture.md` | **Rebuilt, not patched** |
+| `analysis/recompute-v1.2.py` + `-output.txt` | New — the independent `I7` reference oracle |
+| `analysis/v1.2-consistency-audit.md` | New — the 20-condition gate result |
+| `deliverables/24, 25, 26, 30, 34, 36, 37, 50` | Substantially revised |
+| `deliverables/22, 23, 27, 33, 35, 38, 48, 49` | Targeted revisions |
+
+## 7. Verified arithmetic
+
+Independently recomputed by `analysis/recompute-v1.2.py`, not asserted:
+
+`MAL_monetary(month)` **$300.00** · `Standing(month)` **$182.40** (28/29/30-day), **$186.00** (31-day) · `MIE_cost(month)` **$120.00** p50 / **$270.00** p95 · **`MAL_total(month)` p95 31-day = $756.00** — the signature basis · `MAL_total(day)` p95 **$329.50** · realisable cash exposure **$906.00**. Fixture F2: `MAL_monetary` **$480.00** = `min($300, $510)` + `min(UNBOUNDED, $180)`.
+
+## 8. What v1.2 does not do
+
+- **No implementation.** No code, no schema, no repository, no vendor account.
+- **No business model selected.** Phase 1's position is unchanged.
+- **The DBOS-versus-step-journal spike is not run** (`58 §9`, permitted-but-not-performed).
+- **The separate audit account is not provisioned** (`58 §9`).
+- **MATERIAL, MINOR and WORDING findings are not all applied.** Those closed as a side effect of BLOCKING work are tabulated in ledger `§3.1`; the rest remain open and are listed there.
+
+## 9. On the closed gate
+
+`57 §7` prohibits weakening any v1.1 property while remediating. The compliance check is ledger `§4`, and it is not a formality — several v1.2 changes **strengthen** beyond what `57` required, and the check exists to confirm none went the other way:
+
+- **Forward exposure retained in `PAUSE_PENDING` and `EXPIRED`,** not only `PAUSED`. `57` required a defined release point; v1.2 defines it as the *only* release point and makes reaching it evidence-bearing.
+- **The uncorroborated mirror state is stricter than `NORMAL`.** `57` asked for corroboration before entering degraded mode; that alone would have deadlocked a genuine two-sided outage. Inversion is a strictly stronger property with an availability cost that is named and priced.
+- **P8 added.** Not requested. `INTERNAL_LIABILITY` carries no novelty test, so caps were its only bound and a limit with no property is not enforced.
+- **`I8` carries the unqualified completeness claim.** Moving it off `I17` is not a weakening — `I17`'s unqualified form was never checkable by a push target — but it is a **re-scoping of a claim the package previously made more strongly than it could support**, and it is flagged as such rather than presented as a clean win.
+
+Two properties are **narrower** in v1.2 than in v1.1, both deliberately:
+
+1. **The pending-approval bound.** v1.1 claimed ~24 items from a $600 figure that was `MAL_total`, not `MAL_monetary`. The correct bound is `min(count_headroom, floor(monetary_headroom / per_action_max))` **per class**, which for `refund.create` is **10**. The property is real; it is smaller than claimed and now derived from the fixture.
+2. **Standing headroom is not returnable within a window at MVP.** Not a v1.1 property that was removed — a v1.1 property that was **never sound** and is now correctly withheld, with `26 §10.5` stating the commercial cost.
+
+**Neither of these is a weakening of the design. Both are corrections of claims the design did not support**, which is the distinction `57 §7` is actually protecting.
+
+---
+
+**Verdict: READY FOR NARROW THIRD RED TEAM. Not ready to implement.**

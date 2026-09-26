@@ -6,6 +6,7 @@ import {
   parseClass27DegradedModeConfiguration,
   parseClass2PolicySet,
   parseClass3ActionCatalogue,
+  parseClass5CredentialScopes,
 } from './artifactParsers.js';
 import {
   sealVerifiedBundle,
@@ -328,6 +329,7 @@ export function verifyControlArtifactBundle(
     identities: Object.freeze(identities),
     policySet: parseClass2PolicySet(verifiedBytes.get(2)!),
     actionCatalogue: parseClass3ActionCatalogue(verifiedBytes.get(3)!),
+    credentialScopes: parseClass5CredentialScopes(verifiedBytes.get(5)!),
     constructorSet: parseClass19ConstructorSet(verifiedBytes.get(19)!),
     jcs1Specification: parseClass20Specification(verifiedBytes.get(20)!, {
       artifactVersion: class20Entry.artifactVersion,
@@ -343,6 +345,7 @@ export function verifyControlArtifactBundle(
   // declarations of one fact that disagree leave no reading that is safe to use.
   assertDeclaredVersion(byClass, 2, contents.policySet.artifactVersion);
   assertDeclaredVersion(byClass, 3, contents.actionCatalogue.artifactVersion);
+  assertDeclaredVersion(byClass, 5, contents.credentialScopes.artifactVersion);
   assertDeclaredVersion(byClass, 19, contents.constructorSet.artifactVersion);
   assertDeclaredVersion(byClass, 24, contents.auditSigningKey.artifactVersion);
   assertDeclaredVersion(byClass, 27, contents.degradedModeConfiguration.artifactVersion);

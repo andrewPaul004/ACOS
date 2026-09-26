@@ -431,6 +431,8 @@ function packageFileNameFor(artifactClass: number, packageRoot: string): string 
 export const DEPLOYED_FILE_NAMES: Readonly<Record<number, string>> = Object.freeze({
   2: 'class-02.policy-set.json',
   3: 'class-03.action-catalogue.json',
+  // v1.3.7, `50 §2g`. The seventh pre-live member.
+  5: 'class-05.credential-scopes.json',
   19: 'class-19.effect-constructors.json',
   20: 'class-20.acos-jcs-1.spec.v1.txt',
   24: 'class-24.audit-signing-key.json',

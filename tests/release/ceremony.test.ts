@@ -85,7 +85,7 @@ describe('§14 — three separate operations, and no operation holds two keys', 
     expect(report.findings).toEqual([]);
     expect(report.verified).toBe(true);
     expect(report.manifestId).toBe(fixture.completed.manifestId);
-    expect(report.entries.map((entry) => entry.artifactClass)).toEqual([2, 3, 19, 20, 24, 27]);
+    expect(report.entries.map((entry) => entry.artifactClass)).toEqual([2, 3, 5, 19, 20, 24, 27]);
   });
 
   it('every ceremony entry point takes EXACTLY ONE signer', () => {

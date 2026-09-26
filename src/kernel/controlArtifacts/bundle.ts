@@ -6,6 +6,7 @@ import type {
   SettlementTolerance,
   ValueDirection,
 } from '../canonicalisation/actionClasses.js';
+import type { CredentialRiskClass } from './credentialRisk.js';
 import { integrityFailure } from './errors.js';
 
 /**
@@ -147,6 +148,44 @@ export interface VerifiedAuditSigningKey {
   readonly publicKey: Uint8Array;
 }
 
+/**
+ * `50 §2g` — ONE configured vendor credential's signed capability envelope. SEVEN FIELDS.
+ *
+ * `§2g`: "**The list below is the WHOLE of class 5's signed content. There is no `incl.`, no
+ * `etc.` and no open tail.**" Fields 5, 6 and 7 are DERIVED at signing time and
+ * CONSISTENCY-CHECKED against field 4 at verification, so a record that disagrees with
+ * itself never reaches a consumer.
+ *
+ * **NO MEMBER CARRIES CREDENTIAL MATERIAL, AND THERE IS NOWHERE TO PUT ONE.** `credentialId`
+ * is an identity and `§2g` says so in the field table: "the credential's identity; **never
+ * the material**". `adapterSecretSource.ts` remains the only thing in the repository that
+ * resolves material, in the integration runtime, from its own deployment boundary.
+ */
+export interface VerifiedCredentialScope {
+  /** Field 1. Unique within the artifact. Never the material. */
+  readonly credentialId: string;
+  /** Field 2. An adapter identity the class-3 catalogue names. */
+  readonly adapter: string;
+  /** Field 3. Which vendor grants the permissions. */
+  readonly provider: string;
+  /** Field 4. Non-empty, as the PROVIDER spells them. The envelope being classified. */
+  readonly grantedProviderPermissions: readonly string[];
+  /** Field 5. The subset of field 4 satisfying at least one of `§2g`'s nine clauses. */
+  readonly monetaryProviderPermissions: readonly string[];
+  /** Field 6. **ADR-024's option-B trigger operand.** */
+  readonly credentialRiskClass: CredentialRiskClass;
+  /** Field 7. `48 §3.6`'s read-only exemption operand for an audit-plane credential. */
+  readonly externalMutationCapable: boolean;
+}
+
+/** `50 §2g` — the verified class-5 artifact: one record per configured vendor credential. */
+export interface VerifiedCredentialScopeDeclaration {
+  readonly artifactVersion: string;
+  /** In the artifact's own declared sorted-`credential_id` order. */
+  readonly credentialIds: readonly string[];
+  readonly credentials: Readonly<Record<string, VerifiedCredentialScope>>;
+}
+
 /** `50 §2` row 19 — the constructor version records, verified as bytes. */
 export interface VerifiedConstructorRecord {
   readonly constructorId: string;
@@ -169,6 +208,8 @@ export interface VerifiedBundleContents {
   readonly identities: readonly VerifiedArtifactIdentity[];
   readonly policySet: VerifiedPolicySet;
   readonly actionCatalogue: VerifiedActionCatalogue;
+  /** `50 §2g`, v1.3.7 — the class-5 credential-scope declaration. */
+  readonly credentialScopes: VerifiedCredentialScopeDeclaration;
   readonly constructorSet: VerifiedConstructorSet;
   readonly jcs1Specification: VerifiedJcs1Specification;
   readonly auditSigningKey: VerifiedAuditSigningKey;
@@ -269,6 +310,22 @@ export function verifiedActionCatalogue(
   bundle: VerifiedControlArtifactBundle,
 ): VerifiedActionCatalogue {
   return contentsOf(bundle).actionCatalogue;
+}
+
+/**
+ * `50 §2g`'s verified class-5 content. **THE credential-risk authority source (v1.3.7).**
+ *
+ * `§2g`: "no provider response, account response, adapter self-description, environment
+ * variable, caller parameter or model output may supply, override or widen any of the seven
+ * fields". This accessor is therefore the ONLY route to a `credential_risk_class` in the
+ * repository, and it is reachable only through a bundle this module sealed —
+ * `tests/negative-controls/unsafe-credential-risk.ts` holds the implementations that read
+ * one from somewhere else.
+ */
+export function verifiedCredentialScopes(
+  bundle: VerifiedControlArtifactBundle,
+): VerifiedCredentialScopeDeclaration {
+  return contentsOf(bundle).credentialScopes;
 }
 
 /** `50 §2c`'s verified class-27 content. THE degraded-mode authority source. */

@@ -79,6 +79,14 @@ export const RELEASE_ARTIFACT_SPECS: readonly {
     fileName: 'class-03.action-catalogue.json',
   },
   {
+    // v1.3.7, `50 §2g` (`S1N-C1`). The signed owner of ADR-024's option-B trigger operand,
+    // and the seventh member of `50 §6`'s pre-live inventory.
+    artifactClass: 5,
+    artifactId: 'acos.control.credential_scopes',
+    artifactVersion: 'acos.credential_scopes.2026-09-26',
+    fileName: 'class-05.credential-scopes.json',
+  },
+  {
     artifactClass: 19,
     artifactId: 'acos.control.effect_constructors',
     artifactVersion: 'acos.effect_constructors.2026-09-24',

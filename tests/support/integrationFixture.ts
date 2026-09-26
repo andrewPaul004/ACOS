@@ -23,8 +23,30 @@ import { activeVerifiedControlArtifacts } from '../../src/kernel/controlArtifact
 
 export const ADAPTER_A = 'mock_ads';
 export const ADAPTER_B = 'mock_commerce';
-/** `refund.create` carries a vendor monetary field, so this one triggers option B. */
 export const ADAPTER_MONEY_MOVING = 'mock_processor';
+
+/**
+ * `50 §2g` — THE CREDENTIAL IDENTITIES THE VERIFIED CLASS-5 ARTIFACT DECLARES.
+ *
+ * v1.3.7 moved ADR-024's option-B trigger operand off the ACTION catalogue and onto the
+ * CREDENTIAL, so a descriptor now names a credential identity instead of declaring a class.
+ *
+ * **THE TWO `mock_ads` IDENTITIES ARE THE DEMONSTRATION.** Same adapter, same action
+ * catalogue, different signed answer: `pause_only` reaches `campaign.pause` and
+ * `campaign.read` and is `NON_MONETARY_WRITE`; `budget_manage` also reaches
+ * `campaign.budget.set`, which is `§2g` clause 9 — "increase a budget, spend cap, credit
+ * line, or analogous provider-side authority that permits additional spend" — and is
+ * `MONEY_MOVING`. S1N's action-derived predicate called both `NON_MONETARY`, because
+ * `campaign.budget.set` declares `carries_vendor_monetary_field: false`.
+ */
+export const CREDENTIAL_A_NON_MONETARY = 'mock_ads.pause_only';
+export const CREDENTIAL_A_MONEY_MOVING = 'mock_ads.budget_manage';
+export const CREDENTIAL_B_NON_MONETARY = 'mock_commerce.fulfilment';
+export const CREDENTIAL_PROCESSOR_MONEY_MOVING = 'mock_processor.refund';
+/** `§8`'s required attack: `mail.send` beside `payment.refund`, on one credential. */
+export const CREDENTIAL_MIXED_ENVELOPE = 'synthetic_esp.mixed_send';
+/** `50 §2g` field 2's reserved audit-plane sentinel. Not presentable by any adapter. */
+export const CREDENTIAL_AUDIT_PLANE = 'synthetic_esp.audit_read';
 
 export const ADAPTER_A_ROOT = resolve(process.cwd(), 'tests', 'integration-plane', 'adapterA');
 export const ADAPTER_B_ROOT = resolve(process.cwd(), 'tests', 'integration-plane', 'adapterB');
@@ -92,7 +114,8 @@ export interface DescriptorOverrides {
   readonly runtimeRoot?: string;
   readonly adapterModule?: string;
   readonly secretSourceModule?: string;
-  readonly declaredCredentialClass?: 'NON_MONETARY' | 'MONEY_MOVING';
+  /** `50 §2g`: a credential IDENTITY, never a risk class. The class is signed, not declared. */
+  readonly credentialId?: string;
 }
 
 /** Adapter A's descriptor. `mock_ads` serves REVERSIBLE and COMPENSABLE classes. */
@@ -107,7 +130,7 @@ export function adapterADescriptor(
     secretSourceModule: overrides.secretSourceModule ?? join(ADAPTER_A_ROOT, 'secretSource.ts'),
     secretLocator,
     resolutionCapabilities: ['QUERYABLE_MESSAGE_LOG'],
-    declaredCredentialClass: overrides.declaredCredentialClass ?? 'NON_MONETARY',
+    credentialId: overrides.credentialId ?? CREDENTIAL_A_NON_MONETARY,
   };
 }
 
@@ -129,8 +152,15 @@ export function adapterBDescriptor(
     secretSourceModule: overrides.secretSourceModule ?? join(ADAPTER_B_ROOT, 'secretSource.ts'),
     secretLocator,
     resolutionCapabilities: ['QUERYABLE_MESSAGE_LOG'],
-    declaredCredentialClass: overrides.declaredCredentialClass ?? 'NON_MONETARY',
+    credentialId: overrides.credentialId ?? CREDENTIAL_B_NON_MONETARY,
   };
+}
+
+/** The locators the INTEGRATION plane holds, for the audit registry's collision check. */
+export function integrationSecretLocators(
+  ...descriptors: readonly AdapterRuntimeDescriptor[]
+): ReadonlySet<string> {
+  return new Set(descriptors.map((descriptor) => descriptor.secretLocator));
 }
 
 export function runtimeRegistry(

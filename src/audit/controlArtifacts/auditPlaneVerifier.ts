@@ -82,6 +82,15 @@ const AUDIT_REQUIRED_ARTIFACTS: readonly {
     fileName: 'class-03.action-catalogue.json',
   },
   {
+    // v1.3.7, `50 §2g` (`S1N-C1`). The audit plane verifies the credential-scope declaration
+    // for its own reasons as well as for completeness: `48 §3.6`'s read-only exemption for
+    // THIS plane's vendor reads has its operand in class 5, so an audit plane that did not
+    // verify it would be exempting itself on an artifact it never checked.
+    artifactClass: 5,
+    artifactId: 'acos.control.credential_scopes',
+    fileName: 'class-05.credential-scopes.json',
+  },
+  {
     artifactClass: 19,
     artifactId: 'acos.control.effect_constructors',
     fileName: 'class-19.effect-constructors.json',
@@ -106,6 +115,23 @@ const AUDIT_REQUIRED_ARTIFACTS: readonly {
 /** `50 §2d`: retired, reserved, deprecated, never a manifest member. */
 const AUDIT_RETIRED_CLASS = 17;
 
+/**
+ * `50 §2g` field 2's reserved audit-plane sentinel, TRANSCRIBED rather than imported.
+ *
+ * The same discipline the artifact list above follows, and for the same reason: importing
+ * `credentialRisk.ts` would put the control plane's trust chain into this module's graph,
+ * and the two planes would agree because they were one.
+ */
+const AUDIT_PLANE_SCOPE = 'audit_plane';
+
+/** The three class-5 fields `48 §3.6`'s exemption turns on, as the audit plane reads them. */
+export interface AuditVerifiedCredentialScope {
+  readonly credentialId: string;
+  readonly provider: string;
+  readonly credentialRiskClass: string;
+  readonly externalMutationCapable: boolean;
+}
+
 export type AuditVerificationOutcome =
   | {
       readonly verified: true;
@@ -118,6 +144,21 @@ export type AuditVerificationOutcome =
       readonly jcs1SpecificationContentHash: string;
       /** `50 §2` row 24's key, as the audit plane computed it. */
       readonly auditSigningKeyId: string;
+      /**
+       * `50 §2g`, v1.3.7 — the audit plane's OWN reading of the class-5 credential scopes.
+       *
+       * **THE AUDIT PLANE PARSES THIS ITSELF AND DOES NOT ASK THE CONTROL PLANE.** `§13`'s
+       * whole point is that the audit plane's read credential is independent of the control
+       * plane, and an audit reader admitted on the control plane's reading of the record
+       * that says it is read-only would be an audit plane trusting the plane it audits for
+       * its own independence — `30 §5.4`'s self-agreement failure, one level up.
+       *
+       * The parse is deliberately NARROW: three fields per record, and only the ones
+       * `48 §3.6`'s exemption turns on. The control plane's `parseClass5CredentialScopes`
+       * enforces `§2g`'s full seven-field closure and its self-consistency rule; this one
+       * re-reads the subset the AUDIT plane acts on, from bytes this plane verified.
+       */
+      readonly auditReadCredentials: Readonly<Record<string, AuditVerifiedCredentialScope>>;
     }
   | { readonly verified: false; readonly reason: string; readonly detail: string };
 
@@ -405,6 +446,7 @@ export function verifyAuditPlaneControlArtifacts(
 
   const artifactDigests: Record<number, string> = {};
   let corroborationSignalMaxAgeMs: number | null = null;
+  const auditReadCredentials: Record<string, AuditVerifiedCredentialScope> = {};
   let auditSigningKeyId: string | null = null;
 
   for (const required of AUDIT_REQUIRED_ARTIFACTS) {
@@ -488,6 +530,66 @@ export function verifyAuditPlaneControlArtifacts(
       corroborationSignalMaxAgeMs = Number(match[1]) * 60 * 1000;
     }
 
+    if (required.artifactClass === 5) {
+      /*
+       * `50 §2g`, v1.3.7 — THE AUDIT PLANE READS ITS OWN EXEMPTION'S OPERAND.
+       *
+       * Only the AUDIT-PLANE-scoped records are kept. An adapter-scoped credential is not
+       * this plane's business and keeping it would let a later change admit one by
+       * accident; `§13`'s "no control send credential" is easier to hold when the audit
+       * plane never learns a send credential's identity at all.
+       */
+      const parsed = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+      const rows = parsed.credentials;
+      if (!Array.isArray(rows)) {
+        return refuse(
+          'AUDIT_ARTIFACT_CONTENT_INVALID',
+          'the audit plane cannot read credentials from its class-5 copy',
+        );
+      }
+      for (const raw of rows) {
+        if (typeof raw !== 'object' || raw === null) {
+          return refuse(
+            'AUDIT_ARTIFACT_CONTENT_INVALID',
+            'a class-5 credential record is not an object',
+          );
+        }
+        const row = raw as Record<string, unknown>;
+        if (row.adapter !== AUDIT_PLANE_SCOPE) continue;
+        const credentialId = row.credential_id;
+        const provider = row.provider;
+        const riskClass = row.credential_risk_class;
+        const mutation = row.external_mutation_capable;
+        if (
+          typeof credentialId !== 'string' ||
+          typeof provider !== 'string' ||
+          typeof riskClass !== 'string' ||
+          typeof mutation !== 'boolean'
+        ) {
+          return refuse(
+            'AUDIT_ARTIFACT_CONTENT_INVALID',
+            'an audit-plane class-5 credential record is malformed',
+          );
+        }
+        // `48 §3.6` and `50 §2g`: a record carrying the audit sentinel and claiming anything
+        // but READ_ONLY, or admitting external mutation, is REFUSED rather than kept and
+        // filtered later. The plane that would act on it refuses to finish verifying.
+        if (riskClass !== 'READ_ONLY' || mutation) {
+          return refuse(
+            'AUDIT_ARTIFACT_CONTENT_INVALID',
+            `audit-plane credential "${credentialId}" is not declared READ_ONLY with no ` +
+              'external mutation; 48 §3.6 rests on exactly that',
+          );
+        }
+        auditReadCredentials[credentialId] = Object.freeze({
+          credentialId,
+          provider,
+          credentialRiskClass: riskClass,
+          externalMutationCapable: mutation,
+        });
+      }
+    }
+
     if (required.artifactClass === 24) {
       const parsed = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
       const publicKey = hexBytes(parsed.public_key, 32);
@@ -513,5 +615,6 @@ export function verifyAuditPlaneControlArtifacts(
     corroborationSignalMaxAgeMs,
     jcs1SpecificationContentHash: artifactDigests[20]!,
     auditSigningKeyId,
+    auditReadCredentials: Object.freeze(auditReadCredentials),
   };
 }

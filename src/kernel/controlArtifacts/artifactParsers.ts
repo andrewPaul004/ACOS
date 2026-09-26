@@ -11,6 +11,11 @@ import {
   type ValueDirection,
 } from '../canonicalisation/actionClasses.js';
 import { ED25519_PUBLIC_KEY_BYTES } from './casSig.js';
+import {
+  CREDENTIAL_RISK_CLASSES,
+  credentialDeclarationInconsistency,
+  isCredentialRiskClass,
+} from './credentialRisk.js';
 import { decodeLowercaseHex, keyIdOf } from './ed25519.js';
 import { integrityFailure, quoted } from './errors.js';
 import type {
@@ -18,6 +23,8 @@ import type {
   VerifiedActionCatalogueEntry,
   VerifiedAuditSigningKey,
   VerifiedConstructorSet,
+  VerifiedCredentialScope,
+  VerifiedCredentialScopeDeclaration,
   VerifiedDegradedModeConfiguration,
   VerifiedJcs1Specification,
   VerifiedPolicySet,
@@ -540,6 +547,176 @@ export function parseClass27DegradedModeConfiguration(
       document.corroboration_signal_max_age,
       `${where}.corroboration_signal_max_age`,
     ),
+  });
+}
+
+// ---------------------------------------------------------------------------------
+// CLASS 5 — `50 §2g`'s CLOSED schema (v1.3.7, `S1N-C1`).
+// ---------------------------------------------------------------------------------
+
+const CLASS_5_FIELDS = ['artifact_id', 'artifact_version', 'credentials'] as const;
+
+const CLASS_5_CREDENTIAL_FIELDS = [
+  'credential_id',
+  'adapter',
+  'provider',
+  'granted_provider_permissions',
+  'monetary_provider_permissions',
+  'credential_risk_class',
+  'external_mutation_capable',
+] as const;
+
+/** A closed list of provider permission identifiers, as the PROVIDER spells them. */
+function asPermissionList(
+  value: unknown,
+  where: string,
+  { allowEmpty }: { readonly allowEmpty: boolean },
+): readonly string[] {
+  if (!Array.isArray(value)) {
+    integrityFailure('ARTIFACT_CONTENT_INVALID', `${where} is not an array`);
+  }
+  const permissions = value.map((element, index) =>
+    asString(element, `${where}[${String(index)}]`),
+  );
+  if (!allowEmpty && permissions.length === 0) {
+    integrityFailure(
+      'ARTIFACT_CONTENT_INVALID',
+      `${where} is empty; 50 §2g field 4 is a NON-EMPTY closed list — a credential with no ` +
+        'enumerated permission has no capability envelope to classify',
+    );
+  }
+  // SORTED AND DUPLICATE-FREE, for the reason `parseClass2PolicySet` requires sorted policy
+  // ids: the artifact is one byte object and its own order is what the owner signed, so
+  // sorting here would let two byte sequences carry one meaning and put a reordering
+  // outside the signature's reach.
+  for (let index = 1; index < permissions.length; index += 1) {
+    if (permissions[index - 1]! >= permissions[index]!) {
+      integrityFailure(
+        'ARTIFACT_CONTENT_INVALID',
+        `${where} is not in strictly ascending order at index ${String(index)}; the ` +
+          'signed bytes carry one ordering and one only',
+      );
+    }
+  }
+  return Object.freeze(permissions);
+}
+
+/**
+ * Parse `50 §2g`'s class-5 content from VERIFIED bytes.
+ *
+ * =================================================================================
+ * THE FOUR REFUSALS, AND WHY EACH IS A REFUSAL RATHER THAN A CORRECTION
+ *
+ *   an unknown or missing field         `§2g`'s list "is the WHOLE of class 5's signed
+ *                                       content", so a stray key is either an accident that
+ *                                       changes nothing or an artifact nobody reviewed, and
+ *                                       this parser cannot tell which
+ *   a `credential_risk_class` outside   `§2g`: "**There is no `UNKNOWN`, and a missing
+ *   the closed three                    classification is not a permissive default.**" The
+ *                                       fourth value IS the permissive default, arriving
+ *                                       under another name
+ *   a self-inconsistent record          `§2g`: "a declaration that disagrees with itself is
+ *                                       REFUSED". This is the UNDERSTATEMENT case — field 6
+ *                                       edited to `NON_MONETARY_WRITE` while field 5 still
+ *                                       names a refund scope
+ *   a duplicate `credential_id`         two records for one identity means the option-B
+ *                                       trigger has two answers, and the registry would
+ *                                       read whichever the map happened to keep
+ *
+ * **AND WHAT IS DELIBERATELY NOT CHECKED HERE: whether a named permission is *really*
+ * money-moving.** `§2g` field 5 is an owner judgement made at signing time over one named
+ * provider's published permission model, and a parser that second-guessed it would need a
+ * matcher over permission STRINGS — the same name-inference defect one level down, in which
+ * a provider that called its refund scope `messages.write` would defeat the check silently.
+ * =================================================================================
+ */
+export function parseClass5CredentialScopes(
+  bytes: Uint8Array,
+): VerifiedCredentialScopeDeclaration {
+  const where = 'the class-5 credential-scope declaration';
+  const document = parseJson(bytes, where);
+  assertExactFields(document, CLASS_5_FIELDS, where);
+  const artifactVersion = artifactHeader(document, 'acos.control.credential_scopes', where);
+
+  const rawCredentials = document.credentials;
+  if (!Array.isArray(rawCredentials)) {
+    integrityFailure('ARTIFACT_CONTENT_INVALID', `${where}.credentials is not an array`);
+  }
+
+  const credentials: Record<string, VerifiedCredentialScope> = {};
+  const credentialIds: string[] = [];
+
+  for (const [index, raw] of rawCredentials.entries()) {
+    const at = `${where}.credentials[${String(index)}]`;
+    const record = asObject(raw, at);
+    assertExactFields(record, CLASS_5_CREDENTIAL_FIELDS, at);
+
+    const credentialId = asString(record.credential_id, `${at}.credential_id`);
+    if (credentialId.length === 0) {
+      integrityFailure('ARTIFACT_CONTENT_INVALID', `${at}.credential_id is empty`);
+    }
+    if (credentialId in credentials) {
+      integrityFailure(
+        'ARTIFACT_CONTENT_INVALID',
+        `${where} carries two records for credential ${quoted(credentialId)}; one identity ` +
+          "has one option-B trigger answer, and two records give it two",
+      );
+    }
+    if (credentialIds.length > 0 && credentialIds[credentialIds.length - 1]! >= credentialId) {
+      integrityFailure(
+        'ARTIFACT_CONTENT_INVALID',
+        `${where}.credentials is not in strictly ascending credential_id order at index ` +
+          `${String(index)}`,
+      );
+    }
+
+    const riskClass = asString(record.credential_risk_class, `${at}.credential_risk_class`);
+    if (!isCredentialRiskClass(riskClass)) {
+      integrityFailure(
+        'ARTIFACT_CONTENT_INVALID',
+        `${at}.credential_risk_class is ${quoted(riskClass)}; 50 §2g closes the set at ` +
+          `[${CREDENTIAL_RISK_CLASSES.join(', ')}] and admits no fourth value — there is no ` +
+          'UNKNOWN, and a value outside the set is not a permissive default',
+      );
+    }
+
+    const scope: VerifiedCredentialScope = Object.freeze({
+      credentialId,
+      adapter: asString(record.adapter, `${at}.adapter`),
+      provider: asString(record.provider, `${at}.provider`),
+      grantedProviderPermissions: asPermissionList(
+        record.granted_provider_permissions,
+        `${at}.granted_provider_permissions`,
+        { allowEmpty: false },
+      ),
+      monetaryProviderPermissions: asPermissionList(
+        record.monetary_provider_permissions,
+        `${at}.monetary_provider_permissions`,
+        { allowEmpty: true },
+      ),
+      credentialRiskClass: riskClass,
+      externalMutationCapable: asBoolean(
+        record.external_mutation_capable,
+        `${at}.external_mutation_capable`,
+      ),
+    });
+
+    const inconsistency = credentialDeclarationInconsistency(scope);
+    if (inconsistency !== null) {
+      integrityFailure(
+        'ARTIFACT_CONTENT_INVALID',
+        `${at} disagrees with itself: ${inconsistency} (50 §2g)`,
+      );
+    }
+
+    credentials[credentialId] = scope;
+    credentialIds.push(credentialId);
+  }
+
+  return Object.freeze({
+    artifactVersion,
+    credentialIds: Object.freeze(credentialIds),
+    credentials: Object.freeze(credentials),
   });
 }
 

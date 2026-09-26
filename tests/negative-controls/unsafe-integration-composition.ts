@@ -121,12 +121,17 @@ export function unsafeAdapterRuntimeRegistry(
     if (byId.has(descriptor.adapterId)) {
       throw new Error(`duplicate adapter runtime "${descriptor.adapterId}"`);
     }
-    // THE VIOLATION: no count check, no credential-class derivation, no catalogue read.
+    // THE VIOLATION: no count check, no class-5 credential lookup, no catalogue read.
+    // v1.3.7 sharpens what is missing: production reads the SIGNED credential record and
+    // refuses on its `credential_risk_class`, and this registry never looks one up at all.
     byId.set(descriptor.adapterId, descriptor);
   }
   return Object.freeze({
     resolve: (adapterId: string): AdapterRuntimeDescriptor | undefined => byId.get(adapterId),
     registeredIds: Object.freeze([...byId.keys()].sort()),
+    // No credential was consulted, so there is no scope to report. Production returns the
+    // signed record it admitted the adapter against.
+    credentialScopeOf: () => undefined,
   });
 }
 

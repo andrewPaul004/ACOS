@@ -1,0 +1,53 @@
+# ACOS v1.3 / v1.3.1 / v1.3.2 mechanical consistency pass — 25 conditions
+
+C1    PASS  Fourteen BLOCKING ids each have exactly one ledger entry heading
+          14/14
+C2    PASS  Every ledger disposition is APPLIED or APPLIED WITH EXPLICIT RESIDUAL; zero NOT APPLIED
+          14 dispositions: ['APPLIED', 'APPLIED WITH EXPLICIT RESIDUAL']
+C3    PASS  All nine v1.3 verification cases present in 36
+          9/9
+C4    PASS  Every numbered deliverable declares v1.3 in its version line
+          21/21
+C5    PASS  MAL_total signature basis $756.00; no operational passage states $600 as a current MAL_total
+          no superseded MAL_total in operational text
+C6    PASS  Standing(month) 31-day is $186.00; no operational passage states $180 as standing
+          no superseded standing basis in operational text
+C23   PASS  Semantic superseded combinations absent from operational passages
+          8 denylist patterns, 0 operational hits
+C21   PASS  Every operational mirror-outage behaviour statement carries the state qualifier
+          no unqualified operational statements
+C22   PASS  The printed I3 commitment guard contains exactly the four declared operands
+          reserved+standing+presumed+realised present
+C24   PASS  REVOKED has zero outbound transitions in every operational transition statement
+          no outbound REVOKED transition found
+C25   PASS  No operational passage states the I8 bound as an undeclared 'inverse-sweep cadence'
+          all sites read sweep_cadence + vendor_reporting_lag
+C26   PASS  New identifiers I62 and I63 resolve in the registry and are cited in >=2 artifacts
+          both resolve, both multiply cited
+C27   PASS  Every invariant identifier used in an operational artifact resolves in the registry
+          71 declared
+C28   PASS  The §2.8 DB-enforced enumeration contains 23 rows, matching §0
+          enumerated 23
+C29   PASS  Registry counts are arithmetically consistent (57 + 13 = 70)
+E1    PASS  Rate-class semantics consistent: total_exposure = ordinary reservation = 0.00, economic exposure in I3 term 2, no term-1 reading anywhere normative
+          8 required statements present; 7 denylist patterns, 0 normative hits
+E2    PASS  Ledger disposition summary is computed from the entries and equals 7 / 7 / 0
+          computed 7 APPLIED / 7 RESIDUAL / 0 NOT APPLIED over 14 entries; printed 7 / 7; groups computed [('2', '5'), ('5', '1'), ('0', '1')] printed [('2', '5'), ('5', '1'), ('0', '1')]
+E3    PASS  No operational artifact references a superseded invariant registry as current authority
+          3 total references, 0 normative (all remaining are explicitly historical)
+E4    PASS  Scalar cessation_lag is not the active I54 operand anywhere normative; the per-adapter cessation specification is, and the conservative default stands
+          16 total references, 0 active; specification named in registry, 24 and 51; no-REVOKED default present
+E5    PASS  Implementation brief §7 contains exactly ten pass-revocation conditions numbered 1–10 once each
+          found 10 numbered conditions: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+E6    PASS  Audit-plane ownership count agrees: registry §0, registry §1 owner column, and 30 §6.1's list
+          owner column 23; 30 §6.1 lists 23; registry §0 states 23; symmetric difference none
+E7    PASS  The DB-enforced row count agrees between registry §0, §2.8's heading and §2.8's body
+          heading=True body=True §0=True
+F1    PASS  ACOS-JCS-1 NULL framing: reserved 0xFFFFFFFF word stated, payload bound stated, overflow fails closed, injectivity stated, no normative line carries the withdrawn one-byte sentinel
+          7 required statements present; 3 denylist patterns, 0 normative hits
+F2    PASS  The ACOS-JCS-1 cross-references agree with 30 5.3: 36's VC-A3 case and 50's class-20 row both carry the corrected NULL rule
+          4 required cross-reference statements present
+F3    PASS  30 5.3's worked examples are pairwise distinct where the specification distinguishes them: SQL NULL is FF FF FF FF and nothing else is; empty string and empty bytea are both length 0; bytea 0x00 and JSON literal null differ from NULL
+          parsed 5 rows: null=FF FF FF FF emptyText=00 00 00 00 emptyBytes=00 00 00 00 bytes00=00 00 00 01 00 jsonNull=00 00 00 04 6E 75 6C 6C; distinct=4
+
+RESULT: 25 PASS / 0 FAIL

@@ -71,8 +71,47 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
     }
   });
 
-  it('the roots cover the control plane and the synthetic integration plane', () => {
-    expect([...DEFAULT_PERIMETER_ROOTS]).toEqual(['src', expect.stringContaining('integration-plane')]);
+  it('the roots cover the control plane and BOTH synthetic planes', () => {
+    /*
+     * S1O ADDS `tests/audit-plane/`, and the reason is `48 §3`'s own: "An exemption is not a
+     * hole. It is a **named, annotated, reviewed** hole, and the difference is that a
+     * reviewer can find it." `48 §2` row 13 exempts audit-plane vendor reads from carrying
+     * an `authorisation_ref`; it does not exempt them from being ENUMERATED, and an
+     * unenumerated read is unreviewed rather than exempt.
+     */
+    expect([...DEFAULT_PERIMETER_ROOTS]).toEqual([
+      'src',
+      expect.stringContaining('integration-plane'),
+      expect.stringContaining('audit-plane'),
+    ]);
+  });
+
+  it('`48 §2` row 13 — the audit READ sites are enumerated, annotated and EXEMPT', async () => {
+    const report = await scanPerimeter();
+    // Non-vacuous: the sites exist, and they are read sites rather than write sites.
+    expect(report.providerReadTotal).toBeGreaterThanOrEqual(2);
+    expect(report.providerReadUnannotated).toBe(0);
+
+    const reads = report.sites.filter((site) => site.kind === 'PROVIDER_READ_CLIENT');
+    for (const site of reads) {
+      // TEST_ONLY, always: `§18` — a test fixture is never a production perimeter entry.
+      expect(site.scope, site.file).toBe('TEST_ONLY');
+      // A READ carries an EXEMPTION, never an `authorisation_ref`: the two annotations are
+      // different claims and neither may stand in for the other.
+      expect(site.annotation.kind, site.file).toBe('EXEMPT');
+      if (site.annotation.kind === 'EXEMPT') {
+        expect(site.annotation.reason).toBe('audit_plane_read_only');
+        expect(site.annotation.ticket).toBe('48-3-6');
+      }
+    }
+
+    // AND NO SEND CLIENT LIVES IN THE AUDIT PLANE. This is the assertion `§16`'s "no send
+    // operation" reduces to at the perimeter: the scanner finds zero `sendToProvider*`
+    // declarations or calls under `tests/audit-plane/`.
+    const auditSends = report.sites.filter(
+      (site) => site.kind === 'PROVIDER_CLIENT' && site.file.includes('audit-plane'),
+    );
+    expect(auditSends).toEqual([]);
   });
 
   it('and the rendered artifact is deterministic', async () => {

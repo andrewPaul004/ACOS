@@ -373,10 +373,15 @@ describe('§29 — failed deploys, and the difference between READY and ACTIVATE
       entries: Record<string, unknown>[];
       entry_count: number;
     };
-    // INSERTED IN `50 §3d`'s declared ascending order — a class-17 entry between classes 3
-    // and 19 — so the entry ORDER is still valid and the refusal cannot come from the order
-    // check. What is left is the pin, which is the leg this case is about.
-    document.entries.splice(2, 0, { ...document.entries[0]!, artifact_class: 17 });
+    // INSERTED IN `50 §3d`'s declared ascending order, so the entry ORDER is still valid and
+    // the refusal cannot come from the order check. What is left is the pin, which is the leg
+    // this case is about.
+    //
+    // THE POSITION IS DERIVED, NOT COUNTED. A literal index encoded the inventory's length at
+    // the moment it was written, and v1.3.7's class 5 moved it — turning this case into an
+    // order failure and silently stopping it from testing the pin at all. Computing the
+    // insertion point from the classes actually present keeps the case about what it says.
+    insertRetiredClassInOrder(document.entries);
     document.entry_count = document.entries.length;
     writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
 
@@ -410,7 +415,7 @@ describe('§29 — failed deploys, and the difference between READY and ACTIVATE
       entries: Record<string, unknown>[];
       entry_count: number;
     };
-    document.entries.splice(2, 0, { ...document.entries[0]!, artifact_class: 17 });
+    insertRetiredClassInOrder(document.entries);
     document.entry_count = document.entries.length;
     writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
 
@@ -423,6 +428,19 @@ describe('§29 — failed deploys, and the difference between READY and ACTIVATE
     expect(after.findings.map((finding) => finding.code)).toContain('RETIRED_CLASS_PRESENT');
   });
 });
+
+/**
+ * Splice a class-17 entry into a manifest's entry list AT ITS ASCENDING-ORDER POSITION.
+ *
+ * `50 §3d` declares the manifest order as ascending `artifact_class`, and `50 §2d` retires
+ * class 17. A test that wants to prove the RETIREMENT check fires must not trip the ORDER
+ * check on the way, so the entry goes exactly where 17 would sort.
+ */
+function insertRetiredClassInOrder(entries: Record<string, unknown>[]): void {
+  const at = entries.findIndex((entry) => Number(entry.artifact_class) > 17);
+  const index = at === -1 ? entries.length : at;
+  entries.splice(index, 0, { ...entries[0]!, artifact_class: 17 });
+}
 
 describe('§23 / §27 — the two planes fail INDEPENDENTLY', () => {
   it('a wrong AUDIT key fails the audit plane and leaves the control plane correct', async () => {

@@ -101,7 +101,14 @@ export function testOnlyKeyPair(seed: Buffer): SigningKeyPair {
   return ed25519FromSeed(seed);
 }
 
-/** `50 §6`'s inventory as the fixture assembles it, in manifest order. */
+/**
+ * `50 §6`'s inventory as the fixture assembles it, in manifest order.
+ *
+ * SEVEN members after v1.3.7. Class 5 is the one v1.3.7 adds, and the fixture reads its
+ * bytes out of `artifacts/control/` like every other deployed artifact — a test that
+ * needs a different credential set edits them through `mutate`, which is the byte-level
+ * surface the signature covers.
+ */
 export interface FixtureArtifactSpec {
   readonly artifactClass: number;
   readonly artifactId: string;
@@ -121,6 +128,13 @@ export const FIXTURE_ARTIFACT_SPECS: readonly FixtureArtifactSpec[] = Object.fre
     artifactId: 'acos.control.action_catalogue',
     artifactVersion: 'acos.action_catalogue.2026-09-24',
     fileName: 'class-03.action-catalogue.json',
+  },
+  {
+    // v1.3.7, `50 §2g` (`S1N-C1`). The signed owner of ADR-024's option-B trigger operand.
+    artifactClass: 5,
+    artifactId: 'acos.control.credential_scopes',
+    artifactVersion: 'acos.credential_scopes.2026-09-26',
+    fileName: 'class-05.credential-scopes.json',
   },
   {
     artifactClass: 19,

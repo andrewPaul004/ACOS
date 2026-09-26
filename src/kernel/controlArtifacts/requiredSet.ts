@@ -101,6 +101,17 @@ export const REQUIRED_PRE_LIVE_ARTIFACTS: readonly RequiredArtifact[] = Object.f
     boundary: '50 §2a',
   }),
   Object.freeze({
+    // v1.3.7, `S1N-C1`. `50 §2g` closes class 5 and `37 §2`'s SEQ-04 pulls it into the
+    // pre-live subset, because ADR-024's option-B money-moving trigger has no operand
+    // without it and a trigger operand read from anywhere unsigned is unsigned authority
+    // over whether the execution proxy is required.
+    artifactClass: 5,
+    artifactId: 'acos.control.credential_scopes',
+    declaredVersion: null,
+    fileName: 'class-05.credential-scopes.json',
+    boundary: '50 §2g',
+  }),
+  Object.freeze({
     artifactClass: 19,
     artifactId: 'acos.control.effect_constructors',
     declaredVersion: null,

@@ -358,7 +358,7 @@ describe('CLASS 17 — RETIRED, and still retired', () => {
       (identity) => identity.artifactClass,
     );
     expect(classes).not.toContain(17);
-    expect(classes).toEqual([2, 3, 19, 20, 24, 27]);
+    expect(classes).toEqual([2, 3, 5, 19, 20, 24, 27]);
   });
 
   it('`window_registry` remains RUNTIME STATE, written by migrations and not by a signature', () => {

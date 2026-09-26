@@ -8,8 +8,7 @@ import { activeVerifiedControlArtifacts } from '../../src/kernel/controlArtifact
 import {
   OPTION_A_MAX_ADAPTER_RUNTIMES,
   createAdapterRuntimeRegistry,
-  derivedCredentialClass,
-  movesValueUnderBroadReading,
+  declaredCredentialRiskClass,
   type AdapterRuntimeDescriptor,
 } from '../../src/integration/control/adapterRuntimeRegistry.js';
 import { buildDispatchRequest } from '../../src/integration/control/integrationClient.js';
@@ -44,6 +43,10 @@ import {
   ADAPTER_B_ROOT,
   ADAPTER_MONEY_MOVING,
   SecretFixtureDirectory,
+  CREDENTIAL_A_MONEY_MOVING,
+  CREDENTIAL_A_NON_MONETARY,
+  CREDENTIAL_B_NON_MONETARY,
+  CREDENTIAL_PROCESSOR_MONEY_MOVING,
   adapterADescriptor,
   adapterBDescriptor,
   mintSentinelSecret,
@@ -503,38 +506,47 @@ describe('CONTROL 10 — an IPC deadline mapped to NOT_SENT_CONFIRMED', () => {
  * CONTROLS 12, 13 — ADR-024's TRIGGER
  * ============================================================================== */
 
-describe('CONTROLS 12 and 13 — ADR-024’s option-B trigger', () => {
-  function descriptorFor(adapterId: string, locator: string): AdapterRuntimeDescriptor {
+describe('CONTROLS 12 and 13 \u2014 ADR-024\u2019s option-B trigger', () => {
+  function descriptorFor(
+    adapterId: string,
+    credentialId: string,
+    locator: string,
+  ): AdapterRuntimeDescriptor {
     return {
       adapterId,
+      credentialId,
       runtimeRoot: ADAPTER_A_ROOT,
       adapterModule: join(ADAPTER_A_ROOT, 'adapter.ts'),
       secretSourceModule: join(ADAPTER_A_ROOT, 'secretSource.ts'),
       secretLocator: locator,
       resolutionCapabilities: ['QUERYABLE_MESSAGE_LOG'],
-      declaredCredentialClass: 'NON_MONETARY',
     };
   }
 
-  it('CONTROL 12: a THIRD adapter — UNSAFE accepts, PRODUCTION refuses startup', () => {
+  it('CONTROL 12: a THIRD adapter \u2014 UNSAFE accepts, PRODUCTION refuses startup', () => {
     const directory = fixture();
     const locator = directory.write('a', { adapterId: ADAPTER_A, secret: mintSentinelSecret('c12') });
+    /*
+     * THREE adapters, every one holding a credential the signed class-5 artifact declares
+     * NON-money-moving. The count alone must refuse, which is what makes the two halves of
+     * ADR-024's trigger independent rather than one dressed as two.
+     */
     const three = [
-      descriptorFor(ADAPTER_A, locator),
-      descriptorFor(ADAPTER_B, locator),
-      descriptorFor(ADAPTER_MONEY_MOVING, locator),
+      descriptorFor(ADAPTER_A, CREDENTIAL_A_NON_MONETARY, locator),
+      descriptorFor(ADAPTER_B, CREDENTIAL_B_NON_MONETARY, locator),
+      descriptorFor(ADAPTER_MONEY_MOVING, CREDENTIAL_PROCESSOR_MONEY_MOVING, locator),
     ];
 
     // UNSAFE: three adapters, no complaint.
     expect(unsafeAdapterRuntimeRegistry(three).registeredIds).toHaveLength(3);
 
-    // PRODUCTION: refused at construction, by ADR-024's own number.
+    // PRODUCTION: refused at construction, by ADR-024's own number, BEFORE any artifact read.
     expect(OPTION_A_MAX_ADAPTER_RUNTIMES).toBe(2);
     expect(() => createAdapterRuntimeRegistry(three, activeVerifiedControlArtifacts())).toThrow(
       /OPTION_B_TRIGGER_ADAPTER_COUNT/,
     );
 
-    // AND TWO ARE STILL ADMISSIBLE — it is a trigger, not a ban.
+    // AND TWO ARE STILL ADMISSIBLE \u2014 it is a trigger, not a ban.
     const locatorB = directory.write('b', { adapterId: ADAPTER_B, secret: mintSentinelSecret('c12b') });
     const two = createAdapterRuntimeRegistry(
       [adapterADescriptor(locator), adapterBDescriptor(locatorB)],
@@ -543,49 +555,87 @@ describe('CONTROLS 12 and 13 — ADR-024’s option-B trigger', () => {
     expect(two.registeredIds).toEqual([ADAPTER_B, ADAPTER_A].sort());
   });
 
-  it('CONTROL 13: a MONEY-MOVING credential — UNSAFE accepts, PRODUCTION refuses startup', () => {
+  it('CONTROL 13: a MONEY-MOVING credential \u2014 UNSAFE accepts, PRODUCTION refuses startup', () => {
     const bundle = activeVerifiedControlArtifacts();
     const locator = fixture().write('p', {
       adapterId: ADAPTER_MONEY_MOVING,
       secret: mintSentinelSecret('c13'),
     });
 
-    // THE DERIVATION COMES FROM SIGNED BYTES, not from the adapter's name.
-    expect(derivedCredentialClass(ADAPTER_MONEY_MOVING, bundle)).toBe('MONEY_MOVING');
-    expect(derivedCredentialClass(ADAPTER_A, bundle)).toBe('NON_MONETARY');
-    expect(derivedCredentialClass(ADAPTER_B, bundle)).toBe('NON_MONETARY');
+    /*
+     * v1.3.7 \u2014 THE OPERAND IS THE CREDENTIAL, READ FROM SIGNED CLASS-5 BYTES.
+     *
+     * S1N derived this from `50 \u00a72a` field 4 and recorded the derivation as `S1N-C1`. The
+     * owner ruled it wrong IN KIND, and `50 \u00a72g` replaced it: the class is DECLARED per
+     * credential, over the provider permissions that credential reaches.
+     */
+    expect(declaredCredentialRiskClass(CREDENTIAL_PROCESSOR_MONEY_MOVING, bundle)).toBe(
+      'MONEY_MOVING',
+    );
+    expect(declaredCredentialRiskClass(CREDENTIAL_A_NON_MONETARY, bundle)).toBe(
+      'NON_MONETARY_WRITE',
+    );
+    expect(declaredCredentialRiskClass(CREDENTIAL_B_NON_MONETARY, bundle)).toBe(
+      'NON_MONETARY_WRITE',
+    );
 
-    const descriptor = descriptorFor(ADAPTER_MONEY_MOVING, locator);
+    const descriptor = descriptorFor(
+      ADAPTER_MONEY_MOVING,
+      CREDENTIAL_PROCESSOR_MONEY_MOVING,
+      locator,
+    );
 
     // UNSAFE: registered, under a design ADR-024 says is not good enough for it.
     expect(unsafeAdapterRuntimeRegistry([descriptor]).registeredIds).toEqual([
       ADAPTER_MONEY_MOVING,
     ]);
 
-    // PRODUCTION: refused, whether the deployment declares it honestly or not.
+    // PRODUCTION: refused, on ONE adapter, because the credential moves money.
     expect(() => createAdapterRuntimeRegistry([descriptor], bundle)).toThrow(
-      /CREDENTIAL_CLASS_UNDERSTATED/,
+      /OPTION_B_TRIGGER_MONEY_MOVING_CREDENTIAL/,
     );
+  });
+
+  it('the trigger is CREDENTIAL-level: one adapter, two credentials, two answers', () => {
+    const bundle = activeVerifiedControlArtifacts();
+    const directory = fixture();
+    const locator = directory.write('ads', {
+      adapterId: ADAPTER_A,
+      secret: mintSentinelSecret('c13b'),
+    });
+
+    /*
+     * THE DEMONSTRATION `50 \u00a72g` EXISTS FOR, ON THIS REPOSITORY'S OWN CATALOGUE.
+     *
+     * `mock_ads` serves `campaign.pause` and `campaign.budget.set`. Neither declares
+     * `carries_vendor_monetary_field`, so S1N's action-derived predicate answered
+     * `NON_MONETARY` for every `mock_ads` credential.
+     *
+     * v1.3.7 asks what the CREDENTIAL can do at the provider. `mock_ads.budget_manage`
+     * reaches `campaign.budget.set`, which is `\u00a72g` clause 9 \u2014 "increase a budget, spend
+     * cap, credit line, or analogous provider-side authority that permits additional spend".
+     * `mock_ads.pause_only` does not.
+     *
+     * SAME ADAPTER. SAME ACTION CATALOGUE. DIFFERENT ANSWER.
+     */
+    expect(declaredCredentialRiskClass(CREDENTIAL_A_MONEY_MOVING, bundle)).toBe('MONEY_MOVING');
+    expect(declaredCredentialRiskClass(CREDENTIAL_A_NON_MONETARY, bundle)).toBe(
+      'NON_MONETARY_WRITE',
+    );
+
     expect(() =>
       createAdapterRuntimeRegistry(
-        [{ ...descriptor, declaredCredentialClass: 'MONEY_MOVING' }],
+        [adapterADescriptor(locator, { credentialId: CREDENTIAL_A_MONEY_MOVING })],
         bundle,
       ),
     ).toThrow(/OPTION_B_TRIGGER_MONEY_MOVING_CREDENTIAL/);
-  });
 
-  it('and the BROAD reading of the trigger is recorded, and is not the one enforced', () => {
-    const bundle = activeVerifiedControlArtifacts();
-    /*
-     * `adapterRuntimeRegistry.ts`'s own argument, asserted rather than only written down:
-     * under "field 4 true OR value_direction other than NONE" every adapter identity in the
-     * verified catalogue is money-moving, so option A would admit none — which contradicts
-     * ADR-024's "with two adapters and no money" and `23 §11`'s four-adapter MVP.
-     */
-    for (const adapterId of [ADAPTER_A, ADAPTER_B, ADAPTER_MONEY_MOVING]) {
-      expect(movesValueUnderBroadReading(adapterId, bundle), adapterId).toBe(true);
-    }
-    expect(derivedCredentialClass(ADAPTER_A, bundle)).toBe('NON_MONETARY');
+    expect(
+      createAdapterRuntimeRegistry(
+        [adapterADescriptor(locator, { credentialId: CREDENTIAL_A_NON_MONETARY })],
+        bundle,
+      ).registeredIds,
+    ).toEqual([ADAPTER_A]);
   });
 });
 

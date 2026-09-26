@@ -53,6 +53,19 @@ export const CALL_SITE_KINDS = [
   'NETWORK_PRIMITIVE',
   'HTTP_LIBRARY',
   'PROVIDER_CLIENT',
+  /**
+   * `PROVIDER_READ_CLIENT` is the S1O addition. `48 §2` row 13 — "Audit plane vendor reads"
+   * — is `EXEMPT (read-only; §3.6)`, and `48 §3` is explicit about what an exemption is:
+   * "An exemption is not a hole. It is a **named, annotated, reviewed** hole, and the
+   * difference is that a reviewer can find it."
+   *
+   * **AN UNENUMERATED READ IS NOT EXEMPT; IT IS UNREVIEWED.** So an audit-plane provider
+   * read is a perimeter SITE that must be annotated, and it is reported separately from a
+   * SEND site because the two carry different annotations: a send carries
+   * `PERIMETER_AUTHORISED(authorisation_ref)` and a read carries
+   * `PERIMETER_EXEMPT(audit_plane_read_only, 48-3.6)`.
+   */
+  'PROVIDER_READ_CLIENT',
 ] as const;
 
 export type CallSiteKind = (typeof CALL_SITE_KINDS)[number];
@@ -60,6 +73,17 @@ export type CallSiteKind = (typeof CALL_SITE_KINDS)[number];
 /** A provider-client declaration: `sendToProvider`, `sendToProviderB`, and future kin. */
 const PROVIDER_CLIENT_DECLARATION =
   /(?:export\s+(?:async\s+)?function|export\s+const)\s+(sendToProvider[A-Za-z0-9_]*)\b/g;
+
+/**
+ * An audit-plane provider-READ declaration: `readFromProvider`, `readFromProviderActivity`.
+ *
+ * A SEPARATE pattern rather than a widened one, because the two shapes must never be
+ * confused: `48 §2` row 13's exemption rests on the read being read-only, and a scanner
+ * that reported a read as a `PROVIDER_CLIENT` would let a send site inherit a read's
+ * exemption by being renamed.
+ */
+const PROVIDER_READ_CLIENT_DECLARATION =
+  /(?:export\s+(?:async\s+)?function|export\s+const)\s+(readFromProvider[A-Za-z0-9_]*)\b/g;
 
 const NETWORK_PRIMITIVES: readonly RegExp[] = [
   /\bglobalThis\.fetch\s*\(/,
@@ -131,6 +155,9 @@ export interface PerimeterReport {
   readonly productionUnannotated: number;
   readonly testOnlyTotal: number;
   readonly testOnlyUnannotated: number;
+  /** `48 §2` row 13. Read sites, counted separately from write sites. */
+  readonly providerReadTotal: number;
+  readonly providerReadUnannotated: number;
   /** The gate. `48 §4` item 2: an unannotated site fails the build. */
   readonly pass: boolean;
 }
@@ -146,6 +173,12 @@ export interface PerimeterReport {
 export const DEFAULT_PERIMETER_ROOTS: readonly string[] = [
   'src',
   join('tests', 'integration-plane'),
+  // S1O's synthetic Z4 audit reader. Scanned under TEST_ONLY scope for the same reason
+  // `tests/integration-plane/` is: its sites must be annotated and are never counted as
+  // production perimeter entries (`§18`), and including it is what makes the
+  // `PROVIDER_READ_CLIENT` kind non-vacuous today — the repository has no real audit
+  // read, so a scanner looking only at `src/` would report zero read sites forever.
+  join('tests', 'audit-plane'),
 ];
 
 async function typescriptFilesUnder(root: string): Promise<readonly string[]> {
@@ -275,6 +308,7 @@ export async function scanPerimeter(
    * `authorisation_ref` either is or is not carried.
    */
   const declaredClients = new Set<string>();
+  const declaredReadClients = new Set<string>();
   const discovered: { readonly file: string; readonly root: string }[] = [];
   for (const root of roots) {
     for (const file of await typescriptFilesUnder(join(cwd, root))) {
@@ -283,6 +317,10 @@ export async function scanPerimeter(
       PROVIDER_CLIENT_DECLARATION.lastIndex = 0;
       for (const match of source.matchAll(PROVIDER_CLIENT_DECLARATION)) {
         if (match[1] !== undefined) declaredClients.add(match[1]);
+      }
+      PROVIDER_READ_CLIENT_DECLARATION.lastIndex = 0;
+      for (const match of source.matchAll(PROVIDER_READ_CLIENT_DECLARATION)) {
+        if (match[1] !== undefined) declaredReadClients.add(match[1]);
       }
     }
   }
@@ -312,6 +350,14 @@ export async function scanPerimeter(
             break;
           }
         }
+        for (const client of declaredReadClients) {
+          const callPattern = new RegExp(`(?<!function\\s)(?<!const\\s)\\b${client}\\s*\\(`);
+          const declarationPattern = new RegExp(`(?:function|const)\\s+${client}\\b`);
+          if (callPattern.test(line) && !declarationPattern.test(line)) {
+            kinds.push('PROVIDER_READ_CLIENT');
+            break;
+          }
+        }
         if (kinds.length === 0) continue;
         const annotation = annotationNear(lines, index);
         for (const kind of kinds) {
@@ -335,6 +381,24 @@ export async function scanPerimeter(
           annotation: annotationNear(lines, index),
         });
       }
+
+      // AND THE DECLARATION OF A PROVIDER-READ CLIENT, for the same reason and with the
+      // same force: `48 §2` row 13's exemption is "a named, annotated, reviewed hole", so
+      // the place an audit-plane vendor read would be constructed is enumerated too.
+      for (const client of declaredReadClients) {
+        const declarationPattern = new RegExp(
+          `(?:export\\s+(?:async\\s+)?function|export\\s+const)\\s+${client}\\b`,
+        );
+        const index = lines.findIndex((line) => declarationPattern.test(line));
+        if (index === -1) continue;
+        sites.push({
+          file: relativeFile,
+          line: index + 1,
+          kind: 'PROVIDER_READ_CLIENT',
+          scope,
+          annotation: annotationNear(lines, index),
+        });
+      }
     }
   }
 
@@ -348,6 +412,17 @@ export async function scanPerimeter(
   const productionUnannotated = production.filter(unannotated).length;
   const testOnlyUnannotated = testOnly.filter(unannotated).length;
 
+  /*
+   * `48 §2` ROW 13 — READ SITES, COUNTED SEPARATELY AND GATED THE SAME.
+   *
+   * Separately because a read and a write carry different annotations and earn different
+   * exemptions, and a single total would let one inherit the other's justification. Gated
+   * the same because `48 §3`'s exemption is a REVIEWED hole, and an unannotated read is an
+   * unreviewed one whatever scope it sits in.
+   */
+  const providerRead = sites.filter((site) => site.kind === 'PROVIDER_READ_CLIENT');
+  const providerReadUnannotated = providerRead.filter(unannotated).length;
+
   return Object.freeze({
     roots,
     sites,
@@ -357,6 +432,8 @@ export async function scanPerimeter(
     productionUnannotated,
     testOnlyTotal: testOnly.length,
     testOnlyUnannotated,
+    providerReadTotal: providerRead.length,
+    providerReadUnannotated,
     // BOTH SCOPES GATE. A test-only site still has to be annotated — `§18` says a test
     // fixture "remains TEST-ONLY and is not a production perimeter entry", which is about
     // which LIST it lands on, not about whether it may be unannotated.
@@ -370,6 +447,8 @@ export function renderPerimeterReport(report: PerimeterReport): string {
   lines.push('ACOS EXTERNAL-WRITE PERIMETER — I24 / 48 §4 item 2');
   lines.push('');
   lines.push(`roots:                        ${report.roots.join(', ')}`);
+  lines.push(`provider READ sites (48 §2 13): ${report.providerReadTotal}`);
+  lines.push(`  unannotated:                ${report.providerReadUnannotated}`);
   lines.push(`production call sites:        ${report.productionTotal}`);
   lines.push(`  carrying authorisation_ref: ${report.productionAuthorised}`);
   lines.push(`  annotated PERIMETER_EXEMPT: ${report.productionExempt}`);

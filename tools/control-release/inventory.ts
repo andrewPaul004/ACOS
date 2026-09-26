@@ -46,7 +46,14 @@ export interface InventoryMember {
   readonly boundary: string;
 }
 
-/** `50 §6`'s six pre-live members, in ascending class order. */
+/**
+ * `50 §6`'s SEVEN pre-live members, in ascending class order.
+ *
+ * **v1.3.7 adds class 5** (`50 §2g`, `S1N-C1`), and nothing else. `37 §2`'s SEQ-04 gives
+ * the reason: ADR-024's option-B money-moving trigger had no mechanised operand, and a
+ * trigger operand read from anywhere unsigned is unsigned authority over whether the
+ * execution proxy is required.
+ */
 export const PRE_LIVE_INVENTORY: readonly InventoryMember[] = Object.freeze([
   Object.freeze({
     artifactClass: 2,
@@ -59,6 +66,12 @@ export const PRE_LIVE_INVENTORY: readonly InventoryMember[] = Object.freeze([
     artifactId: 'acos.control.action_catalogue',
     declaredVersion: null,
     boundary: '50 §2a',
+  }),
+  Object.freeze({
+    artifactClass: 5,
+    artifactId: 'acos.control.credential_scopes',
+    declaredVersion: null,
+    boundary: '50 §2g',
   }),
   Object.freeze({
     artifactClass: 19,

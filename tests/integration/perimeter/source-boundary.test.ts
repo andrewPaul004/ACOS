@@ -12,6 +12,7 @@ import {
   REFUSAL_REASONS,
 } from '../../../src/integration/protocol/wire.js';
 import { INTEGRATION_RUNTIME_ENV_KEYS } from '../../../src/integration/protocol/runtimeEnvironment.js';
+import { AUDIT_READER_ENV_KEYS } from '../../../src/audit/provider/protocol/readerEnvironment.js';
 import { emptyAdapterRuntimeRegistry } from '../../../src/integration/control/adapterRuntimeRegistry.js';
 import { EMPTY_ADAPTER_REGISTRY } from '../../../src/kernel/gateway/adapterRegistry.js';
 
@@ -64,10 +65,37 @@ async function filesUnder(...segments: string[]): Promise<readonly SourceFile[]>
 
 const rel = (path: string): string => relative(process.cwd(), path);
 
-/** Everything in `src/` that is NOT the integration runtime — i.e. the control plane. */
+/**
+ * Everything in `src/` that is NOT a FORKED RUNTIME — i.e. the control plane.
+ *
+ * =================================================================================
+ * S1O WIDENS THIS EXCLUSION, OUT LOUD. THE S1N VERSION EXCLUDED ONE DIRECTORY:
+ *
+ *     `src/integration/runtime/`
+ *
+ * and the reason it excluded it is the reason it must now exclude a second: **that code
+ * does not run in the control plane's process.** `I25` is a statement about a PROCESS, and
+ * a scan that asked "does the control plane read an environment variable" while including a
+ * different process's entry point would be answering a question about the wrong process.
+ *
+ * S1O forks a second runtime, in the AUDIT plane: `src/audit/provider/runtime/`. It reads
+ * its own eight-key launch environment, exactly as the integration runtime reads its seven,
+ * and it is excluded here and **asserted separately below** — not dropped.
+ *
+ * **THE EXCLUSION IS BY DIRECTORY, AND BOTH DIRECTORIES ARE FORKED ENTRY POINTS.** Nothing
+ * else in `src/` is excluded, and a future runtime added anywhere else stays in this scan.
+ * =================================================================================
+ */
+const FORKED_RUNTIME_DIRECTORIES = [
+  `${sep}integration${sep}runtime${sep}`,
+  `${sep}audit${sep}provider${sep}runtime${sep}`,
+];
+
 async function controlPlaneFiles(): Promise<readonly SourceFile[]> {
   const files = await filesUnder('src');
-  return files.filter(({ path }) => !path.includes(`${sep}integration${sep}runtime${sep}`));
+  return files.filter(
+    ({ path }) => !FORKED_RUNTIME_DIRECTORIES.some((directory) => path.includes(directory)),
+  );
 }
 
 describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
@@ -145,6 +173,35 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
     }
   });
 
+  it('the AUDIT provider runtime reads only its own eight launch variables', async () => {
+    /*
+     * The mirror of the integration-runtime assertion above, and it exists for the same
+     * reason: `controlPlaneFiles()` excludes this directory because it is a different
+     * process, and an exclusion with no compensating assertion is a hole.
+     *
+     * `§14` of the S1O mandate: the audit runtime needs a "separate environment allowlist",
+     * and `50 §2g` forbids an environment variable supplying a credential risk class. Both
+     * are checked here: the only file that reads the environment is the entry point, every
+     * key it reads is a declared constant, and there is no string-literal environment key in
+     * the file at all.
+     */
+    const files = await filesUnder('src', 'audit', 'provider', 'runtime');
+    const readers = files.filter(({ code }) => /process\.env/.test(code));
+    expect(readers.map(({ path }) => rel(path))).toEqual([
+      join('src', 'audit', 'provider', 'runtime', 'main.ts'),
+    ]);
+    const code = readers[0]!.code;
+    expect(code).not.toMatch(/process\.env\[['"]/);
+    for (const key of AUDIT_READER_ENV_KEYS) {
+      expect(code, key).not.toContain(`'${key}'`);
+    }
+
+    // AND IT READS NO KEY THE OTHER PLANE OWNS. `§13`: no control send credential.
+    for (const key of INTEGRATION_RUNTIME_ENV_KEYS) {
+      expect(code, key).not.toContain(key);
+    }
+  });
+
   it('the CONTROL side of the boundary imports no runtime module and no adapter', async () => {
     const files = await filesUnder('src', 'integration', 'control');
     const seen = new Set<string>();
@@ -168,6 +225,7 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
         '../../kernel/canonicalisation/actionCatalogue.js',
         '../../kernel/canonicalisation/actionClasses.js',
         '../../kernel/controlArtifacts/bundle.js',
+        '../../kernel/controlArtifacts/credentialRisk.js',
         '../../kernel/gateway/adapterPort.js',
         '../../kernel/gateway/adapterRegistry.js',
         '../protocol/runtimeEnvironment.js',

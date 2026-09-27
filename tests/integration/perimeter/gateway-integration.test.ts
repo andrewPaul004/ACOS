@@ -91,7 +91,6 @@ function launchA(script?: string, options: { readonly deadlineMs?: number } = {}
     const locator = secrets.write('a', {
       adapterId: ADAPTER_A,
       secret,
-      identity: 'adapter-a-credential',
       ...(script === undefined ? {} : { version: script }),
     });
     return runtimeRegistry(adapterADescriptor(locator));

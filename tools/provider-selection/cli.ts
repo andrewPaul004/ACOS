@@ -5,6 +5,7 @@ import {
   REQUIRED_CAPABILITIES,
   RETRIEVED_ON,
   blockingFindings,
+  evidencePathIncompatibility,
   selectProvider,
   SENDGRID_CAPABILITY_RECORD,
   type ProviderCapabilityRecord,
@@ -59,7 +60,33 @@ function renderProvider(record: ProviderCapabilityRecord): readonly string[] {
     `  correlation               send "${record.correlation.sendField}" / query ` +
       `"${record.correlation.queryField}"`,
   );
-  lines.push(`  sandbox                   ${record.sandbox.mechanism.split('.')[0] ?? ''}`);
+  lines.push(`  sandbox mechanism         ${record.sandbox.mechanism.split('.')[0] ?? ''}`);
+  lines.push(
+    `  sandbox leaves evidence?  ${
+      record.sandbox.producesQueryableActivity === null
+        ? 'UNRESOLVED from official documentation'
+        : String(record.sandbox.producesQueryableActivity)
+    }` +
+      (record.sandbox.producesQueryableActivity === false
+        ? '   <- DOCUMENTED NEGATIVE: this mode CANNOT be the I36 oracle'
+        : ''),
+  );
+  for (const item of record.sandbox.notSuitableFor) {
+    lines.push(`      NOT suitable for      ${item}`);
+  }
+  lines.push(`  I36 validation path       ${record.nonProductionValidationPath.mechanism}`);
+  lines.push(
+    `    sandbox_mode            ${String(record.nonProductionValidationPath.sandboxModeEnabled)}`,
+  );
+  lines.push(
+    `    controlled recipient    ${String(
+      record.nonProductionValidationPath.requiresControlledRecipient,
+    )}`,
+  );
+  const incompatibility = evidencePathIncompatibility(record);
+  lines.push(
+    `    evidence-compatible?    ${incompatibility === null ? 'YES' : `NO - ${incompatibility}`}`,
+  );
   lines.push(
     `  add-on required           ${String(record.retentionAndEntitlement.addOnRequired)}`,
   );
@@ -76,9 +103,17 @@ function renderProvider(record: ProviderCapabilityRecord): readonly string[] {
   lines.push('');
   lines.push(
     blocking.length === 0
-      ? '  RESULT: all five capabilities DOCUMENTED'
+      ? incompatibility === null
+        ? '  RESULT: all five capabilities DOCUMENTED and the test path carries the evidence'
+        : '  RESULT: five capabilities DOCUMENTED but the TEST PATH AND EVIDENCE PATH are ' +
+          'INCOMPATIBLE'
       : `  RESULT: BLOCKED on ${blocking.map((f) => `${f.capability} (${f.status})`).join(', ')}`,
   );
+  if (record.resolvedDocumentedNegatives.length > 0) {
+    lines.push('');
+    lines.push('  SETTLED BY OFFICIAL DOCUMENTATION - NOT an account-validation question:');
+    for (const item of record.resolvedDocumentedNegatives) lines.push(`    - ${item}`);
+  }
   if (record.unresolvedAccountItems.length > 0) {
     lines.push('');
     lines.push('  ACCOUNT-LEVEL ITEMS STILL PENDING:');
@@ -124,6 +159,8 @@ function main(): void {
     const compatibility = credentialScopesNormativelyCompatible(decision.selected);
     lines.push(`  scopes compatible (§28)   ${String(compatibility.compatible)}`);
     lines.push(`                            ${compatibility.reason}`);
+    const pathIssue = evidencePathIncompatibility(decision.selected);
+    lines.push(`  test path carries I36?    ${pathIssue === null ? 'YES' : `NO - ${pathIssue}`}`);
   }
 
   /*
@@ -140,6 +177,15 @@ function main(): void {
   lines.push('');
   lines.push('§28 READINESS — PROVIDER HALF ONLY');
   lines.push(`  ${providerHalf.status}`);
+  lines.push('');
+  lines.push('  THE TOKEN MEANS: the repository is LOCALLY ready to provision credentials');
+  lines.push('  for a DEDICATED NON-PRODUCTION validation environment at that provider.');
+  lines.push('  IT DOES NOT MEAN sandbox mode, provider validation, or production readiness.');
+  for (const item of providerHalf.resolvedDocumentedNegatives) {
+    lines.push('');
+    lines.push(`  SETTLED NEGATIVE: ${item}`);
+  }
+  for (const blocker of providerHalf.blockers) lines.push(`  BLOCKER: ${blocker}`);
   lines.push(
     '  (the integration-boundary and audit-boundary conjuncts are facts about `npm run ' +
       'verify`, not about this record; s1m-readiness.test.ts computes the full conjunction)',

@@ -216,3 +216,128 @@ export function credentialDeclarationInconsistency(declaration: {
   }
   return null;
 }
+
+/**
+ * `50 §2g` FIELD 1 — WHAT A `credential_id` IS, AND WHY A LABEL IS NOT ONE.
+ *
+ * =================================================================================
+ * THE DEFECT THIS SECTION EXISTS TO CLOSE
+ *
+ * v1.3.7's first draft made field 1 "a unique identity for the credential, never the
+ * material" and stopped there. That is satisfiable by a NICKNAME, and a nickname makes the
+ * whole risk declaration governable by whoever writes the wiring:
+ *
+ *     signed record        `mock_ads.pause_only`  ->  NON_MONETARY_WRITE
+ *     secret locator       resolves ...................  `mock_ads.budget_manage`'s material
+ *
+ * The risk class was read off record A and the material presented at the provider is
+ * credential B's. Nothing in the chain is forged, no signature is broken, and the deployment
+ * is running a `MONEY_MOVING` credential under a `NON_MONETARY_WRITE` declaration. The audit
+ * plane has the mirror image: a signed `READ_ONLY` record and a send-capable token.
+ *
+ * =================================================================================
+ * SO `credential_id` IS DEFINED AS A BINDING, NOT AS A NAME
+ *
+ * `50 §2g` field 1, v1.3.7 as corrected:
+ *
+ *   **THE STABLE NON-SECRET IDENTITY OF THE EXACT CREDENTIAL MATERIAL THE RUNTIME MAY
+ *   PRESENT.** It is not a friendly alias, not an adapter-local name and not a descriptor
+ *   label.
+ *
+ *   * where the provider exposes a stable API-key ID, field 1 IS that provider key ID;
+ *   * where it does not, field 1 is an immutable deployment/secret-manager credential
+ *     identity or version that the secret source can return for the exact material it
+ *     resolved;
+ *   * **never** the raw secret, a hash or fingerprint of it, or a token prefix used as an
+ *     ad-hoc identity.
+ *
+ * **IF NO SUCH IDENTITY CAN BE DEFINED FOR A PROVIDER, THE SLICE THAT WOULD CONFIGURE IT
+ * RETURNS PARTIAL.** A binding that is only a label must not be claimed as a binding.
+ *
+ * =================================================================================
+ * AND THE BINDING IS CHECKED AT RUNTIME, ON BOTH PLANES, BEFORE THE PROVIDER BOUNDARY
+ *
+ * `adapterRuntimeRegistry` and `auditReaderRegistry` select a SIGNED record by field 1. The
+ * credential-holding child then resolves its own material and asks its source which
+ * credential that material IS. The two must be equal:
+ *
+ *     signed expected credential identity  ==  secret-source resolved credential identity
+ *
+ * and a mismatch REFUSES before any provider operation —
+ * `CREDENTIAL_IDENTITY_MISMATCH` on the integration plane and on the audit plane, each in
+ * its own closed refusal set.
+ *
+ * **LOCATOR SEPARATION IS A DIFFERENT CONTROL AND DOES NOT IMPLY THIS ONE.** Two locators
+ * may name one credential, and one locator may be repointed at another; a locator says
+ * where to look and an identity says what was found. Both controls are kept.
+ */
+export const CREDENTIAL_IDENTITY_PROVENANCES = [
+  /** The provider's own stable, non-secret key identifier for this exact credential. */
+  'PROVIDER_KEY_ID',
+  /** An immutable secret-manager credential identity/version naming this exact material. */
+  'DEPLOYMENT_SECRET_VERSION',
+  /** A TEST-ONLY synthetic identity. Never admissible for a configured real credential. */
+  'SYNTHETIC_TEST_IDENTITY',
+] as const;
+
+export type CredentialIdentityProvenance = (typeof CREDENTIAL_IDENTITY_PROVENANCES)[number];
+
+export function isCredentialIdentityProvenance(
+  value: unknown,
+): value is CredentialIdentityProvenance {
+  return (
+    typeof value === 'string' &&
+    (CREDENTIAL_IDENTITY_PROVENANCES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * The three things a credential identity is NEVER derived from. Documentation, not a matcher.
+ *
+ * The structural half of the rule is `credentialLabelsAreNonDerived` in each plane's own
+ * secret-source contract, which refuses a label that CONTAINS its secret, is contained by
+ * it, or is a hex/base64 encoding of it. Neither can refuse every derivation, and neither is
+ * claimed to: what they close is the accident, and this list is what a reviewer reads.
+ */
+export const FORBIDDEN_CREDENTIAL_IDENTITY_FORMS: readonly string[] = Object.freeze([
+  'the raw secret',
+  'a hash or fingerprint of the secret',
+  'a token prefix used as an ad-hoc identity',
+]);
+
+/**
+ * The binding comparison. Returns the REASON a resolved credential is the wrong one, or
+ * `null` when the signed record and the resolved material agree.
+ *
+ * A NAMED FUNCTION RATHER THAN AN INLINE `!==`, because this is the one comparison that
+ * decides whether a risk declaration governs the credential it was signed for, and a reader
+ * auditing the call sites should be able to find them by name. An empty resolved identity is
+ * NOT equality with an empty expectation: `50 §2g` requires a configured credential to have
+ * one, so absence is a refusal rather than a match.
+ */
+export function credentialIdentityMismatch(
+  expectedCredentialId: string,
+  resolvedCredentialIdentity: string,
+): string | null {
+  if (expectedCredentialId.length === 0) {
+    return (
+      'the launch configuration carried no expected credential identity; 50 §2g field 1 is ' +
+      'the identity of the exact material the runtime may present, and an absent ' +
+      'expectation cannot bind one'
+    );
+  }
+  if (resolvedCredentialIdentity.length === 0) {
+    return (
+      'the secret source returned no credential identity for the material it resolved; ' +
+      '50 §2g: a null identity is not sufficient for a configured credential'
+    );
+  }
+  if (expectedCredentialId !== resolvedCredentialIdentity) {
+    return (
+      `the signed class-5 record governs credential "${expectedCredentialId}" and the ` +
+      `secret source resolved material identified as "${resolvedCredentialIdentity}"; the ` +
+      'risk declaration would govern the wrong credential'
+    );
+  }
+  return null;
+}

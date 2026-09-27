@@ -75,8 +75,43 @@ export const ENV_SECRET_SOURCE_MODULE = 'ACOS_INTEGRATION_SECRET_SOURCE_MODULE';
  * `§30`'s required negative: "adapter A [...] does NOT see: adapter-B locator".
  */
 export const ENV_SECRET_LOCATOR = 'ACOS_INTEGRATION_SECRET_LOCATOR';
+/**
+ * `50 §2g` FIELD 1 — THE SIGNED EXPECTED CREDENTIAL IDENTITY, AS A TRUSTED LAUNCH ECHO.
+ *
+ * =================================================================================
+ * WHAT THIS IS, AND — MORE IMPORTANTLY — WHAT IT IS NOT
+ *
+ * **IT IS NOT AUTHORITY.** `50 §2g`: "no provider response, account response, adapter
+ * self-description, **environment variable**, caller parameter or model output may supply,
+ * override or widen any of the seven fields." The AUTHORITY is the signed class-5 record,
+ * and the PARENT is the only component that reads it: `createAdapterRuntimeRegistry`
+ * selects the record by `credentialId`, checks its adapter binding, its `audit_plane`
+ * sentinel and its risk class, and refuses to construct a registry at all when any of those
+ * fails. Only then does `integrationClient.ts` fork, and only the parent writes this value.
+ *
+ * **SO WHAT TRAVELS HERE IS AN ECHO OF A DECISION ALREADY MADE**, and the child's single use
+ * for it is a comparison the parent CANNOT perform: the parent never sees resolved material,
+ * because `I25` is the rule that it must not. The child resolves its own credential, asks
+ * its source which credential that material is, and refuses when the two disagree.
+ *
+ *     parent   signed class-5 record  ->  risk decision  ->  echo of `credential_id`
+ *     child    secret source          ->  resolved material  ->  its `credentialIdentity`
+ *     child    echo == resolved identity, or CREDENTIAL_IDENTITY_MISMATCH before dispatch
+ *
+ * **IT CAN ONLY NARROW.** A tampered echo does not widen anything: the child compares an
+ * echo to a resolution, and disagreement refuses in both directions. A deployment that wrote
+ * the WRONG echo refuses; one that wrote the RIGHT echo for material it does not hold
+ * refuses. There is no value of this variable that admits a credential the signed record
+ * did not govern.
+ *
+ * **AND IT IS AN IDENTITY, NEVER MATERIAL.** `§30`'s prohibition is unchanged: no credential
+ * material travels on IPC or in any environment. `credential_id` is non-secret by `50 §2g`'s
+ * own definition of field 1, and `credentialLabelsAreNonDerived` refuses a source whose
+ * identity is derivable from its secret, which is what stops the echo becoming an oracle.
+ */
+export const ENV_EXPECTED_CREDENTIAL_ID = 'ACOS_INTEGRATION_EXPECTED_CREDENTIAL_ID';
 
-/** THE CLOSED ALLOWLIST. Seven keys. A child sees these and, from ACOS, nothing else. */
+/** THE CLOSED ALLOWLIST. Eight keys. A child sees these and, from ACOS, nothing else. */
 export const INTEGRATION_RUNTIME_ENV_KEYS = [
   ENV_PROTOCOL_VERSION,
   ENV_RUNTIME_IDENTITY,
@@ -85,6 +120,7 @@ export const INTEGRATION_RUNTIME_ENV_KEYS = [
   ENV_ADAPTER_MODULE,
   ENV_SECRET_SOURCE_MODULE,
   ENV_SECRET_LOCATOR,
+  ENV_EXPECTED_CREDENTIAL_ID,
 ] as const;
 
 export type IntegrationRuntimeEnvKey = (typeof INTEGRATION_RUNTIME_ENV_KEYS)[number];
@@ -120,6 +156,15 @@ export interface IntegrationRuntimeLaunchConfiguration {
   readonly adapterModule: string;
   readonly secretSourceModule: string;
   readonly secretLocator: string;
+  /**
+   * `50 §2g` field 1, as the PARENT read it out of the verified class-5 record.
+   *
+   * A LOCATOR AND AN IDENTITY ARE DIFFERENT CONTROLS AND BOTH ARE CARRIED. The locator says
+   * where to look; the identity says what must have been found. Two locators may name one
+   * credential and one locator may be repointed at another, so locator separation does not
+   * imply identity binding and identity binding does not imply source separation.
+   */
+  readonly expectedCredentialId: string;
 }
 
 /**
@@ -142,5 +187,6 @@ export function buildIntegrationRuntimeEnvironment(
     [ENV_ADAPTER_MODULE]: configuration.adapterModule,
     [ENV_SECRET_SOURCE_MODULE]: configuration.secretSourceModule,
     [ENV_SECRET_LOCATOR]: configuration.secretLocator,
+    [ENV_EXPECTED_CREDENTIAL_ID]: configuration.expectedCredentialId,
   });
 }

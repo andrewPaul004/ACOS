@@ -150,6 +150,8 @@ accepted annotation grammar admits no `.` in a ticket. It is `48-3-6`.
 
 | Not done | Why |
 |---|---|
+| Closing credential scope drift | the binding proves WHICH credential, never WHAT it can still do. Empirical, and owed |
+| Any v1.3.8 | v1.3.7 was not owner-accepted, so the correction is made in place |
 | Option B, the execution proxy | `§10`: S1O makes the trigger objectively executable and nothing more |
 | Any provider request | `§27`, and the record is documentation evidence by type |
 | S1M's six-kill-point test | `§0`: explicitly not resumed |
@@ -157,3 +159,69 @@ accepted annotation grammar admits no `.` in a ticket. It is `48-3-6`.
 | Widening class 3 | `S1O-C1`: `50 §2f`'s one-field-one-class rule, and `§8`'s own attack |
 | Discharging class 5's signature | no production signing code exists |
 | Reporting a green verify obtained by relaxing anything | the environment blocker was surfaced instead |
+
+---
+
+## 7. The owner correction, and what the slice had not thought to ask
+
+**Two findings came back. The second is the one worth writing down.**
+
+### The sandbox record was wrong, and the shape of the error matters
+
+The Sandbox Mode page was read for what it says about DELIVERY — *"the email will never be
+delivered"* — and the same page's sentence about EVENTS was not carried forward. The record
+then said `producesQueryableActivity: null` and filed the question as
+`CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING`.
+
+**That is worse than recording it wrong.** A pending item is a promise that somebody can close
+it; this one could never have been closed, because the answer was already published. And it
+propagated: the readiness token named a sandbox environment, and the selection rule had no way
+to notice that the mode making the request safe is the mode removing the evidence.
+
+**The fix was not just the row.** Five independent capability checks admitted a provider on
+"has a sandbox" plus "has an activity API", so `evidencePathIncompatibility` now requires ONE
+declared path to carry the whole chain end to end.
+
+### The binding defect: a check that was never written because the question was never asked
+
+`S1N-C1` was about the DEFINITION of a money-moving credential, and the slice answered it
+carefully: a closed domain, a signed owner, a consistency rule, a fail-closed absence, a
+registry that refuses. **Every one of those is about a RECORD.**
+
+Nothing in the slice asked which credential the record is about. Field 1 was *"a credential
+identifier, unique within the artifact"* — enough to key a map, and a map key is not a binding.
+So:
+
+```
+signed class-5 record  ->  risk class  ->  admitted
+secret locator         ->  material    ->  presented
+```
+
+and the two never met. The attack needs no forgery: repoint a locator, and a
+`NON_MONETARY_WRITE` declaration governs `MONEY_MOVING` material while every existing check
+passes.
+
+**The audit side is worse**, because its declaration is the operand of an exemption: a
+genuinely `READ_ONLY`, genuinely `audit_plane`-scoped record, a locator genuinely disjoint from
+the send side's — and a send-capable token in the reader's hand.
+
+**What made it invisible to the suite.** The registry tests proved the signed chain. The
+perimeter tests proved the material chain. **Neither had a reason to compare them**, and a test
+matrix organised by mandate section had no row for a question the mandate did not raise.
+
+### The one that was tempting and wrong
+
+The obvious rebuttal is that the locator check already covers it: the audit reader is refused
+if its locator is one the integration plane holds. **It does not cover it**, and stating why
+took a section of `50 §2g` rather than a sentence: two locators may resolve one credential, and
+one locator may be repointed at another. A locator says where to look; an identity says what
+was found. `unsafeLocatorInequalityProvesSeparation` exists so that argument has a control that
+fails, rather than a paragraph that asserts.
+
+### And the line that was drawn deliberately
+
+**Identity binding does not close scope drift**, and the correction says so in three
+deliverables rather than letting the binding look like more than it is. Proving *"this is
+credential A"* says nothing about whether A still holds the permissions the owner signed for
+it — a scoped provider key is mutable at the provider, with no ACOS-observable event. `36 §13`
+stays owed, and so do the other three probes beside it.

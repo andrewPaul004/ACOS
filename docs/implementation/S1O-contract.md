@@ -1,14 +1,16 @@
 # S1O — contract
 
 **Credential-risk definition, the audit-plane provider-read boundary, and provider selection.**
-Against **ACOS Operating Spine v1.3**, package issue **v1.3.7** — issued by this slice.
-Baseline `e9ec232` (S1N, PASS). Branch `feature/s1o-provider-selection-audit-boundary`.
+Against **ACOS Operating Spine v1.3**, package issue **v1.3.7** — issued by this slice and
+**corrected in place after owner review**. Baseline `e9ec232` (S1N, PASS); prior candidate
+`6890bfb`. Branch `feature/s1o-provider-selection-audit-boundary`.
 
 ---
 
 ## 1. What this slice is for
 
-Three objectives, and the first is the one the other two rest on.
+**Four objectives.** Three were the slice's own; the fourth came from the owner review, and
+it is the one that makes the first mean anything.
 
 **1. Resolve `S1N-C1` normatively.** S1N built the integration-plane credential boundary and
 found that ADR-024's option-B trigger — *"the first **money-moving credential** or the third
@@ -25,6 +27,18 @@ credential.
 **3. Select the provider** for the resumed real-provider validation, from current official
 documentation, under a decision rule written as a function rather than a paragraph.
 
+**4. Bind the signed declaration to the credential it is about** *(owner correction)*. The
+first candidate gave `credential_risk_class` a closed domain and a signed owner and left field
+1 as *"a credential identifier"* — a **label**. So the signed record selected by a descriptor
+and the material resolved from a locator were never compared, and a signed risk declaration
+could govern a credential the runtime was not holding. **A classification that is not bound to
+material classifies nothing.**
+
+**And a fifth, smaller but load-bearing:** correct the SendGrid Sandbox Mode capability record,
+which recorded as unresolved a question the provider's own documentation answers — and add the
+structural check that stops a provider being selected on a test path that cannot produce the
+evidence the selection is for.
+
 **No provider request of any kind was made. No real credential is required or held.**
 
 ---
@@ -39,8 +53,17 @@ before   audit plane ──► (nothing)
 after    audit plane ──► closed read-only boundary ──► dedicated reader runtime ──► provider
 
 before   provider selection        (Postmark, PARTIAL on blocker C)
-after    Twilio SendGrid, selected on a documented disjoint scope pair
+after    Twilio SendGrid, selected on a documented disjoint scope pair AND on a
+        test path that can carry I36's evidence
+
+before   signed record vs resolved material   (two chains, never compared)
+after    signed credential_id == resolved credential identity, compared inside the
+        credential-holding process, before the provider boundary, on BOTH planes
 ```
+
+**The fourth row is the correction.** Rows one to three were the candidate; row four is what
+the owner review found missing, and without it row one governs a name rather than a
+credential.
 
 ---
 

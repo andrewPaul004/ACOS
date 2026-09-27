@@ -7,6 +7,7 @@ import {
   ENV_PROTOCOL_VERSION,
   ENV_RUNTIME_IDENTITY,
   ENV_RUNTIME_ROOT,
+  ENV_EXPECTED_CREDENTIAL_ID,
   ENV_SECRET_LOCATOR,
   ENV_SECRET_SOURCE_MODULE,
 } from '../../src/integration/protocol/runtimeEnvironment.js';
@@ -31,6 +32,20 @@ export interface UnsafeLaunchConfiguration {
   readonly adapterModule: string;
   readonly secretSourceModule: string;
   readonly secretLocator: string;
+  /**
+   * `50 §2g` field 1's echo, carried by these launchers TOO — and that is deliberate.
+   *
+   * These are UNSAFE launchers, and each is unsafe in exactly ONE declared way: the first
+   * inherits the parent environment, the second takes its module path from a caller, the
+   * third replays the last request after a restart. **None of them is supposed to be unsafe
+   * by failing to start.**
+   *
+   * The v1.3.7 correction made the expected credential identity a required launch variable,
+   * so a launcher omitting it produces a child that exits `ENV_MISSING` — and a control whose
+   * child never starts proves nothing about the defect it was written for. Supplying the
+   * variable keeps each control's discrimination the one it declares.
+   */
+  readonly expectedCredentialId: string;
 }
 
 /**
@@ -67,6 +82,7 @@ export function unsafeInheritingLaunch(configuration: UnsafeLaunchConfiguration)
       [ENV_ADAPTER_MODULE]: configuration.adapterModule,
       [ENV_SECRET_SOURCE_MODULE]: configuration.secretSourceModule,
       [ENV_SECRET_LOCATOR]: configuration.secretLocator,
+      [ENV_EXPECTED_CREDENTIAL_ID]: configuration.expectedCredentialId,
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     serialization: 'json',
@@ -92,6 +108,7 @@ export function unsafeCallerSuppliedLaunch(input: {
   readonly adapterModule: string;
   readonly secretSourceModule: string;
   readonly secretLocator: string;
+  readonly expectedCredentialId: string;
   readonly execArgv?: readonly string[];
 }): ChildProcess {
   // THE VIOLATION: the module executed is a parameter, and so are the runtime flags.
@@ -106,6 +123,7 @@ export function unsafeCallerSuppliedLaunch(input: {
       [ENV_ADAPTER_MODULE]: input.adapterModule,
       [ENV_SECRET_SOURCE_MODULE]: input.secretSourceModule,
       [ENV_SECRET_LOCATOR]: input.secretLocator,
+      [ENV_EXPECTED_CREDENTIAL_ID]: input.expectedCredentialId,
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     serialization: 'json',
@@ -154,6 +172,7 @@ export class UnsafeReplayingSupervisor {
         [ENV_ADAPTER_MODULE]: this.configuration.adapterModule,
         [ENV_SECRET_SOURCE_MODULE]: this.configuration.secretSourceModule,
         [ENV_SECRET_LOCATOR]: this.configuration.secretLocator,
+        [ENV_EXPECTED_CREDENTIAL_ID]: this.configuration.expectedCredentialId,
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       serialization: 'json',

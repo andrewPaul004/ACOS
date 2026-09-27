@@ -31,7 +31,8 @@ import type {
 interface FixtureDocument {
   readonly adapterId?: unknown;
   readonly secret?: unknown;
-  readonly identity?: unknown;
+  readonly credentialIdentity?: unknown;
+  readonly identityProvenance?: unknown;
   readonly version?: unknown;
   readonly revoked?: unknown;
 }
@@ -62,11 +63,32 @@ class AdapterBSecretSource implements AdapterSecretSource {
     if (typeof document.secret !== 'string' || document.secret.length === 0) {
       return Promise.resolve({ kind: 'UNAVAILABLE' });
     }
+    if (typeof document.credentialIdentity !== 'string' || document.credentialIdentity.length === 0) {
+      /*
+       * `50 §2g` FIELD 1 — A SOURCE THAT CANNOT NAME WHAT IT RESOLVED HAS NOT RESOLVED ONE.
+       *
+       * The fixture refuses rather than returning `null`, because `null` is what the
+       * pre-correction contract allowed and is exactly the shape that let a risk declaration
+       * govern an unidentified credential. `§10` of the correction: "Null identity is not
+       * sufficient for a configured real credential."
+       */
+      return Promise.resolve({ kind: 'UNAVAILABLE' });
+    }
+
     return Promise.resolve({
       kind: 'RESOLVED',
       credential: {
         secret: document.secret,
-        identity: typeof document.identity === 'string' ? document.identity : null,
+        credentialIdentity: document.credentialIdentity,
+        /*
+         * A FIXTURE'S PROVENANCE IS `SYNTHETIC_TEST_IDENTITY`, AND IT SAYS SO.
+         *
+         * `§14` of the correction: a production source must explain what establishes the
+         * identity it returns — a provider key ID or an immutable secret-manager identity.
+         * This one establishes nothing except that a test wrote it into a JSON file, and
+         * declaring that is the difference between a fixture and a claimed binding.
+         */
+        identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
         version: typeof document.version === 'string' ? document.version : null,
       },
     });

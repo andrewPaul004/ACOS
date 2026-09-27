@@ -1,7 +1,8 @@
-import type {
-  CapabilityFinding,
-  ProviderCapabilityRecord,
-  RequiredCapability,
+import {
+  REQUIRED_CAPABILITIES,
+  type CapabilityFinding,
+  type ProviderCapabilityRecord,
+  type RequiredCapability,
 } from '../../tools/provider-selection/capabilityRecord.js';
 
 /**
@@ -152,5 +153,132 @@ export function recordWithMissingQueryFinding(
     findings: base.findings.filter(
       (finding) => finding.capability !== 'QUERYABLE_PROVIDER_EVIDENCE',
     ),
+  };
+}
+
+/* ================================================================================
+ * S1O CORRECTION — VULNERABLE CONTROLS 16 AND 17
+ *
+ * Both are defects the FIRST S1O CANDIDATE ACTUALLY HAD. That is worth stating plainly:
+ * these are not hypothetical unsafe implementations invented to give the production rule
+ * something to beat, they are the code that was written and the record that was recorded,
+ * preserved so the corrected rule has a real thing to discriminate against.
+ * ============================================================================== */
+
+/**
+ * CONTROL 16 — A PROVIDER SELECTED ON CAPABILITIES THAT DO NOT COMPOSE.
+ *
+ * =================================================================================
+ * THE CONJUNCTION IS TRUE AND THE SYSTEM DOES NOT WORK
+ *
+ * `§19` lists five capabilities and the original rule checked each independently. Each term
+ * may be true of a DIFFERENT configuration of the same provider:
+ *
+ *     NON_PRODUCTION_TEST_PATH     "the provider has a sandbox mode"          true
+ *     QUERYABLE_PROVIDER_EVIDENCE  "the provider has an activity query API"   true
+ *     conjunction                                                             true
+ *     the sandbox mode             documented to generate NO activity events
+ *
+ * A provider can therefore pass on the strength of two facts that never hold at the same
+ * time, and the `I36` oracle has no environment to run in. `36 §7`'s requirement that vendor
+ * properties be MEASURED against a sandbox is unsatisfiable when the sandbox is the thing
+ * that removes the measurement.
+ *
+ * This function is the original rule, preserved: it takes the five findings and asks nothing
+ * about whether the declared test path can carry the declared evidence. Production's
+ * `isSelectable` applies `evidencePathIncompatibility` as well, and the discrimination is a
+ * record whose sandbox is `producesQueryableActivity: false` AND whose validation path
+ * enables it: this one selects it, production refuses that path.
+ * =================================================================================
+ */
+export function unsafeSelectOnIndependentCapabilities(
+  records: readonly ProviderCapabilityRecord[],
+): ProviderCapabilityRecord | null {
+  for (const record of records) {
+    const byCapability = new Map(record.findings.map((f) => [f.capability, f] as const));
+    // THE VIOLATION: five independent lookups, and no question about whether the path the
+    // fifth one names can produce the evidence the fourth one describes.
+    const allDocumented = REQUIRED_CAPABILITIES.every(
+      (capability) => byCapability.get(capability)?.status === 'DOCUMENTED',
+    );
+    if (allDocumented) return record;
+  }
+  return null;
+}
+
+/**
+ * A record whose safe test mode is documented to suppress its own evidence surface.
+ *
+ * SendGrid's real shape before the correction was applied — five `DOCUMENTED` findings, an
+ * activity API, and a sandbox mode that generates no Email Activity — with the validation
+ * path still pointed at that sandbox. Control 16's input.
+ */
+export function recordWhoseSandboxSuppressesEvidence(
+  base: ProviderCapabilityRecord,
+): ProviderCapabilityRecord {
+  return {
+    ...base,
+    provider: 'synthetic_evidence_suppressing_sandbox',
+    sandbox: { ...base.sandbox, producesQueryableActivity: false },
+    nonProductionValidationPath: {
+      ...base.nonProductionValidationPath,
+      mechanism: 'the provider sandbox flag',
+      sandboxModeEnabled: true,
+      producesQueryableActivity: false,
+    },
+  };
+}
+
+/**
+ * CONTROL 17 — A DOCUMENTED NEGATIVE CARRIED AS AN OPEN QUESTION.
+ *
+ * =================================================================================
+ * `null` IS NOT A NEUTRAL ANSWER WHEN THE DOCUMENTATION HAS ONE
+ *
+ * `CAPABILITY_STATUSES` keeps `ABSENT` and `UNRESOLVED` apart deliberately, because
+ * collapsing them is the guess `§24` forbids. The first S1O candidate made the OPPOSITE
+ * error on the sandbox row: it recorded `producesQueryableActivity: null` and carried
+ * "whether a sandbox-mode send produces a queryable Email Activity record" as an
+ * account-validation item, when the official Sandbox Mode page states the negative outright.
+ *
+ * **AN UNRESOLVED ITEM NOBODY CAN CLOSE IS WORSE THAN A WRONG ONE.** It postpones a decision
+ * that has already been made, it leaves the evidence-compatibility question unanswerable, and
+ * it let the readiness token describe a sandbox environment that cannot produce evidence.
+ *
+ * This function is the optimistic reading: `null` is treated as "not yet a problem", so a
+ * record carrying it is admitted and its pending list is presented as ordinary account work.
+ * Production's `evidencePathIncompatibility` refuses `null` explicitly — an unresolved
+ * evidence path is not an established one — and the corrected SendGrid record carries
+ * `false` with the documentation reference and moves the item into
+ * `resolvedDocumentedNegatives`.
+ * =================================================================================
+ */
+export function unsafeTreatsNullSandboxEvidenceAsPending(
+  record: ProviderCapabilityRecord,
+): boolean {
+  // THE VIOLATION: `null` read as "an account will settle this later", on a row where the
+  // provider's own documentation already settled it.
+  return record.sandbox.producesQueryableActivity !== false;
+}
+
+/** A record carrying the pre-correction `null` on a row the documentation settles. */
+export function recordWithUnresolvedSandboxEvidence(
+  base: ProviderCapabilityRecord,
+): ProviderCapabilityRecord {
+  return {
+    ...base,
+    provider: 'synthetic_null_sandbox_evidence',
+    sandbox: { ...base.sandbox, producesQueryableActivity: null },
+    nonProductionValidationPath: {
+      ...base.nonProductionValidationPath,
+      sandboxModeEnabled: true,
+      producesQueryableActivity: null,
+    },
+    resolvedDocumentedNegatives: [],
+    unresolvedAccountItems: [
+      ...base.unresolvedAccountItems,
+      'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether a sandbox-mode send ' +
+        'produces a record the activity query returns',
+    ],
   };
 }

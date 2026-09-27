@@ -13,15 +13,20 @@ import {
   RETRIEVED_ON,
   SENDGRID_CAPABILITY_RECORD,
   blockingFindings,
+  evidencePathIncompatibility,
   isSelectable,
   selectProvider,
 } from '../../tools/provider-selection/capabilityRecord.js';
 import {
+  recordWhoseSandboxSuppressesEvidence,
   recordWithMissingQueryFinding,
   recordWithSendCapableAuditKey,
+  recordWithUnresolvedSandboxEvidence,
   unsafeAcceptsAnyReference,
   unsafeSelectIgnoringAuditWriteCapability,
+  unsafeSelectOnIndependentCapabilities,
   unsafeSelectOverPresentFindingsOnly,
+  unsafeTreatsNullSandboxEvidenceAsPending,
 } from '../negative-controls/unsafe-provider-selection.js';
 import { POSTMARK_CAPABILITY_RECORD } from '../../tools/postmark-sandbox/capabilityRecord.js';
 
@@ -210,7 +215,7 @@ describe('`§23` — the selected provider, and the reason', () => {
     for (const marker of [
       'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING',
       'attempted-write',
-      'additional email activity history',
+      'additional Email Activity history entitlement',
     ]) {
       expect(pending.join('\n'), marker).toContain(marker);
     }
@@ -309,5 +314,197 @@ describe('CONTROL 12 — a provider selected from marketing text', () => {
         pattern.test(SENDGRID_CAPABILITY_RECORD.auditReadCredentialScope.reference),
       ),
     ).toBe(true);
+  });
+});
+
+/* ================================================================================
+ * 6. THE v1.3.7 CORRECTION — SENDGRID SANDBOX MODE, AND WHAT IT CANNOT BE
+ *
+ * The S1O owner review found the sandbox row factually wrong: the record carried
+ * `producesQueryableActivity: null` and an account-validation item, on the reading that the
+ * documentation was silent. It is not silent. Official Twilio SendGrid Sandbox Mode
+ * documentation states that requests made in sandbox mode generate no events in either the
+ * Event Webhook or Email Activity.
+ *
+ * `null` was therefore a claim that the documentation is silent where it speaks, and it let
+ * the selection rule admit a test path that cannot produce the evidence `I36` reads.
+ * ============================================================================== */
+
+describe('`§3` of the correction — SendGrid Sandbox Mode, from the official documentation', () => {
+  it('`producesQueryableActivity` is FALSE — not null, not pending', () => {
+    // A DOCUMENTED NEGATIVE. `CAPABILITY_STATUSES` keeps `ABSENT` and `UNRESOLVED` apart for
+    // exactly this reason, and this row is the first kind.
+    expect(SENDGRID_CAPABILITY_RECORD.sandbox.producesQueryableActivity).toBe(false);
+    expect(SENDGRID_CAPABILITY_RECORD.sandbox.producesQueryableActivity).not.toBeNull();
+    expect(SENDGRID_CAPABILITY_RECORD.sandbox.basis).toBe('PUBLISHED_DOCUMENTATION');
+    expect(SENDGRID_CAPABILITY_RECORD.sandbox.reference).toBe(
+      'https://www.twilio.com/docs/sendgrid/for-developers/sending-email/sandbox-mode',
+    );
+    expect(SENDGRID_CAPABILITY_RECORD.sandbox.mechanism).toMatch(
+      /Event Webhook or Email Activity/,
+    );
+  });
+
+  it('the four things sandbox mode must NOT be used for are named, not implied', () => {
+    // `§3` of the correction lists them, and a named prohibition is one a later slice can be
+    // held to. "It is not suitable" in prose is not.
+    const notSuitable = SENDGRID_CAPABILITY_RECORD.sandbox.notSuitableFor.join('\n');
+    for (const marker of [
+      'accepted-count evidence',
+      'I36 six-kill-point oracle',
+      'Email Activity correlation',
+      'Event Webhook reconciliation',
+    ]) {
+      expect(notSuitable, marker).toContain(marker);
+    }
+    // And what it IS for, so the record is not a rejection of the mode as such.
+    const suitable = SENDGRID_CAPABILITY_RECORD.sandbox.suitableFor.join('\n');
+    expect(suitable).toMatch(/request-shape validation/);
+    expect(suitable).toMatch(/credential-scope validation/);
+  });
+
+  it('the resolved negative is recorded as SETTLED, and is no longer a pending item', () => {
+    expect(SENDGRID_CAPABILITY_RECORD.resolvedDocumentedNegatives.join('\n')).toContain(
+      'SANDBOX_ACTIVITY_EVIDENCE = ABSENT',
+    );
+    // `§7`: "The sandbox-activity question is no longer pending." A pending item nobody can
+    // close postpones a decision that has already been made.
+    const pending = SENDGRID_CAPABILITY_RECORD.unresolvedAccountItems.join('\n');
+    expect(pending).not.toMatch(/whether a sandbox-mode send produces/);
+  });
+
+  it('every remaining account-level item from `§7` is carried, and none is claimed done', () => {
+    const pending = SENDGRID_CAPABILITY_RECORD.unresolvedAccountItems.join('\n');
+    for (const marker of [
+      'Email Activity history entitlement',
+      'mail.send key actually carries only that permission',
+      'audit key actually LACKS mail.send',
+      'must be REFUSED BY SENDGRID',
+      'sandbox_mode=false',
+      'correlation',
+      'rate limit',
+      'controlled recipient',
+    ]) {
+      expect(pending, marker).toContain(marker);
+    }
+    for (const item of SENDGRID_CAPABILITY_RECORD.unresolvedAccountItems) {
+      expect(item).toMatch(/ACCOUNT VALIDATION PENDING/);
+    }
+  });
+});
+
+/* ================================================================================
+ * 7. `§5` — THE TEST PATH AND THE EVIDENCE PATH MUST BE THE SAME PATH
+ * ============================================================================== */
+
+describe('`§5` of the correction — the structural compatibility check', () => {
+  it('SendGrid remains SELECTED, on a path that is NOT sandbox mode', () => {
+    // `§4`: "SendGrid may remain the selected provider if its other documented capabilities
+    // still satisfy the selection rule." They do, and the validation path is the corrected
+    // one: a dedicated non-production environment with `sandbox_mode=false`.
+    expect(isSelectable(SENDGRID_CAPABILITY_RECORD)).toBe(true);
+    expect(evidencePathIncompatibility(SENDGRID_CAPABILITY_RECORD)).toBeNull();
+
+    const path = SENDGRID_CAPABILITY_RECORD.nonProductionValidationPath;
+    expect(path.sandboxModeEnabled).toBe(false);
+    expect(path.producesQueryableActivity).toBe(true);
+    expect(path.requiresControlledRecipient).toBe(true);
+    expect(path.mechanism).toMatch(/DEDICATED NON-PRODUCTION/);
+  });
+
+  it('and the path names every provisioning item it needs, including the sink recipient', () => {
+    const requirements =
+      SENDGRID_CAPABILITY_RECORD.nonProductionValidationPath.requirements.join('\n');
+    for (const marker of [
+      'dedicated non-production SendGrid account, subuser',
+      'mail.send integration key',
+      'email_activity.read audit key',
+      'Email Activity history entitlement',
+      'verified sender',
+      'OWNER-CONTROLLED SINK RECIPIENT',
+    ]) {
+      expect(requirements, marker).toContain(marker);
+    }
+    // `§4`: "no customer recipient; no production business messages."
+    expect(requirements).toMatch(/No customer recipient and no production/);
+  });
+
+  it('the NON_PRODUCTION_TEST_PATH finding cites the real path, not the sandbox flag', () => {
+    const finding = SENDGRID_CAPABILITY_RECORD.findings.find(
+      (row) => row.capability === 'NON_PRODUCTION_TEST_PATH',
+    );
+    expect(finding?.status).toBe('DOCUMENTED');
+    expect(finding?.evidence).toMatch(/sandbox_mode=false/);
+    expect(finding?.evidence).toMatch(/Sandbox mode is NOT this path/);
+  });
+
+  it('Mailgun is blocked TWICE over: the audit credential AND the evidence path', () => {
+    // Two independent reasons, and reporting both is the point: `§5` is a new blocker rather
+    // than a restatement of `§19`'s conjunction.
+    expect(blockingFindings(MAILGUN_CAPABILITY_RECORD)).toHaveLength(1);
+    expect(evidencePathIncompatibility(MAILGUN_CAPABILITY_RECORD)).toMatch(/UNRESOLVED/);
+    expect(isSelectable(MAILGUN_CAPABILITY_RECORD)).toBe(false);
+  });
+});
+
+/* ================================================================================
+ * 8. CONTROLS 16 AND 17 — THE TWO DEFECTS THE FIRST CANDIDATE HAD
+ * ============================================================================== */
+
+describe('CONTROL 16 — a provider selected on capabilities that do not compose', () => {
+  it('UNSAFE selects a provider whose safe mode suppresses its own evidence surface', () => {
+    const suppressing = recordWhoseSandboxSuppressesEvidence(SENDGRID_CAPABILITY_RECORD);
+
+    // UNSAFE: five independent lookups, all DOCUMENTED, so the conjunction is true.
+    expect(unsafeSelectOnIndependentCapabilities([suppressing])?.provider).toBe(
+      'synthetic_evidence_suppressing_sandbox',
+    );
+    // And it really does pass the capability conjunction — which is what makes this a
+    // discrimination rather than two rules disagreeing about a malformed record.
+    expect(blockingFindings(suppressing)).toEqual([]);
+
+    // PRODUCTION: the same record fails `§5`, because the declared test path cannot carry
+    // the evidence the declared query API describes.
+    expect(evidencePathIncompatibility(suppressing)).toMatch(/no queryable provider evidence/);
+    expect(isSelectable(suppressing)).toBe(false);
+    expect(selectProvider([suppressing]).selected).toBeNull();
+  });
+
+  it('a path that ENABLES an evidence-suppressing sandbox is caught even when it claims otherwise', () => {
+    // The self-contradictory record: the sandbox is documented to leave nothing, and the
+    // validation path both enables it and claims evidence. Caught here, rather than trusted
+    // to the two fields being edited together.
+    const contradictory = {
+      ...SENDGRID_CAPABILITY_RECORD,
+      provider: 'synthetic_contradictory',
+      nonProductionValidationPath: {
+        ...SENDGRID_CAPABILITY_RECORD.nonProductionValidationPath,
+        sandboxModeEnabled: true,
+        producesQueryableActivity: true,
+      },
+    };
+    expect(evidencePathIncompatibility(contradictory)).toMatch(
+      /enables a sandbox mode the provider documents as producing no queryable activity/,
+    );
+    expect(isSelectable(contradictory)).toBe(false);
+  });
+});
+
+describe('CONTROL 17 — a documented negative carried as an open question', () => {
+  it('UNSAFE reads `null` as "pending"; PRODUCTION refuses an unestablished evidence path', () => {
+    const nullEvidence = recordWithUnresolvedSandboxEvidence(SENDGRID_CAPABILITY_RECORD);
+
+    // UNSAFE: `null` treated as "an account will settle this later", on a row the provider's
+    // own documentation already settled.
+    expect(unsafeTreatsNullSandboxEvidenceAsPending(nullEvidence)).toBe(true);
+    expect(nullEvidence.resolvedDocumentedNegatives).toEqual([]);
+
+    // PRODUCTION: an UNRESOLVED evidence path is not an established one, and the corrected
+    // record carries `false` with the documentation reference instead.
+    expect(evidencePathIncompatibility(nullEvidence)).toMatch(
+      /UNRESOLVED rather than established/,
+    );
+    expect(isSelectable(nullEvidence)).toBe(false);
+    expect(unsafeTreatsNullSandboxEvidenceAsPending(SENDGRID_CAPABILITY_RECORD)).toBe(false);
   });
 });

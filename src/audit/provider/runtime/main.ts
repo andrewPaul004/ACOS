@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   ENV_AUDIT_CREDENTIAL_RISK_CLASS,
+  ENV_AUDIT_EXPECTED_CREDENTIAL_ID,
   ENV_AUDIT_PROTOCOL_VERSION,
   ENV_AUDIT_PROVIDER_ID,
   ENV_AUDIT_READER_IDENTITY,
@@ -69,7 +70,7 @@ import { emitAuditReadLog } from './auditReadLog.js';
  *
  * "Do not make audit verification depend on a control-plane `verified=true`."
  *
- * The child environment carries eight keys and not one of them is a control-plane variable;
+ * The child environment carries nine keys and not one of them is a control-plane variable;
  * there is no `ACOS_CONTROL_PG_URL`, so no control database is reachable; and the wire
  * protocol has no member a control verdict could occupy. The independence is structural in
  * the same sense `30 §5.4` means: the declared inputs contain no control-plane read.
@@ -198,6 +199,14 @@ export async function composeAuditReader(): Promise<{
   const readerModule = readEnv(ENV_AUDIT_READER_MODULE);
   const secretSourceModule = readEnv(ENV_AUDIT_SECRET_SOURCE_MODULE);
   const secretLocator = readEnv(ENV_AUDIT_SECRET_LOCATOR);
+  /*
+   * `50 §2g` FIELD 1's ECHO. ABSENT REFUSES TO START.
+   *
+   * `readEnv` refuses an absent or empty value, so there is no launch path that produces a
+   * reader with nothing to compare its resolved credential against. The comparison itself is
+   * guard 7 in `auditReadHost.ts`, because the material is resolved per read.
+   */
+  const expectedCredentialId = readEnv(ENV_AUDIT_EXPECTED_CREDENTIAL_ID);
 
   for (const specifier of [readerModule, secretSourceModule]) {
     if (!isInsideAuditRuntimeRoot(runtimeRoot, specifier)) {
@@ -242,7 +251,13 @@ export async function composeAuditReader(): Promise<{
   }
 
   return {
-    configuration: Object.freeze({ providerId, reader, secretSource, credentialRiskClass }),
+    configuration: Object.freeze({
+      providerId,
+      reader,
+      secretSource,
+      credentialRiskClass,
+      expectedCredentialId,
+    }),
     readerIdentity,
   };
 }

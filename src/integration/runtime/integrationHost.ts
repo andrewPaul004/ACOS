@@ -13,7 +13,10 @@ import {
 } from '../protocol/wire.js';
 import { INTEGRATION_PROTOCOL_VERSION } from '../protocol/wire.js';
 import type { AdapterSecretSource } from './adapterSecretSource.js';
-import { credentialLabelsAreNonDerived } from './adapterSecretSource.js';
+import {
+  adapterCredentialIdentityMismatch,
+  credentialLabelsAreNonDerived,
+} from './adapterSecretSource.js';
 import type { AdapterInvocation, IntegrationAdapter, ProviderBoundary } from './integrationAdapter.js';
 
 /**
@@ -48,13 +51,16 @@ import type { AdapterInvocation, IntegrationAdapter, ProviderBoundary } from './
  *     4. authorisation binding        `§16` — bound to THIS effect, not merely non-null
  *     5. payload hash                 the bytes are the bytes the authorisation committed
  *     6. credential resolution        revoked or unavailable refuses here (`§24`)
- *     7. adapter invocation           the FIRST line that runs adapter code
+ *     7. credential IDENTITY binding  the resolved material IS the declared credential
+ *     8. adapter invocation           the FIRST line that runs adapter code
  *
  * `§15`: "Integration runtime validates presence before reaching adapter code. [...] No
- * adapter public method exists that can execute without it." Step 7 is the only call site of
- * `invoke` in this file and it is unreachable until 1..6 have all passed, because each is an
+ * adapter public method exists that can execute without it." Step 8 is the only call site of
+ * `invoke` in this file and it is unreachable until 1..7 have all passed, because each is an
  * early return rather than a flag. The negative-control suite's permissive host
- * removes steps 3 and 4 and reaches the adapter, which is the discrimination.
+ * removes steps 3 and 4 and reaches the adapter, and
+ * `unsafeHandleWithoutCredentialIdentityBinding` removes step 7 — which is the
+ * discrimination for the v1.3.7 correction.
  * =================================================================================
  */
 
@@ -81,6 +87,19 @@ export interface IntegrationRuntimeConfiguration {
   readonly adapterId: string;
   readonly adapter: IntegrationAdapter;
   readonly secretSource: AdapterSecretSource;
+  /**
+   * `50 §2g` FIELD 1, AS THE PARENT READ IT OUT OF THE VERIFIED CLASS-5 RECORD.
+   *
+   * Carried into this process so guard 7 can compare it to what the secret source actually
+   * resolved, and NOT trusted as the authority: the authority is the signed record, the
+   * parent checked it before forking, and this value is an echo only the parent produces.
+   *
+   * **THE PARENT CANNOT PERFORM THIS COMPARISON.** `I25` forbids the control plane holding a
+   * vendor credential, so the only process that can see the resolved material's identity is
+   * this one. That is why the echo exists at all: it moves one non-secret string across the
+   * boundary so the comparison can happen on the side that has the other operand.
+   */
+  readonly expectedCredentialId: string;
 }
 
 /**
@@ -199,7 +218,41 @@ export async function handleDispatchRequest(
   }
 
   // ---------------------------------------------------------------------------------
-  // GUARD 7 — THE INVOCATION. THE FIRST LINE OF ADAPTER CODE, AND THE ONLY CALL SITE.
+  // GUARD 7 — `50 §2g` FIELD 1. **THE RESOLVED CREDENTIAL IS THE DECLARED CREDENTIAL.**
+  //
+  // Until this guard existed the chain ran in two halves that never met:
+  //
+  //     signed class-5 record  ->  risk class  ->  this runtime was admitted
+  //     secret locator         ->  material    ->  about to be presented at a provider
+  //
+  // A locator repointed at another credential produced a runtime presenting
+  // `budget_manage` (MONEY_MOVING) under `pause_only`'s NON_MONETARY_WRITE declaration, and
+  // every other check on this path passed: the descriptor was well formed, the adapter was
+  // in the catalogue, the signed record existed and said NON_MONETARY_WRITE, the
+  // authorisation was bound, the payload hashed. The declaration simply governed a
+  // credential the runtime was not holding.
+  //
+  // **LOCATOR SEPARATION IS A DIFFERENT CONTROL AND DOES NOT IMPLY THIS ONE.** Two locators
+  // may name one credential; one locator may be repointed at another. `23 §7`'s per-adapter
+  // source isolation and this binding are kept as two checks because they answer two
+  // different questions: which source was read, and what was found there.
+  //
+  // IT RUNS BEFORE THE ADAPTER, so no provider boundary is reachable on a mismatch.
+  // ---------------------------------------------------------------------------------
+  if (
+    adapterCredentialIdentityMismatch(
+      configuration.expectedCredentialId,
+      credential.credentialIdentity,
+    ) !== null
+  ) {
+    // The REASON is not returned to the control plane. `§23`: a refusal teaches a closed
+    // code and nothing else, and a message naming both credential identities would put the
+    // deployment's credential topology on the wire for any caller that provoked a mismatch.
+    return refuse(request.invocationId, 'CREDENTIAL_IDENTITY_MISMATCH');
+  }
+
+  // ---------------------------------------------------------------------------------
+  // GUARD 8 — THE INVOCATION. THE FIRST LINE OF ADAPTER CODE, AND THE ONLY CALL SITE.
   // ---------------------------------------------------------------------------------
   const invocation: AdapterInvocation = Object.freeze({
     adapterId: request.adapterId,
@@ -256,7 +309,7 @@ export async function handleDispatchRequest(
     invocationId: request.invocationId,
     adapterId: request.adapterId,
     outcome,
-    credentialIdentity: credential.identity,
+    credentialIdentity: credential.credentialIdentity,
     credentialVersion: credential.version,
   });
   return response;

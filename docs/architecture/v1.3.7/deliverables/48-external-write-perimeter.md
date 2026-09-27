@@ -49,7 +49,7 @@ Fourteen rows. The `authorisation_ref` column is the load-bearing one: **`REQUIR
 | 10 | **Migration / DDL principal** | Out of plane | No external write, but **can alter the audit schema** | No | **Unnamed** | **EXEMPT** (§3.3) — and a named TCB member (`49`) |
 | 11 | **Observability exporter (Sentry)** | Cross-cutting | **Yes** (data egress) | No | **Absent from every egress table** | **EXEMPT** (§3.4) |
 | 12 | Observability exporter (Langfuse) | Cross-cutting | Yes | No | Absent from every egress table | **REMOVED** (`31 §10`) |
-| 13 | **Audit plane vendor reads** | Audit | Reads only | No | *Did not exist* | **EXEMPT** (read-only; §3.6) — **v1.3.7: the exemption's operand is `50 §2g` fields 6 and 7, and the `36 §13` attempted-write test remains separately owed** |
+| 13 | **Audit plane vendor reads** | Audit | Reads only | No | *Did not exist* | **EXEMPT** (read-only; §3.6) — **v1.3.7: the exemption's operand is `50 §2g` fields 6 and 7, the resolved material must be bound to `50 §2g` field 1 before any provider query, and the `36 §13` attempted-write test remains separately owed** |
 | 14 | **External anchoring writer** | Audit | **Yes** | No | *Cadence unspecified* | **EXEMPT** (§3.7) |
 | 15 | Egress proxy (research worker fetches) | Sandbox | Reads only, allowlisted, budgeted | **Yes** | Authorised as read | **EXEMPT** (read-only, deferred with the research worker) |
 
@@ -133,6 +133,39 @@ vendor. A provider whose only credential able to read the required evidence is a
 send **cannot earn this exemption by declaring `READ_ONLY`**, because the declaration would be
 false and the vendor would prove it false. That is a **provider-selection** finding, and
 `50 §2g`'s consistency check is deliberately unable to rescue it.
+
+**v1.3.7 CORRECTION — AND A FOURTH OBLIGATION, WHICH THE FIRST THREE DO NOT IMPLY.**
+
+The three obligations above all ask about a credential the reader is ASSUMED to be holding.
+None of them asks **whether the reader is holding that credential**, and the answer is not
+automatic: the record is selected by `credential_id` and the material is resolved from a
+locator, and before this correction nothing compared the two.
+
+| Obligation | Evidence | Status at v1.3.7 |
+|---|---|---|
+| *the resolved material IS the declared credential* | the reader compares the signed `credential_id` against the identity its own secret source returned, **before any provider query** | **mechanised** — `50 §2g`'s runtime-use requirement, enforced in the audit reader's own process |
+
+**THE ATTACK THIS CLOSES PASSES EVERY OTHER CONTROL ON THIS ROW.** A genuinely
+`audit_plane`-scoped, genuinely `READ_ONLY` signed record; a locator genuinely disjoint from
+the integration plane's; a reader genuinely in its own process — and a **send-capable token**
+at the end of the locator. This exemption would then rest on a declaration about a credential
+the reader is not using, and the plane whose job is to catch the control plane lying would be
+the one holding an unclassified write capability.
+
+**LOCATOR SEPARATION DOES NOT IMPLY IT.** The *separately provisioned* obligation above is
+enforced on locators, and a locator says where to look rather than what was found: two
+locators may resolve one credential, and one locator may be repointed at another. **Both
+controls are required and both are kept.**
+
+**AND NONE OF THE FOUR CLOSES CREDENTIAL SCOPE DRIFT.** Identity binding proves *"this is
+credential A"*; it does not prove *"credential A still has the provider permissions the signed
+record declares"*. A scoped provider API key is mutable at the provider, and its permissions
+can be widened after the class-5 record was signed with no ACOS-observable event. **Scope
+conformance is an EMPIRICAL provider-side obligation**, and for a selected email provider the
+minimum probe set is: the send key succeeds at its permitted send; the audit key succeeds at
+the activity read; **the audit key's send attempt is refused BY THE PROVIDER**; and any
+architecture-required prohibited operation stays provider-refused. **v1.3.7 does not discharge
+any of them.**
 
 ### 3.7 External anchoring writer (row 14)
 

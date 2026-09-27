@@ -1,8 +1,23 @@
 # S1O — result
 
 **Credential-risk definition, the audit-plane provider-read boundary, and provider selection.**
-Baseline `e9ec232`. Branch `feature/s1o-provider-selection-audit-boundary`.
-**Operating Spine v1.3, package issue v1.3.7 — issued by this slice.**
+Baseline `e9ec232`. Prior candidate `6890bfb`. Branch
+`feature/s1o-provider-selection-audit-boundary`.
+**Operating Spine v1.3, package issue v1.3.7 — issued by this slice and CORRECTED IN PLACE
+after owner review.**
+
+> **THE OWNER RETURNED THE FIRST S1O CANDIDATE PARTIAL ON TWO FINDINGS**, and this document
+> records the corrected slice rather than the candidate:
+>
+> 1. **the SendGrid Sandbox Mode capability record was factually wrong** — the official
+>    documentation states that sandbox requests generate no Event Webhook and no Email
+>    Activity events, and the record carried `null` plus an account-validation item;
+> 2. **the signed class-5 credential declaration was not structurally bound to the credential
+>    material the secret source resolves** — so a signed risk declaration could govern a
+>    credential the runtime was not holding.
+>
+> v1.3.7 was not owner-accepted, so it is corrected in place. **There is no v1.3.8, and
+> `docs/architecture/v1.3.6/` remains byte-identical.**
 
 ---
 
@@ -33,7 +48,7 @@ credit line, or analogous provider-side authority that permits additional spend"
 
 ---
 
-## 2. The three transformations
+## 2. The four transformations
 
 ```
 1.  before   ADR-024's trigger operand   —  prose in six deliverables, no mechanism
@@ -44,7 +59,14 @@ credit line, or analogous provider-side authority that permits additional spend"
 
 3.  before   provider                    —  Postmark, PARTIAL on blocker C
     after    Twilio SendGrid, selected on a documented DISJOINT scope pair
+            AND on a test path that can carry I36's evidence
+
+4.  before   the signed record and the resolved material  —  two chains, never compared
+    after    signed credential_id == resolved credential identity, checked in the
+            credential-holding process, before the provider boundary, on BOTH planes
 ```
+
+**Transformation 4 is the correction, and it is the load-bearing one.**
 
 ---
 
@@ -65,6 +87,46 @@ credit line, or analogous provider-side authority that permits additional spend"
 `declaredCredentialClass` and its `CREDENTIAL_CLASS_UNDERSTATED` cross-check are both removed.
 A declaration that has to be cross-checked is one somebody can make; the class-5 record is one
 the owner signed.
+
+---
+
+## 3a. The credential identity binding (the correction)
+
+**A signed declaration has to be ABOUT something, and the candidate's was not.** Field 1 read
+*"a credential identifier, unique within the artifact"*, which a nickname satisfies, and the
+two chains never met:
+
+```
+signed class-5 `credential_id`  ->  risk class  ->  the registry admits the runtime
+`secretLocator`                 ->  material    ->  presented at the provider boundary
+```
+
+| | integration plane | audit plane |
+|---|---|---|
+| the attack | signed `pause_only` = `NON_MONETARY_WRITE`, locator resolves `budget_manage` = `MONEY_MOVING` | signed `audit_read` = `READ_ONLY`, locator resolves a SEND-CAPABLE token |
+| what breaks | **ADR-024's option-B trigger never fires** on the credential in hand | **`48 §3.6`'s exemption rests on a declaration about a different credential** |
+| what passes anyway | descriptor, catalogue, signed record, authorisation binding, payload hash | signed record, `audit_plane` sentinel, `READ_ONLY` echo, locator disjointness |
+
+| | |
+|---|---|
+| field 1 | **the stable non-secret identity of the EXACT MATERIAL the runtime may present** — a provider key ID, or an immutable deployment/secret-manager identity. **Never the secret, its hash, or a token prefix** |
+| if no such identity exists | **the slice that would configure that provider returns PARTIAL.** A binding that is only a label is not recorded as one |
+| secret-source contract | `credentialIdentity` is **MANDATORY and non-null** on both planes, with a declared `identityProvenance` — `PROVIDER_KEY_ID`, `DEPLOYMENT_SECRET_VERSION` or `SYNTHETIC_TEST_IDENTITY` |
+| where the comparison happens | **inside the credential-holding child**, because `I25` forbids the parent seeing resolved material |
+| what the parent passes | the expected `credential_id` as a **trusted non-secret launch echo**. NOT authority — the signed artifact is, and the parent verified it before forking |
+| integration refusal | `CREDENTIAL_IDENTITY_MISMATCH`, guard 7 of 8, **before any adapter code runs** |
+| audit refusal | `CREDENTIAL_IDENTITY_MISMATCH`, guard 7 of 8, **before `readFromProvider`** |
+| locator controls | **unchanged and still enforced.** A locator says where to look; an identity says what was found |
+
+**LOCATOR SEPARATION DOES NOT IMPLY IDENTITY BINDING, IN EITHER DIRECTION.** Two locators may
+resolve one credential, so inequality proves no separation; one locator may be repointed, so
+equality proves no identity. Both controls are kept, and
+`audit-credential-identity-binding.test.ts §3` asserts both halves on the same fixtures.
+
+**AND THE BINDING IS NOT SCOPE CONFORMANCE.** It proves *"this is credential A"*. It does not
+prove *"credential A still holds the provider permissions the signed record declares"* — a
+scoped provider key is mutable at the provider with no ACOS-observable event. **Scope drift
+remains an empirical provider-side obligation and S1O does not close it.**
 
 ---
 
@@ -100,7 +162,7 @@ plane can see rather than a check it performs.
 
 | Provider | Send-only | Read-only audit | Query evidence | Correlation | Sandbox | Result |
 |---|---|---|---|---|---|---|
-| **Twilio SendGrid** | **DOCUMENTED** — `POST /v3/api_keys` takes an explicit `scopes` array; `["mail.send"]` | **DOCUMENTED** — `email_activity.read` is a separate documented scope in a separate group; a key may carry one without the other | **DOCUMENTED** — `GET /v3/messages`, `GET /v3/messages/{msg_id}`, documented query language | **DOCUMENTED** — `categories` and `custom_args`/`unique_args`, both documented Email Activity filter fields | **DOCUMENTED** — `mail_settings.sandbox_mode.enable`; validated, never delivered | **SELECTED** |
+| **Twilio SendGrid** | **DOCUMENTED** — `POST /v3/api_keys` takes an explicit `scopes` array; `["mail.send"]` | **DOCUMENTED** — `email_activity.read` is a separate documented scope in a separate group; a key may carry one without the other | **DOCUMENTED** — `GET /v3/messages`, `GET /v3/messages/{msg_id}`, documented query language | **DOCUMENTED** — `categories` and `custom_args`/`unique_args`, both documented Email Activity filter fields | **DOCUMENTED, AND NOT THE `I36` PATH** — `sandbox_mode.enable` validates without delivering **and generates no Event Webhook or Email Activity event**. The `I36` path is a dedicated non-production identity with `sandbox_mode=false` | **SELECTED** |
 | Mailgun | DOCUMENTED — Domain Sending Key, `kind: domain` / `role: sending` | **UNRESOLVED** | DOCUMENTED — `GET /v3/{domain}/events` | DOCUMENTED — `o:tag` / `tags` | DOCUMENTED — sandbox domain | **NOT SELECTED — unresolved** |
 | Postmark | (S1M) | **ABSENT** | (S1M) | (S1M) | (S1M) | **NOT SELECTED under the current credential model** |
 
@@ -121,6 +183,40 @@ provider.
 **Retrieval date: 2026-09-26. Every row's `basis` is `PUBLISHED_DOCUMENTATION`; not one is
 `MEASURED_AGAINST_ACCOUNT`. No provider request of any kind was made.**
 
+### 5a. The sandbox correction, and the compatibility rule it forced
+
+**`SANDBOX_ACTIVITY_EVIDENCE = ABSENT`, from the provider's own documentation.** Twilio
+SendGrid's Sandbox Mode page states that the message is never delivered **and that requests
+made in sandbox mode generate no events in either the Event Webhook or Email Activity.** The
+candidate recorded `producesQueryableActivity: null` and carried the question as an
+account-validation item; **the documentation had already settled it**, so the item was one no
+account could ever close.
+
+| Sandbox mode IS for | Sandbox mode is NOT for |
+|---|---|
+| request-shape validation against the real API | real-provider accepted-count evidence |
+| credential-scope validation at real enforcement | the `I36` six-kill-point oracle |
+| | Email Activity correlation |
+| | Event Webhook reconciliation |
+
+**AND FIVE INDEPENDENT CAPABILITY CHECKS WERE NOT ENOUGH.** Each of `§19`'s five terms can be
+true of a *different* configuration of one provider, so a provider passed on "it has a sandbox"
+plus "it has an activity API" while the sandbox is precisely the mode that suppresses the
+activity API. `evidencePathIncompatibility` is the structural check that closes it, over ONE
+declared path:
+
+```
+real API request -> provider accepts/processes -> provider-side evidence EXISTS
+                 -> the INDEPENDENT read-only audit credential can observe it
+```
+
+**SendGrid remains selected**, because its `I36`-compatible path exists: a dedicated
+non-production sending identity, `sandbox_mode=false`, a narrowly scoped `mail.send` key, a
+separate `email_activity.read` audit key, the Email Activity history entitlement, a verified
+sender and an **owner-controlled sink recipient**. No customer recipient, no production
+message. **Mailgun is now blocked twice over** — the unresolved audit credential, and an
+unresolved evidence path.
+
 ---
 
 ## 6. `48 §3.6` — three obligations, separated by their evidence
@@ -133,7 +229,9 @@ vendor test:
 |---|---|---|
 | *separately provisioned* | its own source, its own runtime, its own allowlist | **mechanised** |
 | *read-only* | `50 §2g` fields 6 and 7, over signed bytes | **mechanised** |
+| *the credential in hand IS the declared one* | the reader compares the signed `credential_id` to what its own source resolved, **before any provider query** | **mechanised by the correction** — and none of the three above implies it |
 | *attempted-write-tested* | a write attempted with the audit credential **fails at the PROVIDER** | **NOT DISCHARGED BY ANY SIGNED DECLARATION — OPEN** |
+| *the credential's permissions have not drifted* | empirical probes against the configured account | **NOT DISCHARGED BY THE BINDING — OPEN** |
 
 **A SIGNED `READ_ONLY` DECLARATION IS NOT THE ATTEMPTED-WRITE TEST.** The declaration says
 what the deployment believes it provisioned; `36 §13` asks the vendor. A synthetic reader
@@ -183,15 +281,23 @@ Recorded in `phase2-v1.3.7-verification.md §3`.
 | Obligation | Why it is still open |
 |---|---|
 | `36 §13` empirical attempted-write test | needs a real SendGrid account; a synthetic reader proves the ACOS side only |
+| **Credential scope conformance** | identity binding proves *which* credential; it does not prove the credential's provider permissions still match the signed record. Needs empirical probes against the account |
 | `I8` | no vendor side exists to sweep |
 | `I20` | `"provider-reported accepted"` needs a real provider read |
 | `I36` verification leg | needs a provider's accepted count |
 | Class 5's owner signature | no production signing code exists |
 | Option B, the execution proxy | the trigger is executable; the proxy is not built |
-| Whether SendGrid sandbox mode produces a queryable activity record | **the load-bearing account-level unknown** — if it does not, the validation slice needs a dedicated non-production sending identity and a controlled sink recipient rather than sandbox mode |
+| The dedicated non-production SendGrid account/subuser | not provisioned. **Sandbox mode is NOT this environment** — the correction settles that |
 | The Email Activity history entitlement | `CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING` |
+| The two scoped keys, read back from the account | pending: that `mail.send` carries only that, and that the audit key LACKS `mail.send` |
+| Whether a normal non-production send is queryable on that account | pending |
 | Whether v3 `custom_args` are returned by the `unique_args` filter | pending; `categories` is the unambiguous fallback on both sides |
 | The 6 req/min Email Activity rate limit against six-kill-point volume | pending |
+| The controlled recipient / verified sender configuration | pending |
+
+**`SANDBOX_ACTIVITY_EVIDENCE = ABSENT` IS NO LONGER ON THIS LIST.** The candidate carried it as
+pending; the official documentation settles it, and it is recorded as a resolved negative
+instead.
 
 ---
 
@@ -205,8 +311,17 @@ Recorded in `phase2-v1.3.7-verification.md §3`.
 | credential scopes normatively compatible | **yes** — `mail.send` is `NON_MONETARY_WRITE` under `50 §2g`, so one email adapter continues under option A; `email_activity.read` is `READ_ONLY` and earns `48 §3.6`'s exemption's *declaration* half |
 | local architecture blocker | **none** |
 
-**`READY_TO_PROVISION_SENDGRID_SANDBOX_CREDENTIALS`**
+**`READY_TO_PROVISION_TWILIO_SENDGRID_NONPRODUCTION_TEST_CREDENTIALS`**
 
-**This is not a statement that provider validation is complete.** It is a statement that
-nothing in this repository now blocks provisioning them, and that five account-level items
-are recorded and waiting.
+**THE TOKEN CHANGED, AND NOT COSMETICALLY.** The candidate emitted
+`READY_TO_PROVISION_SENDGRID_SANDBOX_CREDENTIALS`, which names the provider's sandbox mode —
+the mode its own documentation says produces no Email Activity and no Event Webhook events.
+The token described an environment in which `I36` can observe nothing.
+
+**What the corrected token means:** the repository is **LOCALLY** ready to provision
+credentials for a **dedicated non-production SendGrid validation environment**.
+
+**What it does NOT mean:** not sandbox mode; not that provider validation is complete; not
+production readiness; not that any credential exists. **Eight account-level items are recorded
+and waiting, and one documented negative is carried beside the token so the environment cannot
+be misread.**

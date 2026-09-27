@@ -5,11 +5,18 @@
 Run from `analysis/`, on a system whose default encoding is not UTF-8 set `PYTHONUTF8=1`:
 
 ```
-PYTHONUTF8=1 python consistency-v1.3.py                 # 101 PASS / 0 FAIL, exit 0
+PYTHONUTF8=1 python consistency-v1.3.py                 # 108 PASS / 0 FAIL, exit 0
 ```
 
-**101 conditions**: C1–C29 (v1.3), E1–E7 (v1.3.1), F1–F3 (v1.3.2), G1–G10 (v1.3.3), H1–H13
-(v1.3.4), J1–J16 (v1.3.5), K1–K25 (v1.3.6) and **L1–L12 (v1.3.7)**.
+**108 conditions**: C1–C29 (v1.3), E1–E7 (v1.3.1), F1–F3 (v1.3.2), G1–G10 (v1.3.3), H1–H13
+(v1.3.4), J1–J16 (v1.3.5), K1–K25 (v1.3.6) and **L1–L19 (v1.3.7)**.
+
+**L1–L12 were issued with the v1.3.7 candidate. L13–L19 are the OWNER CORRECTION**, and they
+exist because the candidate's owner review found two defects that L1–L12 could not have
+caught: the SendGrid Sandbox Mode capability record was factually wrong, and the signed
+class-5 credential declaration was not structurally bound to the credential material the
+secret source actually resolves. **v1.3.7 is corrected in place; v1.3.6 is untouched and
+byte-identical.**
 
 ---
 
@@ -58,6 +65,47 @@ Each is a design somebody could argue for, which is what makes failing it eviden
 
 ---
 
+## 1b. The seven CORRECTION conditions, and the seeds that fail each
+
+**The owner returned the v1.3.7 candidate PARTIAL on two findings.** L13–L16 close the second
+one — a signed credential declaration that governed no particular credential — and L17–L19
+close the first, plus the over-claim it would have licensed.
+
+| Condition | What it asserts | Seeds that must fail it |
+|---|---|---|
+| **L13** | `50 §2g` field 1 is the identity of the exact credential MATERIAL a runtime may present, in the field row AND in the section; the two admissible provider forms are printed; the raw secret, its hash and a token prefix are each forbidden by name; a provider for which no such identity exists forces PARTIAL rather than a claimed binding | `--seed-credential-id-is-alias` |
+| **L14** | the RESOLVED identity must EQUAL the SIGNED one before the provider boundary, on both planes independently, with the audit plane reading its OWN verification; each refusal is before adapter code and before any provider query; the secret source must return a mandatory non-secret identity and `null` is insufficient | `--seed-no-runtime-identity-binding` |
+| **L15** | locator equality is INSUFFICIENT for identity binding, stated in both directions — two locators may name one credential, one locator may be repointed — and `48 §3.6`'s separate-source rule neither implies nor is implied by the binding | `--seed-locator-proves-identity` |
+| **L16** | the expected identity travels as a TRUSTED ECHO that is not authority; the signed artifact remains authority; `I25` is printed as the reason the comparison cannot happen in the parent; no credential material travels on IPC or in any environment; `§2g`'s environment-variable prohibition is unchanged beside it | `--seed-echo-is-authority` |
+| **L17** | a non-production test path that SUPPRESSES the provider's evidence surface does not satisfy the `I36` validation path; the four-step chain one bounded design must carry is printed; "a sandbox mechanism plus a separate activity API" is denied by name | `--seed-sandbox-satisfies-i36` |
+| **L18** | SendGrid Sandbox Mode is recorded as UNABLE to serve as the `I36` activity-evidence path, with the documented negative printed and the four prohibited uses named; the `I36`-compatible path is a dedicated non-production identity with sandbox mode DISABLED and an owner-controlled sink recipient; neither the oracle table nor the gate table still names a bare provider sandbox | `--seed-sendgrid-sandbox-is-oracle` |
+| **L19** | identity binding does NOT prove provider-side scope conformance; `50 §2g`, `48 §3.6` and `36 §13` each separate the two, each names the empirical probe set including the audit credential's provider-refused send attempt, and each states that no signature and no signed-byte consistency check discharges it | `--seed-binding-proves-scope` |
+
+### The seven correction seeds
+
+```
+PYTHONUTF8=1 python consistency-v1.3.py --seed-credential-id-is-alias        # L13 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-no-runtime-identity-binding   # L14 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-locator-proves-identity       # L15 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-echo-is-authority             # L16 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-sandbox-satisfies-i36         # L17 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-sendgrid-sandbox-is-oracle    # L18 FAILS
+PYTHONUTF8=1 python consistency-v1.3.py --seed-binding-proves-scope          # L19 FAILS
+```
+
+**THREE OF THE SEVEN ARE NOT HYPOTHETICAL.** `--seed-credential-id-is-alias` restores the
+candidate's own definition of field 1; `--seed-no-runtime-identity-binding` restores the
+candidate's own runtime, in which the comparison simply did not exist; and
+`--seed-sendgrid-sandbox-is-oracle` restores the candidate's own capability record and both
+gate rows. **They are the code and the text that were actually written**, preserved so the
+corrected conditions have something real to discriminate against rather than an invention.
+
+The other four are designs a reviewer could argue for: `--seed-locator-proves-identity` is the
+most plausible of them, because the locator control genuinely exists and genuinely implements
+a different requirement.
+
+---
+
 ## 2. The retained seeds
 
 **All 58 v1.3–v1.3.6 seeds are retained and all 58 still discriminate**, verified by running
@@ -65,11 +113,14 @@ each against the v1.3.7 corpus and requiring a non-zero FAIL count. The full lis
 `phase2-v1.3.6-verification.md §1` and in the v1.3.6 README's running instructions; nothing
 in this pass removes, renames or weakens one.
 
-**Seventy seeds in total after v1.3.7.**
+**All 12 v1.3.7 candidate seeds are likewise retained and still discriminate.**
+
+**SEVENTY-SEVEN SEEDS IN TOTAL AFTER THE CORRECTION** — 58 + 12 + 7 — and every one of the 77
+was re-run against the corrected corpus and required to produce at least one FAIL.
 
 ---
 
-## 3. The one amended condition
+## 3. The two amended conditions
 
 **K14** previously asserted that all **four** live `50 §6` inventory rows demand both
 signatures and manifest membership, and read the heading *"The control-artifact inventory
@@ -80,7 +131,13 @@ after v1.3.6"*. v1.3.7 adds a fifth live row and renames the heading, so K14 now
 row that quietly lost its second signature; the equality is what makes the condition able to
 fail, and `--seed-second-signature-optional` still fails it.
 
-**No other v1.3.6 condition is amended, and none is removed.**
+**L12** asserted `48 §2` row 13's restated text, which named two halves: the signed operand
+and the still-owed attempted-write test. **The correction adds a third half to that row** —
+the resolved material must be bound to `50 §2g` field 1 before any provider query — so L12
+asserts the corrected row. It is still an exact-text equality rather than a substring search,
+for K14's reason: a row that quietly dropped one of its three halves must fail.
+
+**No v1.3.6 condition is amended beyond K14, and none is removed.**
 
 ---
 
@@ -95,5 +152,14 @@ fail, and `--seed-second-signature-optional` still fails it.
   provider request and none is made. The provider capability record is dated documentation
   evidence, asserted by `tests/provider-selection/provider-selection.test.ts`, and the
   empirical attempted-write test required by `36 §13` remains OPEN.
+* **It does not verify the credential identity binding as a RUNNING property.** L13–L16 assert
+  that the architecture states the rule; whether `src/` enforces it is `npm run verify`'s
+  question, answered by
+  `tests/integration/perimeter/credential-identity-binding.test.ts` and
+  `tests/integration/audit/audit-credential-identity-binding.test.ts`, each of which drives a
+  real forked runtime whose locator holds the wrong credential.
+* **It does not close credential scope drift.** L19 asserts that the corpus says so. The
+  empirical probes it names — including the audit credential's provider-refused send attempt —
+  need a configured provider account and are OPEN.
 * **It does not discharge a signature.** Class 5's owner signature is newly owed and is not
   discharged. **No production signing code exists at v1.3.7.**

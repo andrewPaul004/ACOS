@@ -208,6 +208,10 @@ export class AuditReadClient {
         // The ECHO, and the registry is where the authority was read. See
         // `ENV_AUDIT_CREDENTIAL_RISK_CLASS`'s own comment: this can only narrow.
         credentialRiskClass: scope.credentialRiskClass,
+        // THE SECOND ECHO. `50 §2g` field 1, from the record the AUDIT PLANE's own verifier
+        // read and this registry admitted the descriptor against. It is the identity the
+        // reader must find in its own hand; see `ENV_AUDIT_EXPECTED_CREDENTIAL_ID`.
+        expectedCredentialId: scope.credentialId,
       }),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       serialization: 'json',

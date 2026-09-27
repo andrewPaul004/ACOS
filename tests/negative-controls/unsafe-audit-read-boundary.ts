@@ -83,7 +83,12 @@ export class UnsafeInProcessAuditCredentialHolder {
     this.resolvedSecret = this.secret;
     return Promise.resolve({
       kind: 'RESOLVED',
-      credential: { secret: this.secret, identity: 'unsafe-in-process', version: null },
+      credential: {
+        secret: this.secret,
+        credentialIdentity: 'unsafe-in-process',
+        identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+        version: null,
+      },
     });
   }
 }
@@ -124,7 +129,12 @@ export class UnsafeSharedAuditSecretSource {
     if (secret === undefined) return Promise.resolve({ kind: 'UNAVAILABLE' });
     return Promise.resolve({
       kind: 'RESOLVED',
-      credential: { secret, identity: `unsafe-shared:${scopeId}`, version: null },
+      credential: {
+        secret,
+        credentialIdentity: `unsafe-shared:${scopeId}`,
+        identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+        version: null,
+      },
     });
   }
 }
@@ -191,7 +201,7 @@ export class UnsafeSendCapableAuditReader implements AuditProviderReader {
    */
   public sendToProvider(credential: AuditReadCredential, body: string): Promise<string> {
     this.mutations.push(body);
-    return Promise.resolve(`mutated:${credential.identity ?? 'unknown'}`);
+    return Promise.resolve(`mutated:${credential.credentialIdentity}`);
   }
 }
 
@@ -356,7 +366,7 @@ export async function unsafeHandleProviderReadRequest(
     operation: request.operation,
     records: result.records,
     recordCount: result.recordCount,
-    credentialIdentity: resolution.credential.identity,
+    credentialIdentity: resolution.credential.credentialIdentity,
     providerQueriedAtMs: 0,
   });
 }
@@ -387,11 +397,19 @@ export function unsafeAuditReaderRegistry(
 export function fixedAuditSecretSource(
   providerId: string,
   secret: string,
-  identity: string | null = 'unsafe-fixture',
+  credentialIdentity = 'unsafe-fixture',
 ): AuditReadSecretSource {
   return {
     declaredProviderId: providerId,
     resolve: () =>
-      Promise.resolve({ kind: 'RESOLVED', credential: { secret, identity, version: null } }),
+      Promise.resolve({
+        kind: 'RESOLVED',
+        credential: {
+          secret,
+          credentialIdentity,
+          identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+          version: null,
+        },
+      }),
   };
 }

@@ -66,6 +66,14 @@ function validRequest(overrides: Partial<DispatchRequest> = {}): DispatchRequest
 
 const encode = (value: unknown): string => JSON.stringify(value);
 
+/**
+ * The credential identity this file's source resolves, echoed by every configuration below.
+ *
+ * `50 §2g` field 1's binding is held CONSTANT here on purpose: this file is about the wire
+ * protocol and the guard order, and the binding has its own suite.
+ */
+const FIXED_CREDENTIAL_IDENTITY = 'label';
+
 /** A secret source that answers instantly, for the in-process host assertions. */
 function fixedSecretSource(adapterId: string, secret: string): AdapterSecretSource {
   return {
@@ -73,7 +81,12 @@ function fixedSecretSource(adapterId: string, secret: string): AdapterSecretSour
     resolve: () =>
       Promise.resolve({
         kind: 'RESOLVED',
-        credential: { secret, identity: 'label', version: null },
+        credential: {
+          secret,
+          credentialIdentity: FIXED_CREDENTIAL_IDENTITY,
+          identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+          version: null,
+        },
       }),
   };
 }
@@ -194,6 +207,7 @@ describe('`§15`, `§16` — `I24` AT THE RUNTIME, AND THE BINDING', () => {
       adapterId: ADAPTER_A,
       adapter,
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     // The decoder refuses an empty string, so the message never reaches the guard — which is
     // the stronger form of the same property and is asserted as such.
@@ -211,6 +225,7 @@ describe('`§15`, `§16` — `I24` AT THE RUNTIME, AND THE BINDING', () => {
       adapterId: ADAPTER_A,
       adapter,
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
 
     // TWO GENUINE EFFECTS, each with its own genuine authorisation.
@@ -247,6 +262,7 @@ describe('`§15`, `§16` — `I24` AT THE RUNTIME, AND THE BINDING', () => {
       adapterId: ADAPTER_A,
       adapter,
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     const effectA = buildDispatchRequest(
       syntheticEnvelope({ adapter: ADAPTER_A, authorisationId: 'authorisation:A', effectId: 'effect:A' }),
@@ -272,6 +288,7 @@ describe('`§15`, `§16` — `I24` AT THE RUNTIME, AND THE BINDING', () => {
       adapterId: ADAPTER_A,
       adapter,
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     const request = validRequest({
       dispatchPayloadBase64: Buffer.from('{"substituted":true}', 'utf8').toString('base64'),
@@ -288,6 +305,7 @@ describe('`§15`, `§16` — `I24` AT THE RUNTIME, AND THE BINDING', () => {
       adapterId: ADAPTER_A,
       adapter,
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     const forB = buildDispatchRequest(syntheticEnvelope({ adapter: ADAPTER_B }));
     const reply = await handleDispatchRequest(configuration, encode(forB));

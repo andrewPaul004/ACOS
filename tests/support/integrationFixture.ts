@@ -68,11 +68,37 @@ export function mintSentinelSecret(label: string): string {
 export interface SecretFixtureDocument {
   readonly adapterId: string;
   readonly secret: string;
-  readonly identity?: string;
+  /**
+   * `50 §2g` FIELD 1 — WHICH CREDENTIAL THIS MATERIAL IS.
+   *
+   * Omitted, `write` supplies `DEFAULT_CREDENTIAL_IDENTITY_BY_ADAPTER`'s entry for the
+   * document's adapter, which is the same identity `adapterADescriptor` and
+   * `adapterBDescriptor` name by default — so the ordinary fixture is a MATCHING pair and
+   * every pre-existing test keeps exercising the happy path.
+   *
+   * **A TEST THAT WANTS A MISMATCH SETS IT EXPLICITLY**, which is what makes the attack in
+   * `tests/integration/perimeter/credential-identity-binding.test.ts` a deliberate
+   * configuration rather than an omission.
+   */
+  readonly credentialIdentity?: string;
   /** Doubles as adapter A's and B's provider script. See their `adapter.ts`. */
   readonly version?: string;
   readonly revoked?: boolean;
 }
+
+/**
+ * The credential identity each synthetic adapter's ordinary fixture resolves.
+ *
+ * These are the SAME strings the class-5 artifact declares and the descriptors default to.
+ * The fixture and the signed record agreeing by default is the point: a mismatch has to be
+ * written, so a test that produces one is testing the binding rather than forgetting a field.
+ */
+export const DEFAULT_CREDENTIAL_IDENTITY_BY_ADAPTER: Readonly<Record<string, string>> =
+  Object.freeze({
+    [ADAPTER_A]: CREDENTIAL_A_NON_MONETARY,
+    [ADAPTER_B]: CREDENTIAL_B_NON_MONETARY,
+    [ADAPTER_MONEY_MOVING]: CREDENTIAL_PROCESSOR_MONEY_MOVING,
+  });
 
 /**
  * One temporary secret-source directory, outside the repository.
@@ -94,7 +120,14 @@ export class SecretFixtureDirectory {
 
   public write(name: string, document: SecretFixtureDocument): string {
     const file = join(this.path, `${name}.json`);
-    writeFileSync(file, JSON.stringify(document), 'utf8');
+    const written: SecretFixtureDocument = {
+      ...document,
+      credentialIdentity:
+        document.credentialIdentity ??
+        DEFAULT_CREDENTIAL_IDENTITY_BY_ADAPTER[document.adapterId] ??
+        `${document.adapterId}.synthetic`,
+    };
+    writeFileSync(file, JSON.stringify(written), 'utf8');
     this.files.set(name, file);
     return file;
   }

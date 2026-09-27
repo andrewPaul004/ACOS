@@ -1,6 +1,11 @@
 # Phase 2 — ACOS Operating Spine v1.3, package issue v1.3.7 — errata record
 
-**Issued 2026-09-26. One normative resolution, `S1N-C1`.**
+**Issued 2026-09-26. One normative resolution, `S1N-C1`, plus the OWNER CORRECTION of
+2026-09-26 — `CRD-09` and `CRD-10`.**
+
+**v1.3.7 WAS NOT OWNER-ACCEPTED WHEN THE CORRECTION WAS MADE, SO IT IS CORRECTED IN PLACE
+RATHER THAN SUPERSEDED.** There is no v1.3.8. `docs/architecture/v1.3.6/` remains untouched
+and byte-identical.
 
 **The underlying architecture is `Operating Spine v1.3` and is unchanged.** `v1.3.7` is a
 package issue. `docs/architecture/v1.3.6/` is **not modified by this pass** and remains on
@@ -159,20 +164,137 @@ false — and `50 §2g`'s consistency check is deliberately unable to rescue it.
 
 ---
 
+## 4a. `CRD-09` — a signed credential declaration that governed no particular credential
+
+### The defect, and why every existing control passed it
+
+`§1` gave `credential_risk_class` a closed domain and a signed owner. It did **not** say which
+credential a record is about, in any sense a runtime could check. Field 1 read *"a credential
+identifier, unique within the artifact"* — satisfied by a nickname — and the runtime ran two
+chains that never met:
+
+```
+signed class-5 `credential_id`  ->  credential_risk_class  ->  the registry admits the runtime
+`secretLocator`                 ->  resolved material      ->  presented at the provider
+```
+
+A locator repointed at another credential produced a deployment whose signed risk declaration
+governed a credential it was not holding:
+
+| | integration plane | audit plane |
+|---|---|---|
+| signed record says | `pause_only` = `NON_MONETARY_WRITE` | `audit_read` = `READ_ONLY`, `audit_plane`-scoped |
+| material actually resolved | `budget_manage` = `MONEY_MOVING` | a SEND-CAPABLE token |
+| what was wrong | **ADR-024's option-B trigger never fired** on the credential in hand | **`48 §3.6`'s exemption rested on a declaration about a different credential** |
+
+**Nothing in either chain is forged and no signature is broken.** Every check that existed
+passed: the descriptor was well formed, the adapter was in the catalogue, the signed record
+existed and said what it said, the `audit_plane` sentinel was present, the locator was
+genuinely not one the other plane held.
+
+### The resolution
+
+**`50 §2g` field 1 is redefined as the stable non-secret identity of the EXACT CREDENTIAL
+MATERIAL the runtime may present** — a provider key ID where the provider exposes one, an
+immutable deployment/secret-manager credential identity or version where it does not, and
+never the raw secret, a hash of it, or a token prefix. **A provider for which no such identity
+can be defined forces PARTIAL rather than a claimed binding.**
+
+**`50 §2g` gains a runtime-use requirement.** Before a credential-holding runtime may reach its
+provider boundary it compares the signed expected `credential_id` to the identity its own
+secret source returned, and a mismatch refuses — on the integration plane before any adapter
+code runs, and on the audit plane before any provider query. The secret source must return a
+mandatory non-secret identity; `null` is insufficient for a configured credential.
+
+**The parent may pass the expected identity as a trusted non-secret launch echo, and the echo
+is not authority.** The signed artifact remains authority and the parent verified it already;
+the echo exists because `I25` forbids the control plane holding a vendor credential, so the
+identity of the resolved material is visible only inside the child.
+
+**LOCATOR ISOLATION AND IDENTITY BINDING ARE DIFFERENT CONTROLS AND BOTH ARE KEPT.** Two
+locators may resolve one credential; one locator may be repointed at another.
+
+**And the binding is not scope conformance.** It proves *"this is credential A"*; it does not
+prove *"credential A still holds the permissions the signed record declares"*. Scope drift
+stays an empirical provider-side obligation, and `36 §13`'s attempted-write test stays owed.
+
+---
+
+## 4b. `CRD-10` — a test path that cannot produce the evidence it is selected for
+
+### The defect
+
+`36 §5`'s rule was *"vendor sandboxes rather than mocks"*, written against the mock's failure
+mode. **It did not anticipate the opposite failure**: a vendor mode that is genuinely real,
+genuinely bounded, and deliberately produces no evidence.
+
+Official Twilio SendGrid Sandbox Mode documentation states that a sandbox request is validated
+and never delivered, **and that requests made in sandbox mode generate no events in either the
+Event Webhook or Email Activity.** The v1.3.7 candidate's capability record carried that row as
+`null` — "the documentation is silent" — and carried the question as an account-validation
+item. **The documentation is not silent, and the item could never have been closed by an
+account.**
+
+The consequence was structural rather than cosmetic. The selection rule checked five
+capabilities independently, so a provider passed on two facts that never hold at the same time:
+
+```
+NON_PRODUCTION_TEST_PATH     "the provider has a sandbox mode"          true
+QUERYABLE_PROVIDER_EVIDENCE  "the provider has an activity query API"   true
+conjunction                                                             true
+reality                      the sandbox mode suppresses the query API
+```
+
+The readiness token then named a sandbox environment in which `I36` can observe nothing.
+
+### The resolution
+
+**`36 §5` states the rule the sandbox wording was missing**: a non-production test path that
+suppresses the provider's own evidence surface does not satisfy the `I36` validation path, and
+the same bounded design must carry the whole chain — real request, provider acceptance,
+provider-side evidence, independent audit observation. **It is not enough that a provider has a
+sandbox mechanism and, separately, an activity-query API.**
+
+**The `I36` oracle row and the duplicate-send gate row are both restated** to name a dedicated
+non-production environment whose accepted sends are recorded and queryable, rather than a bare
+"provider sandbox".
+
+**SendGrid remains the selected provider**, because its other documented capabilities still
+satisfy the rule and because its `I36`-compatible path exists: a dedicated non-production
+sending identity with **sandbox mode DISABLED** and an owner-controlled sink recipient. The
+sandbox flag keeps a narrower use — request-shape and credential-scope validation — and is
+recorded as unusable for accepted-count evidence, the six-kill-point oracle, Email Activity
+correlation and Event Webhook reconciliation.
+
+---
+
 ## 5. Verification
 
-`analysis/consistency-v1.3.py` carries **101 conditions** after this pass — C1–C29, E1–E7,
-F1–F3, G1–G10, H1–H13, J1–J16, K1–K25 and the twelve new **L1–L12** — and exits non-zero on
-failure.
+`analysis/consistency-v1.3.py` carries **108 conditions** after this pass — C1–C29, E1–E7,
+F1–F3, G1–G10, H1–H13, J1–J16, K1–K25 and the nineteen new **L1–L19** — and exits non-zero on
+failure. **L1–L12 were issued with the candidate; L13–L19 are the correction.**
 
 `phase2-v1.3.7-verification.md` maps every L condition to the seeds that fail it. **Every one
-of L1–L12 is failed by at least one of the twelve new seeds, and all 58 retained seeds still
-discriminate.**
+of L1–L19 is failed by at least one seed, and all 70 previously retained seeds still
+discriminate — 77 seeds in total, every one re-run against the corrected corpus.**
 
-One v1.3.6 condition was amended rather than added to: **K14** asserted that all FOUR live
-`§6` inventory rows demand both signatures and manifest membership. v1.3.7 adds a fifth, so
-K14 now asserts FIVE and reads the renamed heading. The amendment is recorded here because a
-condition edited quietly is a condition weakened quietly; the count is still asserted rather
-than left open, so a row that lost its second signature would still fail.
+**THREE OF THE SEVEN CORRECTION SEEDS RESTORE WHAT THE CANDIDATE ACTUALLY SAID**, rather than
+inventing an unsafe design to argue against: `--seed-credential-id-is-alias` restores field 1's
+original definition, `--seed-no-runtime-identity-binding` restores a runtime with no
+comparison, and `--seed-sendgrid-sandbox-is-oracle` restores the capability record and both
+gate rows.
 
-**NO PRODUCTION SIGNING CODE EXISTS AT v1.3.7, AND NO EXECUTION PROXY EXISTS EITHER.**
+Two conditions were amended rather than added to:
+
+* **K14** asserted that all FOUR live `§6` inventory rows demand both signatures and manifest
+  membership. v1.3.7 adds a fifth, so K14 now asserts FIVE and reads the renamed heading.
+* **L12** asserted `48 §2` row 13's restated text, which named two halves. The correction adds
+  a third — the resolved material must be bound to field 1 before any provider query — so L12
+  asserts the corrected row.
+
+Both amendments are recorded here because a condition edited quietly is a condition weakened
+quietly. Both remain exact equalities rather than membership checks, so a row that dropped one
+of its halves would still fail.
+
+**NO PRODUCTION SIGNING CODE EXISTS AT v1.3.7, AND NO EXECUTION PROXY EXISTS EITHER. NO
+PROVIDER REQUEST OF ANY KIND WAS MADE BY THIS PASS OR BY ITS CORRECTION.**

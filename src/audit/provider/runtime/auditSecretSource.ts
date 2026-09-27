@@ -34,6 +34,25 @@
  */
 
 /**
+ * `50 §2g` field 1's identity-provenance set, TRANSCRIBED a THIRD time.
+ *
+ * The same discipline `readerEnvironment.ts` applies to the integration plane's key list and
+ * `auditPlaneVerifier.ts` applies to `50 §6`'s inventory: this plane imports neither the
+ * kernel's `credentialRisk.ts` nor the integration plane's `adapterSecretSource.ts`, because
+ * either import would make the audit reader's module graph contain a plane it is supposed to
+ * be independent of. `tests/integration/perimeter/source-boundary.test.ts` asserts the three
+ * transcriptions agree.
+ */
+export const AUDIT_CREDENTIAL_IDENTITY_PROVENANCES = [
+  'PROVIDER_KEY_ID',
+  'DEPLOYMENT_SECRET_VERSION',
+  'SYNTHETIC_TEST_IDENTITY',
+] as const;
+
+export type AuditCredentialIdentityProvenance =
+  (typeof AUDIT_CREDENTIAL_IDENTITY_PROVENANCES)[number];
+
+/**
  * The resolved READ-ONLY credential material, and the non-secret labels describing it.
  *
  * `secret` is the only member that may leave this object, and it may only go to the
@@ -44,8 +63,44 @@
 export interface AuditReadCredential {
   /** The read-only provider secret. NEVER serialised, NEVER logged, NEVER sent to a parent. */
   readonly secret: string;
-  /** A non-secret, source-declared label. May be `null`. */
-  readonly identity: string | null;
+  /**
+   * `50 §2g` FIELD 1 — **WHICH CREDENTIAL THIS MATERIAL IS.** MANDATORY, NON-SECRET.
+   *
+   * =================================================================================
+   * THE AUDIT PLANE'S HALF OF THE BINDING, AND ITS ATTACK IS THE MIRROR IMAGE
+   *
+   *     signed audit record   `synthetic_esp.audit_read`  ->  READ_ONLY  ->  reader admitted
+   *     secret locator        resolves ........................  a SEND-CAPABLE token
+   *
+   * Every existing control passes. The class-5 record is genuinely `READ_ONLY`, the
+   * `audit_plane` sentinel is genuinely present, the locator is genuinely not one the
+   * integration plane holds — and the material in the reader's hand can send. `48 §3.6`'s
+   * exemption would then rest on a declaration about a credential the reader is not using.
+   *
+   * So the source must name what it resolved, and `auditReadHost.ts` compares that answer to
+   * the signed expected identity the audit plane echoed into the launch configuration, in a
+   * guard that runs BEFORE `readFromProvider`. A mismatch is `CREDENTIAL_IDENTITY_MISMATCH`.
+   *
+   * **NULL IS NOT A VALUE HERE**, for the reason it is not one on the integration plane.
+   */
+  readonly credentialIdentity: string;
+  /**
+   * WHAT ESTABLISHES THAT IDENTITY. Declared, so a reviewer can tell a binding from a label.
+   *
+   * `§14` of the S1O correction: a source returning a friendly label such as
+   * `"audit-read-key"` has returned a STRING, and that string is not a provider binding
+   * merely because the source chose it. A production audit source must return the PROVIDER'S
+   * OWN non-secret key identifier (`PROVIDER_KEY_ID`) or an immutable secret-manager identity
+   * for that exact token (`DEPLOYMENT_SECRET_VERSION`); `SYNTHETIC_TEST_IDENTITY` is a
+   * fixture's answer and belongs only to a TEST/pre-live package.
+   *
+   * **WHICH PROVIDER THAT IS IS NOT THIS FILE'S BUSINESS.** No vendor is named anywhere under
+   * `src/audit/`, and `audit-read-boundary.test.ts` asserts the absence: the provider
+   * selection lives in `tools/provider-selection/`, as dated documentation evidence, and a
+   * plane whose job is to observe independently does not carry a vendor's name in its
+   * contract.
+   */
+  readonly identityProvenance: AuditCredentialIdentityProvenance;
   /** A non-secret, source-declared rotation label. May be `null`. */
   readonly version: string | null;
 }
@@ -92,7 +147,7 @@ export interface AuditReadSecretSource {
 export function auditCredentialLabelsAreNonDerived(credential: AuditReadCredential): boolean {
   const { secret } = credential;
   if (secret.length === 0) return false;
-  for (const label of [credential.identity, credential.version]) {
+  for (const label of [credential.credentialIdentity, credential.version]) {
     if (label === null) continue;
     if (label.length === 0) return false;
     if (label.includes(secret) || secret.includes(label)) return false;
@@ -100,4 +155,43 @@ export function auditCredentialLabelsAreNonDerived(credential: AuditReadCredenti
     if (label === Buffer.from(secret, 'utf8').toString('base64')) return false;
   }
   return true;
+}
+
+/**
+ * The binding comparison, for THIS plane. Returns the reason the resolved credential is the
+ * wrong one, or `null` when the signed record and the resolved material agree.
+ *
+ * Deliberately a SECOND implementation of `credentialRisk.ts`'s
+ * `credentialIdentityMismatch`, for the reason `auditCredentialLabelsAreNonDerived` is a
+ * second implementation: the two planes share no module, and a rule this small is cheaper to
+ * restate than a coupling is to justify. `tests/integration/audit/audit-read-boundary.test.ts`
+ * asserts the two agree on every case it exercises.
+ *
+ * **AN EMPTY RESOLVED IDENTITY IS NOT EQUALITY WITH AN EMPTY EXPECTATION.** Absence refuses.
+ */
+export function auditCredentialIdentityMismatch(
+  expectedCredentialId: string,
+  resolvedCredentialIdentity: string,
+): string | null {
+  if (expectedCredentialId.length === 0) {
+    return (
+      'the reader was launched with no expected credential identity; 50 §2g field 1 is the ' +
+      'identity of the exact material the reader may present, and an absent expectation ' +
+      'cannot bind one'
+    );
+  }
+  if (resolvedCredentialIdentity.length === 0) {
+    return (
+      'the audit secret source returned no credential identity for the material it ' +
+      'resolved; a null identity is not sufficient for a configured credential'
+    );
+  }
+  if (expectedCredentialId !== resolvedCredentialIdentity) {
+    return (
+      `the signed class-5 audit record governs credential "${expectedCredentialId}" and the ` +
+      `audit secret source resolved material identified as "${resolvedCredentialIdentity}"; ` +
+      "48 §3.6's read-only exemption would govern the wrong credential"
+    );
+  }
+  return null;
 }

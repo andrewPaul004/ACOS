@@ -238,7 +238,7 @@ A credential is **`MONEY_MOVING`** if **any** provider permission reachable with
 
 | # | Field | Domain | Authority it carries |
 |---|---|---|---|
-| 1 | `credential_id` | a credential identifier, unique within the artifact | the credential's identity; **never the material** |
+| 1 | `credential_id` | **the stable non-secret identity of the exact credential MATERIAL the runtime may present**, unique within the artifact | the binding between this signed record and the material a runtime actually holds; **never the material itself** |
 | 2 | `adapter` | an adapter identifier the class-3 catalogue names, **or the reserved sentinel `audit_plane`** | which runtime this credential scopes (`23 §7`). **`audit_plane` names an AUDIT-PLANE read credential** (`48 §2` row 13), which is scoped to a provider rather than to an adapter because its job is to ask the provider what happened rather than to dispatch anything |
 | 3 | `provider` | a provider identifier | which vendor grants the permissions |
 | 4 | `granted_provider_permissions` | a non-empty closed list of provider permission identifiers, as the PROVIDER spells them | the capability envelope this section classifies |
@@ -251,6 +251,57 @@ A credential is **`MONEY_MOVING`** if **any** provider permission reachable with
 **Fields 5, 6 and 7 are CONSISTENCY-CHECKED against field 4 and against each other at verification, and a declaration that disagrees with itself is REFUSED.** `credential_risk_class` is `MONEY_MOVING` exactly when field 5 is non-empty; `READ_ONLY` requires field 7 false; `NON_MONETARY_WRITE` requires field 7 true and field 5 empty. **The check is over signed bytes only** — nothing reads a provider, and no provider response, account response, adapter self-description, environment variable, caller parameter or model output may supply, override or widen any of the seven fields.
 
 **Signer: Owner, second factor. Halt scope: the affected adapter** — unchanged from v1.3.6's class-5 row, and the reason is now printed: a credential whose declared envelope cannot be verified is a credential whose option-B trigger cannot be evaluated, and `§3f`'s fail-closed rule already forbids serving a degraded subset.
+
+### `credential_id` is a BINDING, not a name (v1.3.7 correction)
+
+**A `credential_id` that is only a label makes this entire section governable by whoever writes the wiring.** The first v1.3.7 draft defined field 1 as *"a credential identifier, unique within the artifact"*, which is satisfied by a nickname — and a nickname admits this:
+
+```
+signed class-5 record    mock_ads.pause_only       ->  NON_MONETARY_WRITE  ->  registry admits
+secret locator           resolves ...................  mock_ads.budget_manage's material
+                                                        which is MONEY_MOVING
+```
+
+Nothing is forged. No signature is broken. The deployment is running a money-moving credential under a non-monetary declaration, and ADR-024's option-B trigger never fires because the registry evaluated the record for the OTHER credential. **The audit plane has the mirror image**: a signed `READ_ONLY` record and a send-capable token, with `48 §3.6`'s exemption resting on a declaration about a credential the reader is not holding.
+
+**SO FIELD 1 IS DEFINED AS THE STABLE NON-SECRET IDENTITY OF THE EXACT CREDENTIAL MATERIAL THE RUNTIME MAY PRESENT.** It is not a friendly alias, not an adapter-local name and not a descriptor label.
+
+| Where the provider... | field 1 is |
+|---|---|
+| exposes a stable non-secret API-key identifier | **that provider key ID** |
+| exposes none | an **immutable deployment / secret-manager credential identity or version** that the secret source can return for the exact material it resolved |
+
+**Field 1 is NEVER the raw secret, NEVER a hash or fingerprint of it, and NEVER a token prefix used as an ad-hoc identity.** A fingerprint under a rotation schedule is a confirm-a-guess oracle, and a prefix is a partial disclosure of the material it claims to describe.
+
+**IF NO SUCH IDENTITY CAN BE DEFINED FOR A PROVIDER, THE SLICE THAT WOULD CONFIGURE THAT PROVIDER RETURNS PARTIAL.** A binding that is only a label must not be recorded as a binding.
+
+### The runtime-use requirement: signed identity == resolved identity
+
+**BEFORE A CREDENTIAL-HOLDING RUNTIME MAY REACH ITS PROVIDER BOUNDARY, IT MUST COMPARE THE SIGNED EXPECTED `credential_id` TO THE IDENTITY ITS OWN SECRET SOURCE RETURNED FOR THE MATERIAL IT RESOLVED. A MISMATCH REFUSES.**
+
+This holds on **both planes, independently**:
+
+| Plane | The parent reads | The child compares | On mismatch |
+|---|---|---|---|
+| integration | the verified class-5 record for the descriptor's `credential_id` | that identity against what its secret source resolved | **refused before any adapter code runs** |
+| audit | **the AUDIT PLANE's OWN verification** of the same signed artifact (`§3`, property 2) | the same comparison, in its own process | **refused before any provider query** |
+
+**THE SECRET SOURCE MUST THEREFORE RETURN A MANDATORY NON-SECRET CREDENTIAL IDENTITY FOR THE MATERIAL IT RESOLVED.** A null identity is not sufficient for a configured credential: a source that cannot name what it resolved has not supplied a usable one. A TEST or pre-live source returns an explicit synthetic identity and declares it as such.
+
+**THE PARENT MAY PASS THE EXPECTED `credential_id` TO THE CHILD AS A TRUSTED NON-SECRET LAUNCH ECHO.** The echo is NOT authority — the signed artifact remains the authority, and the parent has already verified it — and the echo exists only because the comparison cannot happen in the parent: `I25` forbids the control plane holding a vendor credential, so the identity of the resolved material is visible only inside the child. **No credential material travels on IPC or in any environment, on either plane.**
+
+**LOCATOR ISOLATION AND CREDENTIAL IDENTITY BINDING ARE DIFFERENT CONTROLS AND BOTH ARE REQUIRED.** A locator says where to look; an identity says what was found.
+
+* two locators may resolve **one** credential, so locator inequality does not establish separation;
+* one locator may be repointed at **another** credential, so locator equality does not establish identity.
+
+`48 §3.6`'s requirement that the audit credential not share a source with the send credential is unchanged and is still enforced on locators. It does not imply this rule and is not implied by it.
+
+### What identity binding does NOT prove
+
+**IT PROVES "THIS IS CREDENTIAL A". IT DOES NOT PROVE "CREDENTIAL A STILL HAS THE PROVIDER PERMISSIONS THE SIGNED RECORD DECLARES".**
+
+A scoped provider API key is mutable at the provider: its permissions can be widened after the class-5 record was signed, by an actor with provider-side administrative access and with no ACOS-observable event. **Credential scope drift is therefore an EMPIRICAL provider-side obligation**, discharged by probing the configured credential against the provider, and it is **NOT discharged by this binding, by the signature, or by any consistency check over signed bytes.** `36 §13`'s attempted-write test is the first of those probes and remains separately owed.
 
 ### ADR-024's option-B trigger, mechanised
 

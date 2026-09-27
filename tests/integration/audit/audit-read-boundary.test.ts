@@ -71,7 +71,7 @@ describe('`§14` — the audit reader is a REAL separate OS process', () => {
       const locator = secrets.write('audit', {
         providerId: AUDIT_PROVIDER,
         secret,
-        identity: 'audit-read-credential',
+        credentialIdentity: AUDIT_READ_CREDENTIAL_ID,
       });
       return auditReaderRegistry([readerADescriptor(locator)]);
     });
@@ -98,7 +98,7 @@ describe('`§14` — the audit reader is a REAL separate OS process', () => {
       const locator = secrets.write('audit', {
         providerId: AUDIT_PROVIDER,
         secret,
-        identity: 'audit-read-credential',
+        credentialIdentity: AUDIT_READ_CREDENTIAL_ID,
       });
       return auditReaderRegistry([readerADescriptor(locator)]);
     });
@@ -184,6 +184,7 @@ describe('`§13`, `§14` — the audit plane and the integration plane are disjo
       secretSourceModule: '/root/secretSource.ts',
       secretLocator: '/elsewhere/audit.json',
       credentialRiskClass: 'READ_ONLY',
+      expectedCredentialId: AUDIT_READ_CREDENTIAL_ID,
     });
     expect(Object.keys(env).sort()).toEqual([...AUDIT_READER_ENV_KEYS].sort());
     // `§14`: "no reliance on control adapter result". There is no slot a control-plane

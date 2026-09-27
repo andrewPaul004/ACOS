@@ -128,13 +128,16 @@ describe('`§5` — THE INTEGRATION RUNTIME IS A SEPARATE OS PROCESS', () => {
 });
 
 describe('`§12`, `§30` — THE CHILD ENVIRONMENT IS CONSTRUCTED, NOT INHERITED', () => {
-  it('the constructed environment is EXACTLY the seven declared keys', () => {
+  it('the constructed environment is EXACTLY the eight declared keys', () => {
     const environment = buildIntegrationRuntimeEnvironment({
       adapterId: ADAPTER_A,
       runtimeRoot: ADAPTER_A_ROOT,
       adapterModule: join(ADAPTER_A_ROOT, 'adapter.ts'),
       secretSourceModule: join(ADAPTER_A_ROOT, 'secretSource.ts'),
       secretLocator: '/nowhere/a.json',
+      // `50 §2g` field 1's echo. An IDENTITY, never material — the assertion below is what
+      // keeps that true as the allowlist grows.
+      expectedCredentialId: 'mock_ads.pause_only',
     });
     expect(Object.keys(environment).sort()).toEqual([...INTEGRATION_RUNTIME_ENV_KEYS].sort());
     // AND THE LOCATOR IS A LOCATOR. No member of the environment is secret material.
@@ -278,7 +281,6 @@ describe('`§25` — CREDENTIAL ROTATION AT THE INTEGRATION BOUNDARY', () => {
       const a = secrets.write('a', {
         adapterId: ADAPTER_A,
         secret: first,
-        identity: 'adapter-a-credential',
         version: 'ACCEPT',
       });
       return runtimeRegistry(adapterADescriptor(a));
@@ -293,7 +295,6 @@ describe('`§25` — CREDENTIAL ROTATION AT THE INTEGRATION BOUNDARY', () => {
     launched.secrets.write('a', {
       adapterId: ADAPTER_A,
       secret: second,
-      identity: 'adapter-a-credential',
       version: 'ACCEPT',
     });
 

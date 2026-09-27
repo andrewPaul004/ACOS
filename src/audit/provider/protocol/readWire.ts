@@ -211,6 +211,16 @@ export const PROVIDER_READ_REFUSALS = [
    * and exists so a wiring mistake produces a code rather than a silent capability.
    */
   'CREDENTIAL_NOT_READ_ONLY',
+  /**
+   * `50 §2g` FIELD 1 — THE RESOLVED MATERIAL IS NOT THE CREDENTIAL THE SIGNED RECORD GOVERNS.
+   *
+   * `CREDENTIAL_NOT_READ_ONLY` answers "is the declared class right for an audit reader?".
+   * This one answers "is the declaration about the credential in this reader's hand?", and
+   * the second question is the one a genuinely `READ_ONLY` signed record cannot settle: a
+   * reader whose locator resolves a send-capable token passes every other check on this
+   * plane. Refused BEFORE `readFromProvider`, so no provider query is made with it.
+   */
+  'CREDENTIAL_IDENTITY_MISMATCH',
   /** The provider client reached its boundary and the provider did not answer. */
   'PROVIDER_UNAVAILABLE',
   /** The reply would not encode within `MAX_AUDIT_IPC_MESSAGE_BYTES`. */

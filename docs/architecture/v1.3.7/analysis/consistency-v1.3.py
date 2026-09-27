@@ -187,6 +187,8 @@ _P24 = ROOT / "deliverables/24-company-state-and-evidence-model.md"
 _P25 = ROOT / "deliverables/25-workflow-and-event-architecture.md"
 _P26 = ROOT / "deliverables/26-authority-and-policy-model.md"
 _P36 = ROOT / "deliverables/36-architecture-validation-plan.md"
+_P48 = ROOT / "deliverables/48-external-write-perimeter.md"
+_P50 = ROOT / "deliverables/50-control-artifact-manifest.md"
 _P37 = ROOT / "deliverables/37-acos-mvp-and-implementation-sequence.md"
 _PREG = ROOT / "phase2-v1.3-invariant-registry.md"
 
@@ -568,7 +570,8 @@ if SEED_SWAP_CLAIM_FIELDS:
 # is IN MEMORY only; nothing on disk is touched by a seeded run.
 # ============================================================================
 _P49 = ROOT / "deliverables/49-trusted-computing-base.md"
-_P50 = ROOT / "deliverables/50-control-artifact-manifest.md"
+# `_P50` is hoisted to the seed-helper block above, because the v1.3.7 correction seeds
+# run before every condition and need it there.
 
 SEED_RSA_ARTIFACT_SIGNATURE   = "--seed-rsa-artifact-signature" in sys.argv
 SEED_SAME_KEY_BOTH_SLOTS      = "--seed-same-key-both-slots" in sys.argv
@@ -939,7 +942,7 @@ _k_seed(SEED_ADAPTER_PULLED_INTO_S1,
 #   --seed-readonly-declaration-proves the signed READ_ONLY claim IS the 36 §13 test -> L12
 # ============================================================================
 _P34 = ROOT / "deliverables/34-architecture-decision-records.md"
-_P48 = ROOT / "deliverables/48-external-write-perimeter.md"
+# `_P48` is hoisted to the seed-helper block above, for the same reason as `_P50`.
 
 SEED_RISK_FROM_ACTION         = "--seed-risk-from-action" in sys.argv
 SEED_RISK_LOWEST_PRIVILEGE    = "--seed-risk-lowest-privilege" in sys.argv
@@ -3316,6 +3319,156 @@ cond("K25", "Unrelated S4 work REMAINS LATER: the remaining signed classes, the 
 
 
 # ============================================================================
+# THE v1.3.7 CORRECTION'S SEVEN SEEDS (owner review of the S1O candidate).
+#
+# The candidate was returned PARTIAL on two findings: the SendGrid Sandbox Mode
+# capability record was factually wrong, and the signed class-5 credential
+# declaration was not structurally bound to the material the secret source
+# resolves. L13-L19 are the conditions; these are the seeds that fail them.
+#
+# EACH MODELS A SPECIFIC UNSAFE ARCHITECTURE SOMEBODY COULD ARGUE FOR, and each
+# leaves the corpus parseable and plausible: none corrupts syntax, none deletes
+# a section, and every one produces a document a reviewer could read without
+# noticing anything was wrong. Three of them are not hypothetical at all --
+# `--seed-credential-id-is-alias`, `--seed-no-runtime-identity-binding` and
+# `--seed-sendgrid-sandbox-is-oracle` restore what the candidate actually said.
+#
+#   --seed-credential-id-is-alias        field 1 back to "a credential identifier"  -> L13
+#   --seed-no-runtime-identity-binding   the comparison becomes advisory            -> L14
+#   --seed-locator-proves-identity       locator separation declared sufficient     -> L15
+#   --seed-echo-is-authority             the launch echo becomes the operand        -> L16
+#   --seed-sandbox-satisfies-i36         any bounded mode satisfies the I36 path    -> L17
+#   --seed-sendgrid-sandbox-is-oracle    the sandbox flag named as the I36 path     -> L18
+#   --seed-binding-proves-scope          identity binding declared to close drift   -> L19
+#
+# Nothing on disk is modified by any of them.
+# ============================================================================
+SEED_CREDENTIAL_ID_IS_ALIAS      = "--seed-credential-id-is-alias" in sys.argv
+SEED_NO_RUNTIME_IDENTITY_BINDING = "--seed-no-runtime-identity-binding" in sys.argv
+SEED_LOCATOR_PROVES_IDENTITY     = "--seed-locator-proves-identity" in sys.argv
+SEED_ECHO_IS_AUTHORITY           = "--seed-echo-is-authority" in sys.argv
+SEED_SANDBOX_SATISFIES_I36       = "--seed-sandbox-satisfies-i36" in sys.argv
+SEED_SENDGRID_SANDBOX_IS_ORACLE  = "--seed-sendgrid-sandbox-is-oracle" in sys.argv
+SEED_BINDING_PROVES_SCOPE        = "--seed-binding-proves-scope" in sys.argv
+
+# THE CANDIDATE'S OWN DEFINITION, RESTORED. Field 1 becomes "unique within the artifact"
+# and nothing more -- satisfied by a nickname, and a nickname is what let a
+# NON_MONETARY_WRITE declaration govern MONEY_MOVING material.
+_k_seed(SEED_CREDENTIAL_ID_IS_ALIAS, "credential_id returned to an arbitrary alias", "L13", [
+    (_P50,
+     "| 1 | `credential_id` | **the stable non-secret identity of the exact credential MATERIAL the runtime may present**, unique within the artifact | the binding between this signed record and the material a runtime actually holds; **never the material itself** |",
+     "| 1 | `credential_id` | a credential identifier, unique within the artifact | the credential's identity; **never the material** |"),
+    (_P50,
+     "**SO FIELD 1 IS DEFINED AS THE STABLE NON-SECRET IDENTITY OF THE EXACT CREDENTIAL MATERIAL THE RUNTIME MAY PRESENT.** It is not a friendly alias, not an adapter-local name and not a descriptor label.",
+     "**Field 1 is a unique identifier chosen by the deployment.** Any stable string distinguishing one credential record from another is sufficient, and a readable name is preferred for operability."),
+    (_P50,
+     "**Field 1 is NEVER the raw secret, NEVER a hash or fingerprint of it, and NEVER a token prefix used as an ad-hoc identity.**",
+     "Field 1 should avoid embedding the secret where practical."),
+    (_P50,
+     "**IF NO SUCH IDENTITY CAN BE DEFINED FOR A PROVIDER, THE SLICE THAT WOULD CONFIGURE THAT PROVIDER RETURNS PARTIAL.** A binding that is only a label must not be recorded as a binding.",
+     "Where a provider exposes no key identifier, a deployment-chosen label is used instead."),
+])
+
+# THE DEFECT ITSELF. The comparison becomes a recommendation and the source's identity
+# becomes optional -- the exact shape that let a signed risk declaration govern a
+# credential the runtime was not holding.
+_k_seed(SEED_NO_RUNTIME_IDENTITY_BINDING, "the resolved-identity comparison made advisory", "L14", [
+    (_P50,
+     "**BEFORE A CREDENTIAL-HOLDING RUNTIME MAY REACH ITS PROVIDER BOUNDARY, IT MUST COMPARE THE SIGNED EXPECTED `credential_id` TO THE IDENTITY ITS OWN SECRET SOURCE RETURNED FOR THE MATERIAL IT RESOLVED. A MISMATCH REFUSES.**",
+     "A credential-holding runtime SHOULD record the identity of the material it resolved, so that a later audit can compare it to the signed record."),
+    (_P50,
+     "**THE SECRET SOURCE MUST THEREFORE RETURN A MANDATORY NON-SECRET CREDENTIAL IDENTITY FOR THE MATERIAL IT RESOLVED.** A null identity is not sufficient for a configured credential",
+     "A secret source MAY return a non-secret credential label. A null label is permitted"),
+    (_P50,
+     "| integration | the verified class-5 record for the descriptor's `credential_id` | that identity against what its secret source resolved | **refused before any adapter code runs** |",
+     "| integration | the verified class-5 record for the descriptor's `credential_id` | the record is read at wiring time | the runtime proceeds |"),
+    (_P50,
+     "| audit | **the AUDIT PLANE's OWN verification** of the same signed artifact (`§3`, property 2) | the same comparison, in its own process | **refused before any provider query** |",
+     "| audit | **the AUDIT PLANE's OWN verification** of the same signed artifact (`§3`, property 2) | the record is read at wiring time | the reader proceeds |"),
+])
+
+# THE PLAUSIBLE ARGUMENT: the locator check is real, so treat it as sufficient. It is the
+# mistake a reviewer is most likely to make, because the locator control genuinely exists
+# and genuinely implements a different requirement.
+_k_seed(SEED_LOCATOR_PROVES_IDENTITY, "locator separation declared sufficient for identity", "L15", [
+    (_P50,
+     "**LOCATOR ISOLATION AND CREDENTIAL IDENTITY BINDING ARE DIFFERENT CONTROLS AND BOTH ARE REQUIRED.** A locator says where to look; an identity says what was found.",
+     "**LOCATOR ISOLATION ESTABLISHES CREDENTIAL SEPARATION.** A locator names a source, so two runtimes reading different locators hold different credentials."),
+    (_P50,
+     "* two locators may resolve **one** credential, so locator inequality does not establish separation;",
+     "* distinct locators are therefore sufficient evidence of distinct credentials;"),
+    (_P50,
+     "* one locator may be repointed at **another** credential, so locator equality does not establish identity.",
+     "* a runtime reading the locator its descriptor names is holding the credential that descriptor declares."),
+    (_P50,
+     "It does not imply this rule and is not implied by it.",
+     "It is the mechanism by which this rule is satisfied."),
+])
+
+# The echo promoted to the operand -- an environment variable supplying a class-5 field,
+# which is what `2g` already forbids one paragraph up. The seed leaves that prohibition in
+# place, so the corpus contradicts itself rather than reading as a coherent design.
+_k_seed(SEED_ECHO_IS_AUTHORITY, "the launch echo promoted to the authority", "L16", [
+    (_P50,
+     "**THE PARENT MAY PASS THE EXPECTED `credential_id` TO THE CHILD AS A TRUSTED NON-SECRET LAUNCH ECHO.** The echo is NOT authority",
+     "**THE CHILD READS ITS EXPECTED `credential_id` FROM ITS LAUNCH ENVIRONMENT.** That value is the operand the comparison uses"),
+    (_P50,
+     "the signed artifact remains the authority, and the parent has already verified it",
+     "the launch configuration is the authority for this field"),
+    (_P50,
+     "**No credential material travels on IPC or in any environment, on either plane.**",
+     "The launch environment carries whatever the deployment needs the child to know."),
+])
+
+# "Real API, bounded delivery" restored as the whole of the requirement -- the reading the
+# first S1O candidate selected on.
+_k_seed(SEED_SANDBOX_SATISFIES_I36, "any bounded non-production mode declared to satisfy I36", "L17", [
+    (_P36,
+     "> **A NON-PRODUCTION TEST PATH THAT SUPPRESSES THE PROVIDER'S OWN EVIDENCE SURFACE DOES NOT\n> SATISFY THE `I36` VALIDATION PATH.**",
+     "> **ANY NON-PRODUCTION MODE THAT REACHES THE REAL API AND DOES NOT DELIVER TO ORDINARY\n> CUSTOMERS SATISFIES THE `I36` VALIDATION PATH.**"),
+    (_P36,
+     "**IT IS NOT ENOUGH THAT THE PROVIDER HAS A SANDBOX MECHANISM AND, SEPARATELY, AN ACTIVITY-QUERY\nAPI.**",
+     "**A PROVIDER WITH A SANDBOX MECHANISM AND AN ACTIVITY-QUERY API SATISFIES BOTH REQUIREMENTS.**"),
+    (_P36,
+     "**THE SAME BOUNDED DESIGN MUST CARRY THE WHOLE CHAIN**",
+     "**THE TWO CAPABILITIES ARE ASSESSED INDEPENDENTLY**"),
+])
+
+# The candidate's own record, restored: the sandbox flag named as the validation
+# environment, with the documented negative softened back to an open question.
+_k_seed(SEED_SENDGRID_SANDBOX_IS_ORACLE, "SendGrid sandbox mode named as the I36 oracle", "L18", [
+    (_P36,
+     "**and its official documentation\nstates that requests made in sandbox mode generate no events in either the Event Webhook or\nEmail Activity.**",
+     "The documentation does not state whether a sandbox request is recorded, which an account\nwill settle."),
+    (_P36,
+     "**dedicated non-production sending identity with sandbox mode DISABLED and an\nowner-controlled sink recipient**",
+     "**sandbox mode, which reaches the real API and delivers nothing**"),
+    (_P36,
+     "| **Duplicate-send distinguishability (new)** | Exactly one **provider-reported accepted message** per intended message, across all six outbox kill points | **A dedicated non-production ESP environment whose accepted sends ARE recorded and queryable** (§5, v1.3.7) — a test mode that suppresses the provider's evidence surface does not satisfy this gate | I36, I20, ADR-026 |",
+     "| **Duplicate-send distinguishability (new)** | Exactly one **provider-reported accepted message** per intended message, across all six outbox kill points | **Real ESP sandbox**, provider's accepted count | I36, I20, ADR-026 |"),
+    (_P36,
+     "| Duplicate-send distinguishability (I36) | **A dedicated non-production provider environment that RECORDS its accepted sends** (§5, v1.3.7), real kill points, provider-reported accepted count |",
+     "| Duplicate-send distinguishability (I36) | **Provider sandbox**, real kill points, provider-reported accepted count |"),
+])
+
+# The over-claim: identity binding presented as closing provider-side scope drift, which
+# would retire the attempted-write probe on the strength of a signature.
+_k_seed(SEED_BINDING_PROVES_SCOPE, "identity binding declared to close credential scope drift", "L19", [
+    (_P50,
+     "**IT PROVES \"THIS IS CREDENTIAL A\". IT DOES NOT PROVE \"CREDENTIAL A STILL HAS THE PROVIDER PERMISSIONS THE SIGNED RECORD DECLARES\".**",
+     "**BINDING THE RESOLVED MATERIAL TO THE SIGNED RECORD ESTABLISHES THAT THE CREDENTIAL CARRIES THE PERMISSIONS THAT RECORD DECLARES.**"),
+    (_P50,
+     "**Credential scope drift is therefore an EMPIRICAL provider-side obligation**",
+     "Credential scope drift is therefore covered by the binding above"),
+    (_P48,
+     "**AND NONE OF THE FOUR CLOSES CREDENTIAL SCOPE DRIFT.** Identity binding proves *\"this is\ncredential A\"*; it does not prove *\"credential A still has the provider permissions the signed\nrecord declares\"*.",
+     "**THE FOUR OBLIGATIONS TOGETHER CLOSE CREDENTIAL SCOPE DRIFT.** Identity binding establishes that\nthe credential in hand is the one the signed record declares, and that record declares its\npermissions."),
+    (_P36,
+     "- **Credential scope conformance test** (v1.3.7): identity binding proves *\"this is credential A\"* and **not** *\"credential A still holds the permissions the signed record declares\"*.",
+     "- **Credential scope conformance** (v1.3.7): identity binding establishes the credential's declared permissions."),
+])
+
+# ============================================================================
 # v1.3.7 CONDITIONS L1-L12 (`S1N-C1`).
 #
 # v1.3.6 declared ADR-024's option-B trigger and never said how a build would
@@ -3553,8 +3706,13 @@ l12 = present(d48_7, [
     "ONE.** The declaration says what the deployment believes it provisioned; `36 §13` asks the\nvendor.",
     "That is a **provider-selection** finding, and\n`50 §2g`'s consistency check is deliberately unable to rescue it.",
 ])
+# AMENDED BY THE v1.3.7 CORRECTION. Row 13 now carries the identity binding as well, so the
+# condition asserts the CORRECTED row rather than the candidate's. The count of halves the row
+# must record goes from two to three, and the equality is still an equality: a membership-only
+# check would admit a row that quietly dropped one.
 l12_row = ("| 13 | **Audit plane vendor reads** | Audit | Reads only | No | *Did not exist* | **EXEMPT** "
-           "(read-only; §3.6) — **v1.3.7: the exemption's operand is `50 §2g` fields 6 and 7, and the "
+           "(read-only; §3.6) — **v1.3.7: the exemption's operand is `50 §2g` fields 6 and 7, the "
+           "resolved material must be bound to `50 §2g` field 1 before any provider query, and the "
            "`36 §13` attempted-write test remains separately owed** |") in d48_7
 cond("L12", "48 §3.6's read-only exemption gains a SIGNED operand without weakening I8 or 36 §13: the three "
             "obligations are separated by their evidence, the attempted-write test is declared NOT discharged "
@@ -3566,6 +3724,180 @@ cond("L12", "48 §3.6's read-only exemption gains a SIGNED operand without weake
      else "4 statements separating declaration from empirical proof, and row 13 carrying both")
 
 
+
+# ============================================================================
+# v1.3.7 CORRECTION CONDITIONS L13-L19 (owner review of the S1O candidate).
+#
+# The candidate was returned PARTIAL on two findings:
+#
+#   1. the SendGrid Sandbox Mode capability record was factually wrong -- the
+#      official page states the mode generates no Event Webhook and no Email
+#      Activity events, and the record carried `null` plus a pending item;
+#   2. the signed class-5 credential declaration was not structurally bound to
+#      the credential material the secret source actually resolves.
+#
+# The second is load-bearing: it let a signed risk declaration govern a
+# credential the runtime was not holding. Every condition below is written so
+# it CAN return FAIL, and each has at least one seed that fails it.
+# ============================================================================
+_s2g_c = _sec(d50_7, "## 2g. Class 5's CLOSED content schema", "## 2f. The CLOSED field-ownership table")
+d36_7 = T[ROOT / "deliverables/36-architecture-validation-plan.md"]
+
+# ---------------------------------------------------------------- L13
+# Field 1 is MATERIAL-BOUND. A definition satisfied by a nickname is the defect.
+l13_row = _row(d50_7, "| 1 | `credential_id` |")
+l13_row_ok = ("the stable non-secret identity of the exact credential MATERIAL the runtime may present"
+              in l13_row
+              and "never the material itself" in l13_row)
+l13 = present(_s2g_c, [
+    "**SO FIELD 1 IS DEFINED AS THE STABLE NON-SECRET IDENTITY OF THE EXACT CREDENTIAL MATERIAL THE RUNTIME MAY PRESENT.** It is not a friendly alias, not an adapter-local name and not a descriptor label.",
+    "| exposes a stable non-secret API-key identifier | **that provider key ID** |",
+    "an **immutable deployment / secret-manager credential identity or version** that the secret source can return for the exact material it resolved",
+    "**Field 1 is NEVER the raw secret, NEVER a hash or fingerprint of it, and NEVER a token prefix used as an ad-hoc identity.**",
+    "**IF NO SUCH IDENTITY CAN BE DEFINED FOR A PROVIDER, THE SLICE THAT WOULD CONFIGURE THAT PROVIDER RETURNS PARTIAL.** A binding that is only a label must not be recorded as a binding.",
+])
+cond("L13", "50 §2g field 1 is a MATERIAL-BOUND identity rather than an alias: the field row and the "
+            "section both define it as the identity of the exact credential material a runtime may present, "
+            "the two admissible provider forms are printed, the raw secret, its hash and a token prefix are "
+            "each forbidden by name, and a provider for which no such identity can be defined forces PARTIAL "
+            "rather than a claimed binding",
+     l13_row_ok and not l13,
+     f"field-1 row ok={l13_row_ok}; 50 §2g missing: {l13}"
+     if not (l13_row_ok and not l13)
+     else "the field-1 row, the two provider forms, three forbidden forms and the PARTIAL rule")
+
+# ---------------------------------------------------------------- L14
+# The runtime-use requirement, on BOTH planes, BEFORE the provider boundary.
+l14 = present(_s2g_c, [
+    "**BEFORE A CREDENTIAL-HOLDING RUNTIME MAY REACH ITS PROVIDER BOUNDARY, IT MUST COMPARE THE SIGNED EXPECTED `credential_id` TO THE IDENTITY ITS OWN SECRET SOURCE RETURNED FOR THE MATERIAL IT RESOLVED. A MISMATCH REFUSES.**",
+    "**THE SECRET SOURCE MUST THEREFORE RETURN A MANDATORY NON-SECRET CREDENTIAL IDENTITY FOR THE MATERIAL IT RESOLVED.** A null identity is not sufficient for a configured credential",
+])
+# Both planes, each with its own row, and the audit plane reading its OWN verification.
+l14_planes = _ordered(_s2g_c, [
+    "| integration | the verified class-5 record for the descriptor's `credential_id` |",
+    "| audit | **the AUDIT PLANE's OWN verification** of the same signed artifact (`§3`, property 2) |",
+])
+l14_before = ("**refused before any adapter code runs**" in _s2g_c
+              and "**refused before any provider query**" in _s2g_c)
+cond("L14", "The RESOLVED credential identity must EQUAL the SIGNED one before the provider boundary, on "
+            "both planes independently: the requirement is stated as a refusal, the integration plane and "
+            "the audit plane each carry their own row, the audit plane reads its OWN verification rather "
+            "than the control plane's, each refusal is declared to happen before adapter code and before "
+            "any provider query, and the secret source must return a mandatory non-secret identity whose "
+            "null value is insufficient",
+     not l14 and l14_planes and l14_before,
+     f"50 §2g missing: {l14}; both plane rows in order={l14_planes}; before-boundary stated={l14_before}"
+     if (l14 or not l14_planes or not l14_before)
+     else "the comparison rule, both plane rows, and both before-the-boundary refusals")
+
+# ---------------------------------------------------------------- L15
+# A locator is not an identity, in BOTH directions, and both controls are kept.
+l15 = present(_s2g_c, [
+    "**LOCATOR ISOLATION AND CREDENTIAL IDENTITY BINDING ARE DIFFERENT CONTROLS AND BOTH ARE REQUIRED.** A locator says where to look; an identity says what was found.",
+    "* two locators may resolve **one** credential, so locator inequality does not establish separation;",
+    "* one locator may be repointed at **another** credential, so locator equality does not establish identity.",
+    "It does not imply this rule and is not implied by it.",
+])
+cond("L15", "LOCATOR equality is insufficient for identity binding, stated in both directions and with both "
+            "controls retained: two locators may name one credential so inequality proves no separation, one "
+            "locator may be repointed so equality proves no identity, and 48 §3.6's separate-source rule is "
+            "declared neither to imply nor to be implied by the binding",
+     not l15,
+     f"50 §2g missing: {l15}" if l15 else "the two-control statement and both directions of the locator gap")
+
+# ---------------------------------------------------------------- L16
+# The launch echo is NOT authority, and carries no material.
+l16 = present(_s2g_c, [
+    "**THE PARENT MAY PASS THE EXPECTED `credential_id` TO THE CHILD AS A TRUSTED NON-SECRET LAUNCH ECHO.** The echo is NOT authority",
+    "the signed artifact remains the authority, and the parent has already verified it",
+    "`I25` forbids the control plane holding a vendor credential, so the identity of the resolved material is visible only inside the child",
+    "**No credential material travels on IPC or in any environment, on either plane.**",
+])
+# And `§2g`'s existing prohibition on environment-supplied fields is UNCHANGED beside it.
+l16_env = ("no provider response, account response, adapter self-description, environment variable, caller "
+           "parameter or model output may supply, override or widen any of the seven fields") in _s2g_c
+cond("L16", "The expected credential identity travels as a TRUSTED ECHO that is not authority: the signed "
+            "artifact remains the authority, the parent is stated to have verified it already, the reason "
+            "the comparison cannot happen in the parent is printed as I25, no credential material travels "
+            "on IPC or in any environment on either plane, and §2g's existing prohibition on an environment "
+            "variable supplying a field is unchanged beside it",
+     not l16 and l16_env,
+     f"50 §2g missing: {l16}; environment prohibition retained={l16_env}"
+     if (l16 or not l16_env)
+     else "the echo's four statements and the retained environment-variable prohibition")
+
+# ---------------------------------------------------------------- L17
+# A safe test mode that suppresses the evidence surface does not satisfy I36.
+l17 = present(d36_7, [
+    "> **A NON-PRODUCTION TEST PATH THAT SUPPRESSES THE PROVIDER'S OWN EVIDENCE SURFACE DOES NOT\n> SATISFY THE `I36` VALIDATION PATH.**",
+    "**THE SAME BOUNDED DESIGN MUST CARRY THE WHOLE CHAIN**",
+    "**IT IS NOT ENOUGH THAT THE PROVIDER HAS A SANDBOX MECHANISM AND, SEPARATELY, AN ACTIVITY-QUERY\nAPI.**",
+    "The\nprovider-selection record must therefore declare the ONE non-production path it intends to run\nand establish that path against the whole chain above.",
+])
+l17_chain = _ordered(d36_7, [
+    "real API request",
+    "-> the provider accepts / processes the request",
+    "-> provider-side query or event evidence EXISTS for that request",
+    "-> the INDEPENDENT read-only audit credential can observe it",
+])
+cond("L17", "A safe test mode that suppresses the provider's evidence surface does NOT satisfy the I36 "
+            "validation path: 36 §5 states the rule as a quoted prohibition, prints the four-step chain one "
+            "bounded design must carry end to end, denies by name the reading that a sandbox mechanism plus "
+            "a separate activity API is sufficient, and requires the selection record to declare the ONE "
+            "path it intends to run",
+     not l17 and l17_chain,
+     f"36 missing: {l17}; four-step chain in order={l17_chain}"
+     if (l17 or not l17_chain)
+     else "the prohibition, the four-step chain, and the two-independent-capabilities denial")
+
+# ---------------------------------------------------------------- L18
+# SendGrid sandbox mode is recorded as NOT the evidence path, and the real one is named.
+l18 = present(d36_7, [
+    "**and its official documentation\nstates that requests made in sandbox mode generate no events in either the Event Webhook or\nEmail Activity.**",
+    "is **not usable** for accepted-count evidence, for the `I36` six-kill-point oracle, for Email\nActivity correlation or for Event Webhook reconciliation",
+    "**dedicated non-production sending identity with sandbox mode DISABLED and an\nowner-controlled sink recipient**",
+])
+# And the two gate rows no longer name a bare "provider sandbox" as the I36 oracle.
+l18_gate = ("| **Duplicate-send distinguishability (new)** | Exactly one **provider-reported accepted message** "
+            "per intended message, across all six outbox kill points | **A dedicated non-production ESP "
+            "environment whose accepted sends ARE recorded and queryable** (§5, v1.3.7)") in d36_7
+l18_oracle = ("| Duplicate-send distinguishability (I36) | **A dedicated non-production provider environment "
+              "that RECORDS its accepted sends** (§5, v1.3.7)") in d36_7
+cond("L18", "SendGrid Sandbox Mode is recorded as UNABLE to serve as the I36 activity-evidence path: the "
+            "documented negative is printed, the four things the mode cannot be used for are named, the "
+            "I36-compatible path is declared to be a dedicated non-production identity with sandbox mode "
+            "DISABLED and an owner-controlled sink recipient, and neither the oracle table nor the gate "
+            "table still names a bare provider sandbox",
+     not l18 and l18_gate and l18_oracle,
+     f"36 missing: {l18}; gate row corrected={l18_gate}; oracle row corrected={l18_oracle}"
+     if (l18 or not l18_gate or not l18_oracle)
+     else "the documented negative, the four prohibitions, the real path, and both corrected rows")
+
+# ---------------------------------------------------------------- L19
+# Identity binding is NOT scope conformance, and the probes are owed.
+l19 = present(_s2g_c, [
+    "**IT PROVES \"THIS IS CREDENTIAL A\". IT DOES NOT PROVE \"CREDENTIAL A STILL HAS THE PROVIDER PERMISSIONS THE SIGNED RECORD DECLARES\".**",
+    "**Credential scope drift is therefore an EMPIRICAL provider-side obligation**",
+    "**NOT discharged by this binding, by the signature, or by any consistency check over signed bytes.**",
+])
+l19_48 = present(d48_7, [
+    "**AND NONE OF THE FOUR CLOSES CREDENTIAL SCOPE DRIFT.** Identity binding proves *\"this is\ncredential A\"*; it does not prove *\"credential A still has the provider permissions the signed\nrecord declares\"*.",
+    "**Scope\nconformance is an EMPIRICAL provider-side obligation**",
+    "**the audit key's send attempt is refused BY THE PROVIDER**",
+    "**v1.3.7 does not discharge\nany of them.**",
+])
+l19_36 = present(d36_7, [
+    "- **Credential scope conformance test** (v1.3.7): identity binding proves *\"this is credential A\"* and **not** *\"credential A still holds the permissions the signed record declares\"*.",
+    "**No signature and no consistency check over signed bytes discharges any of these.**",
+])
+cond("L19", "Credential identity binding is declared NOT to prove provider-side scope conformance: 50 §2g, "
+            "48 §3.6 and 36 §13 each separate the two, each names the empirical probe set including the "
+            "audit credential's provider-refused send attempt, and each states that no signature and no "
+            "signed-byte consistency check discharges it",
+     not l19 and not l19_48 and not l19_36,
+     f"50 §2g missing: {l19}; 48 missing: {l19_48}; 36 missing: {l19_36}"
+     if (l19 or l19_48 or l19_36)
+     else "the separation and the empirical probe set, in all three deliverables")
 
 print(f"# ACOS v1.3 / v1.3.1 / v1.3.2 / v1.3.3 / v1.3.4 / v1.3.5 / v1.3.6 / v1.3.7 mechanical consistency pass — {len(results)} conditions\n")
 w=max(len(c[1]) for c in results)

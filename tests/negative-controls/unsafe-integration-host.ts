@@ -203,7 +203,7 @@ export async function unsafeHandleDispatchRequest(
     invocationId: request.invocationId,
     adapterId: request.adapterId,
     outcome,
-    credentialIdentity: credential.identity,
+    credentialIdentity: credential.credentialIdentity,
     credentialVersion: credential.version,
   };
 }

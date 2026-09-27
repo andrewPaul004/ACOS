@@ -214,6 +214,20 @@ export const REFUSAL_REASONS = [
   /** `§24`'s per-credential revocation switch, thrown at the integration runtime. */
   'CREDENTIAL_REVOKED',
   'CREDENTIAL_UNAVAILABLE',
+  /**
+   * `50 §2g` FIELD 1 — THE RESOLVED MATERIAL IS NOT THE CREDENTIAL THE SIGNED RECORD GOVERNS.
+   *
+   * The runtime resolved a credential, asked its source which credential that material IS,
+   * and got an answer other than the `credential_id` whose signed class-5 record supplied the
+   * risk class this runtime was admitted under.
+   *
+   * **IT IS ITS OWN CODE RATHER THAN A `CREDENTIAL_UNAVAILABLE`**, because the two are
+   * different facts and only one of them is an attack: unavailable means the deployment
+   * boundary could not answer, and this means it answered with the wrong credential. A
+   * deployment reading its logs must be able to tell "the secret manager is down" from "the
+   * locator points at the money-moving key".
+   */
+  'CREDENTIAL_IDENTITY_MISMATCH',
   'ADAPTER_NOT_LOADED',
   /** `§42`'s availability bound, refused before anything is queued. */
   'CONCURRENCY_LIMIT_EXCEEDED',

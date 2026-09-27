@@ -9,6 +9,7 @@ import {
   type ProviderReadResponse,
 } from '../protocol/readWire.js';
 import {
+  auditCredentialIdentityMismatch,
   auditCredentialLabelsAreNonDerived,
   type AuditReadSecretSource,
 } from './auditSecretSource.js';
@@ -47,12 +48,14 @@ import {
  *     4. credential risk class      the SIGNED class-5 value must be `READ_ONLY`
  *     5. credential resolution      revoked or unavailable refuses here
  *     6. label non-derivation       a source publishing its own secret as a label refuses
- *     7. provider read              the FIRST line that reaches a provider boundary
+ *     7. credential IDENTITY        the resolved material IS the signed audit credential
+ *     8. provider read              the FIRST line that reaches a provider boundary
  *
- * Step 7 is the only call site of `readFromProvider` in this file and is unreachable until
- * 1..6 have all passed, because each is an early return rather than a flag.
+ * Step 8 is the only call site of `readFromProvider` in this file and is unreachable until
+ * 1..7 have all passed, because each is an early return rather than a flag.
  * `unsafeHandleProviderReadRequest` in the negative-control suite removes steps 3 and 4 and
- * reaches the reader, which is the discrimination.
+ * reaches the reader, and `unsafeHandleWithoutAuditIdentityBinding` removes step 7 — which
+ * is the discrimination for the v1.3.7 correction.
  *
  * =================================================================================
  * `§14` AGAIN — AND NOTHING HERE READS A CONTROL-PLANE RESULT
@@ -102,6 +105,18 @@ export interface AuditReaderConfiguration {
    * echo can only narrow, never widen.
    */
   readonly credentialRiskClass: string;
+  /**
+   * `50 §2g` FIELD 1, AS THE AUDIT PLANE'S OWN VERIFIER READ IT.
+   *
+   * The risk-class echo above answers "what class does the signed record declare?". This one
+   * answers "which credential is that record about?", and only the second question can catch
+   * a reader holding a send-capable token under a genuinely `READ_ONLY` declaration.
+   *
+   * **THE PARENT CANNOT PERFORM THIS COMPARISON EITHER.** The audit plane's own process does
+   * not hold the read credential — that is the whole point of forking this one — so the
+   * identity of the resolved material is visible only here.
+   */
+  readonly expectedCredentialId: string;
 }
 
 /**
@@ -185,7 +200,41 @@ export async function handleProviderReadRequest(
   }
 
   // ---------------------------------------------------------------------------------
-  // GUARD 7 — THE PROVIDER READ. THE ONLY CALL SITE, AND THE FIRST LINE THAT REACHES OUT.
+  // GUARD 7 — `50 §2g` FIELD 1. **THE RESOLVED CREDENTIAL IS THE SIGNED AUDIT CREDENTIAL.**
+  //
+  // The attack this refuses passes every check above it:
+  //
+  //     signed record   `synthetic_esp.audit_read`, audit_plane-scoped, READ_ONLY   ok
+  //     risk echo       READ_ONLY                                                   ok
+  //     locator         not one the integration plane holds                         ok
+  //     resolved token  SEND-CAPABLE                                                NO
+  //
+  // `48 §3.6`'s exemption rests on the reader's credential being incapable of external
+  // mutation. Without this guard it rests on a declaration about a DIFFERENT credential, and
+  // the audit plane would be querying — and could be sending — with material nobody
+  // classified.
+  //
+  // **AND IT IS NOT A LOCATOR COMPARISON.** `auditReaderRegistry` already refuses a locator
+  // the integration plane holds, and that check cannot decide this one: two locators may
+  // name one credential, and one locator may be repointed at another. Both controls are
+  // kept because they answer different questions.
+  //
+  // IT RUNS BEFORE `readFromProvider`, so no provider query is made with the wrong material.
+  // ---------------------------------------------------------------------------------
+  if (
+    auditCredentialIdentityMismatch(
+      configuration.expectedCredentialId,
+      resolution.credential.credentialIdentity,
+    ) !== null
+  ) {
+    // The reason is not returned to the parent: a refusal teaches a closed code and nothing
+    // else, and a message naming both identities would publish the audit plane's credential
+    // topology to any caller that could provoke a mismatch.
+    return refuse(request.readId, 'CREDENTIAL_IDENTITY_MISMATCH');
+  }
+
+  // ---------------------------------------------------------------------------------
+  // GUARD 8 — THE PROVIDER READ. THE ONLY CALL SITE, AND THE FIRST LINE THAT REACHES OUT.
   // ---------------------------------------------------------------------------------
   const result = await configuration.reader.readFromProvider(resolution.credential, {
     operation: request.operation,
@@ -217,7 +266,7 @@ export async function handleProviderReadRequest(
     recordCount: result.recordCount,
     // The SOURCE's declared label, never a digest of the material — guard 6 already refused
     // a label derived from it.
-    credentialIdentity: resolution.credential.identity,
+    credentialIdentity: resolution.credential.credentialIdentity,
     providerQueriedAtMs: Date.now(),
   });
 }

@@ -158,10 +158,65 @@ export interface ProviderCapabilityRecord {
     readonly reference: string;
     readonly basis: ObservationBasis;
   };
-  /** `§19`: the non-production path. */
+  /**
+   * `§19`: the provider's OWN safe-test flag, and whether it leaves evidence behind.
+   *
+   * =================================================================================
+   * `producesQueryableActivity` IS THE FIELD THE v1.3.7 CORRECTION IS ABOUT
+   *
+   * The first S1O candidate carried `null` here for SendGrid, on the reading that the
+   * documentation "says the message is never delivered and says NOTHING about whether a
+   * sandbox request produces an Email Activity record". **That reading was wrong**: the
+   * official Sandbox Mode page states the negative directly, and the owner review corrected
+   * it. `null` therefore became a claim that the documentation is silent where it is not,
+   * and an account-validation item was carried for a question already settled.
+   *
+   * `false` means the provider DOCUMENTS that this mode leaves no queryable evidence, which
+   * is disqualifying for the `I36` oracle and is why `nonProductionValidationPath` below
+   * exists as a separate field rather than as more prose on this one.
+   */
   readonly sandbox: {
     readonly mechanism: string;
     readonly producesQueryableActivity: boolean | null;
+    /** What this mode IS good for. Narrow, and never the evidence path. */
+    readonly suitableFor: readonly string[];
+    /** What this mode must NOT be used for. Named, so a later slice cannot drift into it. */
+    readonly notSuitableFor: readonly string[];
+    readonly reference: string;
+    readonly basis: ObservationBasis;
+  };
+  /**
+   * `§5` OF THE CORRECTION — THE BOUNDED NON-PRODUCTION PATH THAT MUST CARRY THE EVIDENCE.
+   *
+   * =================================================================================
+   * WHY THIS IS A SECOND FIELD AND NOT A SENTENCE INSIDE `sandbox`
+   *
+   * The original selection rule checked five capabilities INDEPENDENTLY, and a provider
+   * passed by having *a* safe test mechanism and, separately, *an* activity-query API. That
+   * conjunction is satisfiable by a provider whose safe mode deliberately suppresses the
+   * query surface — which is exactly SendGrid — and the resulting selection would have
+   * named an `I36` validation environment that cannot produce `I36`'s evidence.
+   *
+   * So the record declares the test path ACOS would actually run, and
+   * `evidencePathIncompatibility` requires THE SAME path to satisfy the whole chain:
+   *
+   *     real API request -> provider accepts/processes -> provider-side evidence exists
+   *                      -> the AUDIT credential can independently observe it
+   *
+   * `sandboxModeEnabled` is carried explicitly because the corrected SendGrid answer is
+   * `false`: the validation environment is a dedicated non-production account sending real
+   * requests to an owner-controlled sink, not the sandbox flag.
+   */
+  readonly nonProductionValidationPath: {
+    readonly mechanism: string;
+    /** Whether the provider's own sandbox FLAG is set on the validating request. */
+    readonly sandboxModeEnabled: boolean;
+    /** Whether THIS path leaves evidence the activity query returns. `null` = unresolved. */
+    readonly producesQueryableActivity: boolean | null;
+    /** No customer recipient. An owner-controlled sink, or the path is not bounded. */
+    readonly requiresControlledRecipient: boolean;
+    /** What provisioning this path needs before it can run. Never claimed as done. */
+    readonly requirements: readonly string[];
     readonly reference: string;
     readonly basis: ObservationBasis;
   };
@@ -173,6 +228,15 @@ export interface ProviderCapabilityRecord {
     readonly basis: ObservationBasis;
   };
   readonly findings: readonly CapabilityFinding[];
+  /**
+   * `§7` OF THE CORRECTION — QUESTIONS THE DOCUMENTATION HAS ALREADY ANSWERED NEGATIVELY.
+   *
+   * Separate from `unresolvedAccountItems` because the first S1O candidate carried SendGrid's
+   * sandbox-activity question as PENDING when the official page had already settled it. A
+   * pending item nobody can close is worse than no item: it postpones a decision that has
+   * been made, and it left the readiness token describing an environment that cannot work.
+   */
+  readonly resolvedDocumentedNegatives: readonly string[];
   /** `§21`, `§25`: what only an account can settle. Never empty for a selected provider. */
   readonly unresolvedAccountItems: readonly string[];
 }
@@ -272,14 +336,66 @@ export const SENDGRID_CAPABILITY_RECORD: ProviderCapabilityRecord = Object.freez
   sandbox: Object.freeze({
     mechanism:
       'mail_settings.sandbox_mode.enable on the v3 Mail Send request. The documentation ' +
-      'states the request is validated and "the email will never be delivered while this ' +
-      'feature is enabled"; a valid sandbox request returns 200 where a live accepted ' +
-      'request returns 202',
-    // NOT `false`. The documentation says the message is never delivered and says NOTHING
-    // about whether a sandbox request produces an Email Activity record, and the difference
-    // between those two decides whether the six-kill-point oracle can run in sandbox mode.
-    producesQueryableActivity: null,
+      'states the request is validated and the email is never delivered while the feature ' +
+      'is enabled; a valid sandbox request returns 200 where a live accepted request ' +
+      'returns 202. The same page states that requests made in sandbox mode do not ' +
+      'generate events in either the Event Webhook or Email Activity',
+    /*
+     * **`false`, NOT `null` — THE DOCUMENTATION SETTLES IT.**
+     *
+     * The first S1O candidate carried `null` here and an account-validation item beside it,
+     * on the reading that the page was silent about whether a sandbox request is RECORDED.
+     * It is not silent. The official Sandbox Mode page states that sandbox requests generate
+     * no Event Webhook events and no Email Activity events, which is a DOCUMENTED NEGATIVE
+     * and not an open question, so `CAPABILITY_STATUSES`' own distinction applies: this is
+     * `ABSENT` evidence, never `UNRESOLVED`.
+     *
+     * The consequence is the whole of the correction. SendGrid Sandbox Mode CANNOT be the
+     * `I36` provider-side acceptance oracle, because the mode that makes the request safe is
+     * the mode that removes the evidence the oracle reads.
+     */
+    producesQueryableActivity: false,
+    suitableFor: Object.freeze([
+      'request-shape validation: the v3 Mail Send request is parsed and validated by the ' +
+        'real API',
+      'credential-scope validation: the request reaches real API-key scope enforcement, so ' +
+        'a key lacking mail.send is refused as it would be on a live send',
+    ]),
+    notSuitableFor: Object.freeze([
+      'real-provider accepted-count evidence — a sandbox request returns 200 rather than ' +
+        'the 202 a live accepted request returns, and is recorded nowhere',
+      'the I36 six-kill-point oracle — every kill point needs provider-side evidence for a ' +
+        'request the provider accepted, and this mode produces none',
+      'Email Activity correlation — no Email Activity event is generated, so there is ' +
+        'nothing for a correlation filter to match',
+      'Event Webhook reconciliation — no Event Webhook event is generated',
+    ]),
     reference: SG_SANDBOX,
+    basis: DOCUMENTED,
+  }),
+  nonProductionValidationPath: Object.freeze({
+    mechanism:
+      'a DEDICATED NON-PRODUCTION SendGrid environment sending REAL requests with ' +
+      'sandbox_mode=false to an owner-controlled sink recipient. The request is accepted ' +
+      'normally (202), so it generates the Email Activity record the I36 oracle reads and ' +
+      'the separate email_activity.read credential can observe independently',
+    // FALSE, AND THAT IS THE CORRECTION. The safe mode and the evidence mode are different
+    // modes at this provider, and only the second one can carry I36.
+    sandboxModeEnabled: false,
+    producesQueryableActivity: true,
+    requiresControlledRecipient: true,
+    requirements: Object.freeze([
+      'a dedicated non-production SendGrid account, subuser or equivalently isolated test ' +
+        'sending identity — never the production sending identity',
+      'a narrowly scoped mail.send integration key for that identity',
+      'a SEPARATE email_activity.read audit key that does not carry mail.send',
+      'the additional Email Activity history entitlement the Email Activity Feed API ' +
+        'requires',
+      'a verified sender / test sending identity',
+      'an OWNER-CONTROLLED SINK RECIPIENT. No customer recipient and no production ' +
+        'business message, ever',
+    ]),
+    reference: SG_ACTIVITY_GUIDE,
     basis: DOCUMENTED,
   }),
   retentionAndEntitlement: Object.freeze({
@@ -336,34 +452,63 @@ export const SENDGRID_CAPABILITY_RECORD: ProviderCapabilityRecord = Object.freez
     Object.freeze({
       capability: 'NON_PRODUCTION_TEST_PATH' as const,
       status: 'DOCUMENTED' as const,
+      /*
+       * **THE EVIDENCE IS THE DEDICATED NON-PRODUCTION ENVIRONMENT, NOT SANDBOX MODE.**
+       *
+       * The pre-correction row cited sandbox mode, which is documented to suppress both
+       * evidence surfaces. A test path that cannot be observed is not a test path for `I36`,
+       * so this row now cites the path `nonProductionValidationPath` declares, and
+       * `evidencePathIncompatibility` is what stops a future edit quietly pointing it back
+       * at the sandbox flag.
+       */
       evidence:
-        'sandbox mode validates a send request without delivering it; the request reaches ' +
-        'the real API and real credential-scope enforcement',
+        'a dedicated non-production sending identity with sandbox_mode=false and an ' +
+        'owner-controlled sink recipient exercises the real API, real credential-scope ' +
+        'enforcement AND leaves the Email Activity record the audit credential reads. ' +
+        'Sandbox mode is NOT this path: it is documented to generate no Email Activity and ' +
+        'no Event Webhook events',
       basis: DOCUMENTED,
-      reference: SG_SANDBOX,
+      reference: SG_ACTIVITY_GUIDE,
     }),
   ]),
+  /**
+   * `§7` OF THE CORRECTION — WHAT THE DOCUMENTATION HAS ALREADY SETTLED, AS A NEGATIVE.
+   *
+   * Carried beside the pending list rather than inside it, because a resolved negative and
+   * an open question are different facts and the pre-correction record conflated them.
+   */
+  resolvedDocumentedNegatives: Object.freeze([
+    'SANDBOX_ACTIVITY_EVIDENCE = ABSENT — official Twilio SendGrid Sandbox Mode ' +
+      'documentation states that requests made in sandbox mode generate no events in ' +
+      'either the Event Webhook or Email Activity. This is no longer an account-validation ' +
+      'question',
+  ]),
   unresolvedAccountItems: Object.freeze([
-    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the intended sandbox/test ' +
-      'account holds the additional email activity history entitlement the Email Activity ' +
-      'Feed API requires, and which tier is the minimum sufficient one',
-    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether a sandbox-mode send ' +
-      'produces a record the Email Activity query returns. The documentation states the ' +
-      'message is never delivered and does not state whether it is recorded, and the six ' +
-      'kill points need provider-side evidence for a send that was accepted. If it does ' +
-      'not, the validation slice needs a dedicated non-production sending identity and a ' +
-      'controlled sink recipient rather than sandbox mode',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the dedicated ' +
+      'non-production account holds the additional Email Activity history entitlement the ' +
+      'Email Activity Feed API requires, and which tier is the minimum sufficient one',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the provisioned ' +
+      'mail.send key actually carries only that permission, read back from the account ' +
+      'rather than assumed from the create request',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the provisioned ' +
+      'email_activity.read audit key actually LACKS mail.send, read back from the account',
     'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: the EMPIRICAL attempted-write ' +
       'test required by 36 §13 and 48 §3.6 — POST /v3/mail/send with the ' +
-      'email_activity.read-only key must be refused BY THE PROVIDER. S1O selects on the ' +
+      'email_activity.read-only key must be REFUSED BY SENDGRID. S1O selects on the ' +
       'documented scope model and does not claim this test has run',
-    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether v3 custom_args set on a ' +
-      "send are returned by the Email Activity unique_args['<name>'] filter. The " +
-      'documentation states the two serve the same function across API generations and does ' +
-      'not state the query-side mapping directly. categories is the fallback correlation ' +
-      'mechanism and is unambiguous on both sides',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether provider evidence from a ' +
+      'normal non-production send (sandbox_mode=false) is actually queryable through the ' +
+      'Email Activity API on that account',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the chosen correlation ' +
+      "field is present and queryable — whether v3 custom_args are returned by the Email " +
+      "Activity unique_args['<name>'] filter. categories is the documented fallback and is " +
+      'unambiguous on both sides',
     'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the 6-requests-per-minute ' +
-      'Email Activity rate limit admits the query volume the six-kill-point run needs',
+      'Email Activity rate limit is operationally sufficient for bounded six-kill-point ' +
+      'observation',
+    'CAPABILITY DOCUMENTED — ACCOUNT VALIDATION PENDING: whether the controlled ' +
+      'recipient / test sending identity configuration is valid — a verified sender and an ' +
+      'owner-controlled sink recipient, with no customer recipient reachable',
   ]),
 });
 
@@ -458,8 +603,47 @@ export const MAILGUN_CAPABILITY_RECORD: ProviderCapabilityRecord = Object.freeze
     mechanism:
       'a sandbox domain, which sends only to authorised recipients registered on the ' +
       'account',
+    /*
+     * STILL `null`, AND THAT IS NOT THE SAME ANSWER AS SENDGRID'S.
+     *
+     * SendGrid's `false` is a DOCUMENTED NEGATIVE: its own page states the mode generates
+     * no events. Mailgun's documentation says nothing either way about whether a sandbox
+     * domain's sends appear in Events or Logs, so this is `UNRESOLVED` evidence and
+     * collapsing it to `false` would be the guess `§24` forbids — the same distinction
+     * `CAPABILITY_STATUSES` keeps between `ABSENT` and `UNRESOLVED`, one field down.
+     *
+     * Mailgun is blocked on `AUDIT_READ_ONLY_CREDENTIAL` regardless, so nothing turns on
+     * this row today. It is kept honest so a later slice that obtains a Mailgun account
+     * measures the right question.
+     */
     producesQueryableActivity: null,
+    suitableFor: Object.freeze([
+      'delivery containment: a sandbox domain sends only to authorised recipients ' +
+        'registered on the account',
+    ]),
+    notSuitableFor: Object.freeze([
+      'the I36 six-kill-point oracle, while it is unresolved whether a sandbox domain ' +
+        'produces Events or Logs records at all',
+    ]),
     reference: MG_RBAC,
+    basis: DOCUMENTED,
+  }),
+  nonProductionValidationPath: Object.freeze({
+    mechanism:
+      'a sandbox domain with authorised recipients, or a dedicated non-production domain ' +
+      'with an owner-controlled sink recipient. Which of the two carries the evidence is ' +
+      'NOT established by the published documentation',
+    sandboxModeEnabled: true,
+    // UNRESOLVED, not false. See `sandbox.producesQueryableActivity` above.
+    producesQueryableActivity: null,
+    requiresControlledRecipient: true,
+    requirements: Object.freeze([
+      'a domain-kind sending key scoped to the non-production domain',
+      'a basic/analyst-level key whose Events and Logs access is confirmed against an ' +
+        'account, because the published RBAC table does not establish it',
+      'authorised recipients, or an owner-controlled sink recipient',
+    ]),
+    reference: MG_EVENTS,
     basis: DOCUMENTED,
   }),
   retentionAndEntitlement: Object.freeze({
@@ -520,7 +704,12 @@ export const MAILGUN_CAPABILITY_RECORD: ProviderCapabilityRecord = Object.freeze
       reference: MG_RBAC,
     }),
   ]),
+  /** Mailgun has no documented negative to record. `§22`: unresolved is not absent. */
+  resolvedDocumentedNegatives: Object.freeze([]),
   unresolvedAccountItems: Object.freeze([
+    'UNRESOLVED FROM OFFICIAL DOCUMENTATION: whether a sandbox domain, or any Mailgun test ' +
+      'path, produces Events or Logs records the audit credential could read — the ' +
+      'test-path/evidence compatibility §5 requires is therefore not established',
     'UNRESOLVED FROM OFFICIAL DOCUMENTATION: whether a basic/analyst-level API key can call ' +
       'GET /v3/{domain}/events. The RBAC permissions table has no Events row and the Events ' +
       'endpoint reference states no role requirement',
@@ -616,8 +805,101 @@ export function blockingFindings(
   return Object.freeze(blocking);
 }
 
+/**
+ * `§5` OF THE CORRECTION — **THE TEST PATH AND THE EVIDENCE PATH MUST BE THE SAME PATH.**
+ *
+ * =================================================================================
+ * WHY FIVE INDEPENDENT CAPABILITY CHECKS WERE NOT ENOUGH
+ *
+ * `blockingFindings` evaluates `§19`'s conjunction one capability at a time. Each term can
+ * be true of a DIFFERENT configuration of the same provider, and the conjunction cannot
+ * notice:
+ *
+ *     NON_PRODUCTION_TEST_PATH    true  — "the provider has a sandbox mode"
+ *     QUERYABLE_PROVIDER_EVIDENCE true  — "the provider has an activity API"
+ *     conjunction                 true
+ *     reality                     the sandbox mode is documented to suppress the activity API
+ *
+ * That is not hypothetical: it is exactly what the first S1O candidate selected, and the
+ * readiness token it produced named an environment in which the `I36` oracle cannot run.
+ *
+ * SO THE CHECK IS OVER ONE PATH, END TO END:
+ *
+ *     real API request
+ *       -> the provider accepts/processes the request
+ *       -> provider-side query/event evidence EXISTS for that request
+ *       -> the independent AUDIT credential can observe it
+ *
+ * **A TEST MODE THAT DELIBERATELY SUPPRESSES THE EVIDENCE SURFACE DOES NOT SATISFY THE `I36`
+ * VALIDATION PATH**, however convenient it is, and a provider whose only bounded mode is
+ * that one is not selectable on it.
+ *
+ * Returns the REASON the declared path cannot carry `I36`, or `null` when it can. A reason
+ * rather than a boolean because the three ways it fails are different facts: the path leaves
+ * no evidence, the evidence is unresolved, or there is no independent credential to read it
+ * with.
+ */
+export function evidencePathIncompatibility(record: ProviderCapabilityRecord): string | null {
+  const path = record.nonProductionValidationPath;
+  if (path.producesQueryableActivity === null) {
+    return (
+      `${record.provider}'s declared non-production validation path is not documented to ` +
+      'produce queryable provider evidence either way, so the I36-compatible test path is ' +
+      'UNRESOLVED rather than established'
+    );
+  }
+  if (!path.producesQueryableActivity) {
+    return (
+      `${record.provider}'s declared non-production validation path produces no queryable ` +
+      'provider evidence, so the same bounded design cannot carry both the real request and ' +
+      'the I36 oracle'
+    );
+  }
+  if (!path.requiresControlledRecipient) {
+    return (
+      `${record.provider}'s declared non-production validation path does not require an ` +
+      'owner-controlled recipient, so it is not a BOUNDED non-production path'
+    );
+  }
+  if (record.auditReadCredentialScope.sendCapable !== false) {
+    return (
+      `${record.provider}'s audit read credential is not documented as incapable of send, ` +
+      'so the evidence this path leaves cannot be observed by an INDEPENDENT read-only ' +
+      'credential'
+    );
+  }
+  if (record.correlation.queryable !== true) {
+    return (
+      `${record.provider}'s correlation field is not documented as queryable, so evidence ` +
+      "left by this path cannot be matched back to the ACOS request that produced it"
+    );
+  }
+  /*
+   * AND THE PROVIDER'S OWN SAFE-FLAG MODE IS CHECKED SEPARATELY, SO IT CANNOT BE SUBSTITUTED.
+   *
+   * A path declaring `sandboxModeEnabled: true` on a provider whose sandbox is DOCUMENTED to
+   * suppress evidence is self-contradictory, and the contradiction is caught here rather
+   * than trusted to the two fields being edited together.
+   */
+  if (path.sandboxModeEnabled && record.sandbox.producesQueryableActivity === false) {
+    return (
+      `${record.provider}'s declared validation path enables a sandbox mode the provider ` +
+      'documents as producing no queryable activity; the safe mode and the evidence mode ' +
+      'are different modes at this provider and only the second can carry I36'
+    );
+  }
+  return null;
+}
+
+/**
+ * `§19`'s conjunction AND `§5`'s compatibility rule. Both must hold.
+ *
+ * The capability conjunction alone is what admitted a provider on a test mode that cannot
+ * produce the evidence, so `isSelectable` is deliberately not a synonym for "no blocking
+ * findings" any more.
+ */
 export function isSelectable(record: ProviderCapabilityRecord): boolean {
-  return blockingFindings(record).length === 0;
+  return blockingFindings(record).length === 0 && evidencePathIncompatibility(record) === null;
 }
 
 /**
@@ -639,8 +921,8 @@ export function selectProvider(
     return {
       selected: null,
       reason:
-        'no provider satisfies §19 in full; §33 returns PARTIAL when no provider can satisfy ' +
-        'the audit credential constraint',
+        "no provider satisfies §19 in full and §5's test-path/evidence compatibility rule; " +
+        '§33 returns PARTIAL when no provider can satisfy the audit credential constraint',
     };
   }
   if (selectable.length === 1) {
@@ -648,7 +930,8 @@ export function selectProvider(
       selected: selectable[0]!,
       reason:
         `${selectable[0]!.provider} is the only provider whose official documentation ` +
-        'establishes all five required capabilities',
+        'establishes all five required capabilities AND a non-production validation path ' +
+        'compatible with its own provider-evidence path',
     };
   }
   // §23's tie-break: the narrower independently provable credentials. "Narrower" is the

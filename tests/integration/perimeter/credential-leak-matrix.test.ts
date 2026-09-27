@@ -22,6 +22,7 @@ import {
 } from '../../negative-controls/unsafe-integration-host.js';
 import {
   ADAPTER_A,
+  CREDENTIAL_A_NON_MONETARY,
   adapterADescriptor,
   awaitRuntimeReady,
   launchIntegration,
@@ -73,13 +74,25 @@ afterEach(async () => {
   }
 });
 
+/**
+ * The identity this file's synthetic source resolves, and the one every configuration below
+ * echoes as `expectedCredentialId`. `50 §2g` field 1's binding is satisfied by the pair
+ * agreeing; the leak matrix is about what ESCAPES, so it holds the binding constant.
+ */
+const FIXED_CREDENTIAL_IDENTITY = CREDENTIAL_A_NON_MONETARY;
+
 function fixedSecretSource(adapterId: string, secret: string): AdapterSecretSource {
   return {
     declaredAdapterId: adapterId,
     resolve: () =>
       Promise.resolve({
         kind: 'RESOLVED',
-        credential: { secret, identity: 'adapter-a-credential', version: 'ACCEPT' },
+        credential: {
+          secret,
+          credentialIdentity: FIXED_CREDENTIAL_IDENTITY,
+          identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+          version: 'ACCEPT',
+        },
       }),
   };
 }
@@ -92,7 +105,7 @@ describe('`§29` — THE SENTINEL APPEARS ON NO SURFACE BUT ITS OWN SOURCE', () 
       const locator = secrets.write('a', {
         adapterId: ADAPTER_A,
         secret,
-        identity: 'adapter-a-credential',
+        credentialIdentity: FIXED_CREDENTIAL_IDENTITY,
       });
       return runtimeRegistry(adapterADescriptor(locator));
     });
@@ -186,6 +199,7 @@ describe('`§23`, `§43` — THE ERROR AND LOG SURFACES, AND THE CONTROL THAT LE
       adapterId: ADAPTER_A,
       adapter: createRecordingAdapter(ADAPTER_A),
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     const swapped = {
       ...buildDispatchRequest(syntheticEnvelope({ adapter: ADAPTER_A })),
@@ -209,6 +223,7 @@ describe('`§23`, `§43` — THE ERROR AND LOG SURFACES, AND THE CONTROL THAT LE
         },
       },
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     const reply = await unsafeHandleDispatchRequest(
       configuration,
@@ -266,6 +281,7 @@ describe('`§23`, `§43` — THE ERROR AND LOG SURFACES, AND THE CONTROL THAT LE
       adapterId: ADAPTER_A,
       adapter: createRecordingAdapter(ADAPTER_A),
       secretSource: fixedSecretSource(ADAPTER_A, secret),
+      expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
     };
     await unsafeHandleDispatchRequest(
       configuration,
@@ -287,9 +303,15 @@ describe('`§25` — THE CREDENTIAL LABELS ARE NOT A FINGERPRINT', () => {
         resolve: () =>
           Promise.resolve({
             kind: 'RESOLVED' as const,
-            credential: { secret: secretFor('derived'), identity: derived, version: null },
+            credential: {
+              secret: secretFor('derived'),
+              credentialIdentity: derived,
+              identityProvenance: 'SYNTHETIC_TEST_IDENTITY' as const,
+              version: null,
+            },
           }),
       },
+      expectedCredentialId: derived,
     };
     const reply = await handleDispatchRequest(
       configuration,

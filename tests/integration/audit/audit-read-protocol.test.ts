@@ -188,7 +188,7 @@ describe('`§16` — NO CREDENTIAL CROSSES IPC', () => {
         operation: 'MESSAGE_ACTIVITY_SEARCH',
         records: [],
         recordCount: 0,
-        credentialIdentity: 'audit-read-credential',
+        credentialIdentity: 'synthetic_esp.audit_read',
         providerQueriedAtMs: PERIOD_START,
       }),
     );
@@ -351,6 +351,10 @@ describe('`48` v1.3 note — the read is PERIOD-BOUNDED, always', () => {
       'PROVIDER_IDENTITY_MISMATCH',
       'CREDENTIAL_UNAVAILABLE',
       'CREDENTIAL_NOT_READ_ONLY',
+      // v1.3.7 correction: the resolved material is not the credential the signed class-5
+      // record governs. Its own code, because "the boundary could not answer" and "it
+      // answered with the wrong credential" are different facts.
+      'CREDENTIAL_IDENTITY_MISMATCH',
       'PROVIDER_UNAVAILABLE',
       'RESPONSE_TOO_LARGE',
     ]);

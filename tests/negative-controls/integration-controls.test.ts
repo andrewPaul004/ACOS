@@ -85,13 +85,21 @@ function fixture(): SecretFixtureDirectory {
   return secrets;
 }
 
+/** The identity this file's source resolves, echoed by every configuration below. */
+const FIXED_CREDENTIAL_IDENTITY = 'label';
+
 function fixedSecretSource(adapterId: string, secret: string): AdapterSecretSource {
   return {
     declaredAdapterId: adapterId,
     resolve: () =>
       Promise.resolve({
         kind: 'RESOLVED',
-        credential: { secret, identity: 'label', version: 'ACCEPT' },
+        credential: {
+          secret,
+          credentialIdentity: FIXED_CREDENTIAL_IDENTITY,
+          identityProvenance: 'SYNTHETIC_TEST_IDENTITY',
+          version: 'ACCEPT',
+        },
       }),
   };
 }
@@ -177,6 +185,10 @@ describe('CONTROL 3 — the entire parent environment inherited', () => {
         adapterModule: join(ADAPTER_A_ROOT, 'adapter.ts'),
         secretSourceModule: join(ADAPTER_A_ROOT, 'secretSource.ts'),
         secretLocator: locator,
+        // The fixture writes this identity by default, so the unsafe child STARTS and its
+        // declared defect — inheriting the whole parent environment — is what the assertion
+        // below observes. A child that failed to start would prove nothing.
+        expectedCredentialId: CREDENTIAL_A_NON_MONETARY,
       });
       spawned.push(child);
 
@@ -260,6 +272,7 @@ describe('CONTROL 5 — an invocation with no authorisation reference', () => {
         adapterId: ADAPTER_A,
         adapter: productionAdapter,
         secretSource: fixedSecretSource(ADAPTER_A, secret),
+        expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
       },
       encode(recomputed),
     );
@@ -275,6 +288,7 @@ describe('CONTROL 5 — an invocation with no authorisation reference', () => {
         adapterId: ADAPTER_A,
         adapter: unsafeAdapter,
         secretSource: fixedSecretSource(ADAPTER_A, secret),
+        expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
       },
       encode(recomputed),
       { skipAuthorisationRefCheck: true },
@@ -298,7 +312,12 @@ describe('CONTROL 6 — authorisation A used for effect B', () => {
 
     const productionAdapter = createRecordingAdapter(ADAPTER_A);
     const production = await handleDispatchRequest(
-      { adapterId: ADAPTER_A, adapter: productionAdapter, secretSource: fixedSecretSource(ADAPTER_A, secret) },
+      {
+        adapterId: ADAPTER_A,
+        adapter: productionAdapter,
+        secretSource: fixedSecretSource(ADAPTER_A, secret),
+        expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
+      },
       attack,
     );
     expect(production.kind).toBe('REQUEST_REFUSED');
@@ -306,7 +325,12 @@ describe('CONTROL 6 — authorisation A used for effect B', () => {
 
     const unsafeAdapter = createRecordingAdapter(ADAPTER_A);
     const unsafe = await unsafeHandleDispatchRequest(
-      { adapterId: ADAPTER_A, adapter: unsafeAdapter, secretSource: fixedSecretSource(ADAPTER_A, secret) },
+      {
+        adapterId: ADAPTER_A,
+        adapter: unsafeAdapter,
+        secretSource: fixedSecretSource(ADAPTER_A, secret),
+        expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
+      },
       attack,
       { bindingCheckIsNullCheckOnly: true },
     );
@@ -403,6 +427,9 @@ describe('CONTROL 9 — a supervisor that replays the last request after a resta
       adapterModule: join(ADAPTER_A_ROOT, 'adapter.ts'),
       secretSourceModule: join(ADAPTER_A_ROOT, 'secretSource.ts'),
       secretLocator: locator,
+      // As above: the replay defect is the one under test, so the restarted child must be
+      // able to start. The identity matches what the fixture writes.
+      expectedCredentialId: CREDENTIAL_A_NON_MONETARY,
     });
     const child = supervisor.start();
     spawned.push({ kill: () => supervisor.stop() });
@@ -486,7 +513,12 @@ describe('CONTROL 10 — an IPC deadline mapped to NOT_SENT_CONFIRMED', () => {
       sent += 1;
     });
     const reply = await handleDispatchRequest(
-      { adapterId: ADAPTER_A, adapter: unsafeAdapter, secretSource: fixedSecretSource(ADAPTER_A, secret) },
+      {
+        adapterId: ADAPTER_A,
+        adapter: unsafeAdapter,
+        secretSource: fixedSecretSource(ADAPTER_A, secret),
+        expectedCredentialId: FIXED_CREDENTIAL_IDENTITY,
+      },
       encode(buildDispatchRequest(syntheticEnvelope({ adapter: ADAPTER_A }))),
     );
     expect(sent).toBe(1);

@@ -25,6 +25,7 @@ import {
   AUDIT_PERIOD_END_MS,
   AUDIT_PERIOD_START_MS,
   AUDIT_PROVIDER,
+  AUDIT_READ_CREDENTIAL_ID,
   auditReaderRegistry,
   awaitReaderReady,
   launchAuditReader,
@@ -92,7 +93,7 @@ describe('CONTROL 5 — the audit credential resides in the control/audit parent
       locator = secrets.write('audit', {
         providerId: AUDIT_PROVIDER,
         secret,
-        identity: 'audit-read-credential',
+        credentialIdentity: AUDIT_READ_CREDENTIAL_ID,
       });
       return auditReaderRegistry([readerADescriptor(locator)]);
     });
@@ -109,7 +110,7 @@ describe('CONTROL 5 — the audit credential resides in the control/audit parent
     expect(launched.client.capturedReaderStderr(AUDIT_PROVIDER) ?? '').not.toContain(secret);
     // The response carries the SOURCE's label and no material.
     expect(outcome.kind === 'EVIDENCE' && outcome.credentialIdentity).toBe(
-      'audit-read-credential',
+      AUDIT_READ_CREDENTIAL_ID,
     );
   });
 });
@@ -162,7 +163,7 @@ describe('CONTROL 7 — the audit provider client exposes a send operation', () 
   it('UNSAFE mutates provider state with the AUDIT credential; PRODUCTION refuses the object', async () => {
     const secret = mintAuditSentinelSecret('c7');
     const unsafeReader = new UnsafeSendCapableAuditReader(AUDIT_PROVIDER);
-    const source = fixedAuditSecretSource(AUDIT_PROVIDER, secret, 'audit-read-credential');
+    const source = fixedAuditSecretSource(AUDIT_PROVIDER, secret, AUDIT_READ_CREDENTIAL_ID);
 
     // UNSAFE: the reader satisfies the interface structurally AND can write.
     const resolution = await source.resolve();
@@ -170,7 +171,12 @@ describe('CONTROL 7 — the audit provider client exposes a send operation', () 
     await unsafeReader.sendToProvider(
       resolution.kind === 'RESOLVED'
         ? resolution.credential
-        : { secret: '', identity: null, version: null },
+        : {
+            secret: '',
+            credentialIdentity: '',
+            identityProvenance: 'SYNTHETIC_TEST_IDENTITY' as const,
+            version: null,
+          },
       'a mutation nobody authorised',
     );
     expect(unsafeReader.mutations).toHaveLength(1);
@@ -182,6 +188,7 @@ describe('CONTROL 7 — the audit provider client exposes a send operation', () 
         reader: unsafeReader,
         secretSource: source,
         credentialRiskClass: REQUIRED_AUDIT_CREDENTIAL_RISK_CLASS,
+        expectedCredentialId: AUDIT_READ_CREDENTIAL_ID,
       },
       encoded(),
     );
@@ -199,6 +206,7 @@ describe('CONTROL 7 — the audit provider client exposes a send operation', () 
         reader: auditProviderReader,
         secretSource: source,
         credentialRiskClass: REQUIRED_AUDIT_CREDENTIAL_RISK_CLASS,
+        expectedCredentialId: AUDIT_READ_CREDENTIAL_ID,
       },
       encoded(),
     );
@@ -212,6 +220,7 @@ describe('CONTROL 7 — the audit provider client exposes a send operation', () 
       reader: auditProviderReader,
       secretSource: source,
       credentialRiskClass: 'NON_MONETARY_WRITE',
+      expectedCredentialId: 'unsafe-fixture',
     };
     const refused = await handleProviderReadRequest(configuration, encoded());
     expect(refused.kind === 'PROVIDER_READ_REFUSED' && refused.reason).toBe(
@@ -241,7 +250,7 @@ describe('CONTROL 8 — the audit finding derived from a control-plane verdict',
       },
     ],
     recordCount: 1,
-    credentialIdentity: 'audit-read-credential',
+    credentialIdentity: AUDIT_READ_CREDENTIAL_ID,
     providerQueriedAtMs: AUDIT_PERIOD_START_MS,
     readDigest: 'deadbeef',
   });

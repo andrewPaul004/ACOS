@@ -51,7 +51,7 @@ Where a property bounds money, this plan now names a **separate oracle**:
 | `MAL_monetary` / `MAL_total` (I7) | **Brute-force enumeration of grant combinations by a second implementation** over `51-limits-fixture.md` |
 | Contribution margin | Independently derived figure from A2X output on a fixture period |
 | Adapter semantic mapping | **Externally produced total** — processor export, bank statement — with tolerance set to **zero** |
-| Duplicate-send distinguishability (I36) | **Provider sandbox**, real kill points, provider-reported accepted count |
+| Duplicate-send distinguishability (I36) | **A dedicated non-production provider environment that RECORDS its accepted sends** (§5, v1.3.7), real kill points, provider-reported accepted count |
 | Escalation detection | **Independently authored** held-out corpus, plus production recall |
 | Audit completeness (I17) | **The audit plane's own vendor reads** (I8) |
 
@@ -215,6 +215,48 @@ The honest summary: symcc converts one class of reasoning error into a build fai
 - **The six outbox kill points** from `44 §5.2`: before the claim commits, after the claim and before the request, after the request leaves and before the response, after the response and before the outcome commits, after the outcome commits, and on a recovery that re-drives an incomplete step. Assert **exactly one accepted message** per intended message, measured by the **provider's own accepted count** rather than by ACOS's record (I36, I20).
 - **The engine's guarantee is bounded, and the test says where.** It covers suspension and resume. It does **not** cover crash-during-dispatch, because an incomplete step is not a checkpointed step — so the kill points in the third and fourth rows above are resolved by vendor idempotency, a vendor query or the outbox claim, and the test must attribute each pass to the mechanism that produced it rather than to the engine.
 - **`refundCreate`'s deduplication window is measured, not assumed.** Its key scope and window are undocumented in this package. If the window is shorter than the reconciler's resolution latency it does not cover the case it is relied on for, and until this test runs `33 §6` and `35 §3` state the property as **unverified** (R20).
+
+**v1.3.7 — WHAT "A VENDOR SANDBOX" MUST MEAN HERE, BECAUSE THE WORD IS NOT ENOUGH.**
+
+"Real sandbox rather than mock" was written against the mock's failure mode: a naive local
+idempotency implementation that passes where the vendor would not. **It did not anticipate the
+opposite failure**, which is a vendor mode that is genuinely real and genuinely bounded and
+**deliberately produces no evidence**.
+
+> **A NON-PRODUCTION TEST PATH THAT SUPPRESSES THE PROVIDER'S OWN EVIDENCE SURFACE DOES NOT
+> SATISFY THE `I36` VALIDATION PATH.**
+
+`I36`'s oracle is *"the provider's own accepted count"*, read back from the provider. A mode in
+which the request is validated but generates no activity record and no event gives a kill-point
+run nothing to read, so **every one of the six kill points is unobservable** — and the run would
+report passes that were never measured.
+
+**THE SAME BOUNDED DESIGN MUST CARRY THE WHOLE CHAIN**, end to end, and it is a conjunction over
+one configuration rather than over the provider's feature list:
+
+```
+real API request
+  -> the provider accepts / processes the request
+  -> provider-side query or event evidence EXISTS for that request
+  -> the INDEPENDENT read-only audit credential can observe it
+```
+
+**IT IS NOT ENOUGH THAT THE PROVIDER HAS A SANDBOX MECHANISM AND, SEPARATELY, AN ACTIVITY-QUERY
+API.** Each may be true of a different configuration, and a selection rule that checks them
+independently will admit a provider whose safe mode is precisely the mode with no evidence. The
+provider-selection record must therefore declare the ONE non-production path it intends to run
+and establish that path against the whole chain above.
+
+**THE WORKED CASE, RECORDED BECAUSE IT IS THE SELECTED PROVIDER'S.** Twilio SendGrid's Sandbox
+Mode validates a Mail Send request and never delivers it, **and its official documentation
+states that requests made in sandbox mode generate no events in either the Event Webhook or
+Email Activity.** It is therefore usable for request-shape and credential-scope validation and
+is **not usable** for accepted-count evidence, for the `I36` six-kill-point oracle, for Email
+Activity correlation or for Event Webhook reconciliation. The `I36`-compatible path at that
+provider is a **dedicated non-production sending identity with sandbox mode DISABLED and an
+owner-controlled sink recipient** — a real accepted send, recorded, queryable, and reaching no
+customer. `tools/provider-selection/` holds the dated documentation evidence; this section holds
+the rule that evidence is judged against.
 
 **Duplicate-delivery fuzz.** Replay every webhook fixture 1–10 times in random order with random delays, including out-of-order `updated` before `create`. Assert exactly one effect row, one fact chain, and correct final state. Include the case where ACOS was down for part of the sequence and only the reconciler's poll recovers it — `08 §7` gives Shopify **no delivery guarantee**, so this is the normal path rather than an edge case.
 
@@ -449,6 +491,8 @@ This validates B10 and R6 directly. It also validates the claim in `27 §9` that
 - **Inverse sweep test** (v1.1, I8): create an external effect directly at the vendor, outside ACOS, and assert the **audit plane's own vendor read** detects it. v1.0 listed I8 as an audit invariant while `25 §8.3` implemented it in the control plane, where it is worthless under control-plane compromise and reports the adapter's own account under adapter compromise.
 - **Control-artifact integrity test** (v1.1, I19): modify a template, a detector pattern, a promoter rule, a metric spec, a tolerance rule and the adverse-facts threshold set out of band, and assert each halts effects in its affected class.
 - **Replica-read test:** assert the audit process has no write path to the control database, **and that its vendor credentials are read-only** — attempt a write against each and assert vendor-side failure.
+- **Credential identity binding test** (v1.3.7): configure a runtime whose signed `50 §2g` record names credential A and whose secret source resolves credential B, and assert the runtime **refuses before reaching the provider** — on the integration plane before any adapter method runs, and on the audit plane before any provider query. **Then the discriminating half**: assert the refusal is NOT produced by comparing locators, by configuring two DIFFERENT locators that resolve the SAME credential and one locator repointed at a different credential. A locator says where to look; an identity says what was found, and a test that cannot tell them apart is not testing this.
+- **Credential scope conformance test** (v1.3.7): identity binding proves *"this is credential A"* and **not** *"credential A still holds the permissions the signed record declares"*. A scoped provider key is mutable at the provider, so its actual privilege envelope is probed **empirically against the configured account**: the send credential succeeds at its permitted send; the audit credential succeeds at the activity read; **the audit credential's send attempt is refused BY THE PROVIDER**; and every architecture-required prohibited operation stays provider-refused. **No signature and no consistency check over signed bytes discharges any of these.**
 - **Module-boundary test:** attempt cross-module table access with a module's database role and assert it fails at the database. **v1.1: this is drift detection, not isolation** (`33 §6`, ADR-003) — the `effect_path` role spans four schemas because §1's decisive transaction requires it, so a compromised control-plane process holds it. Assert the role inventory matches the declared set, and assert **no role other than `effect_path` spans the four.**
 - **Contradiction detection:** seed conflicting facts and assert `24 §15`'s contradiction handling surfaces rather than silently resolves.
 
@@ -484,7 +528,7 @@ Nothing advances autonomy without these. Sourced from `11`, not invented here.
 | **Two-sided mirror state** (new, v1.2) | Declared and observed states agree; divergence in either direction is an incident; `CORROBORATED_DEGRADED` requires an audit-plane signal | Both planes | I17f, VC-A2 |
 | **Verify-mode non-increase** (new, v1.2) | A resume never increases a held reservation, DB-enforced, and fails **independently** of I31 | Trigger test with the application check disabled | I51, VC-R4 |
 | **Audit completeness (new)** | Zero `journal_seq` gaps between control and audit; `row_count` anchor matches hourly | **The audit plane's own vendor reads** (I8) and the external anchor | I17, I17b, I41 |
-| **Duplicate-send distinguishability (new)** | Exactly one **provider-reported accepted message** per intended message, across all six outbox kill points | **Real ESP sandbox**, provider's accepted count | I36, I20, ADR-026 |
+| **Duplicate-send distinguishability (new)** | Exactly one **provider-reported accepted message** per intended message, across all six outbox kill points | **A dedicated non-production ESP environment whose accepted sends ARE recorded and queryable** (§5, v1.3.7) — a test mode that suppresses the provider's evidence surface does not satisfy this gate | I36, I20, ADR-026 |
 | **Control-artifact integrity (new)** | Every one of the sixteen artifact classes halts its affected effect class on an out-of-band hash change | Independent recomputation by the audit plane | I19, ADR-025 |
 | Task reliability | pass^4 ≥ 90%; zero policy violations; zero RED-class escalation misses. **Sample size, interval and cost per §8.2. No capability is expected to promote during the MVP.** | Independent eval harness | `11 E7` |
 | Research integrity | 0% fabrication; 0 of 5 false closures. **Deferred with the research worker** | Held-out corpus | `11 E8` |

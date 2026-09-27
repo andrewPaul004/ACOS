@@ -158,7 +158,7 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
     );
   });
 
-  it('the integration RUNTIME reads only its own seven launch variables', async () => {
+  it('the integration RUNTIME reads only its own eight launch variables', async () => {
     const files = await filesUnder('src', 'integration', 'runtime');
     const readers = files.filter(({ code }) => /process\.env/.test(code));
     expect(readers.map(({ path }) => rel(path))).toEqual([
@@ -173,7 +173,7 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
     }
   });
 
-  it('the AUDIT provider runtime reads only its own eight launch variables', async () => {
+  it('the AUDIT provider runtime reads only its own nine launch variables', async () => {
     /*
      * The mirror of the integration-runtime assertion above, and it exists for the same
      * reason: `controlPlaneFiles()` excludes this directory because it is a different
@@ -199,6 +199,45 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
     // AND IT READS NO KEY THE OTHER PLANE OWNS. `§13`: no control send credential.
     for (const key of INTEGRATION_RUNTIME_ENV_KEYS) {
       expect(code, key).not.toContain(key);
+    }
+  });
+
+  it('the THREE transcriptions of `50 §2g` field 1’s provenance set agree', async () => {
+    /*
+     * THREE INDEPENDENT COPIES, AND THE DISAGREEMENT IS THE ASSERTION.
+     *
+     * `credentialRisk.ts` holds the canonical list; `adapterSecretSource.ts` transcribes it
+     * so the integration RUNTIME's import closure stays free of the control plane's trust
+     * chain; `auditSecretSource.ts` transcribes it again so the audit plane's stays free of
+     * both. The same discipline `auditPlaneVerifier.ts` applies to `50 §6`'s inventory and
+     * `readerEnvironment.ts` applies to the other plane's key list.
+     *
+     * Two copies that must agree and cannot import each other need a third party to compare
+     * them, and a TEST is the right third party: importing all three here is harmless,
+     * because this file is not either runtime.
+     */
+    const kernel = await import('../../../src/kernel/controlArtifacts/credentialRisk.js');
+    const integration = await import(
+      '../../../src/integration/runtime/adapterSecretSource.js'
+    );
+    const audit = await import('../../../src/audit/provider/runtime/auditSecretSource.js');
+
+    expect([...integration.ADAPTER_CREDENTIAL_IDENTITY_PROVENANCES]).toEqual([
+      ...kernel.CREDENTIAL_IDENTITY_PROVENANCES,
+    ]);
+    expect([...audit.AUDIT_CREDENTIAL_IDENTITY_PROVENANCES]).toEqual([
+      ...kernel.CREDENTIAL_IDENTITY_PROVENANCES,
+    ]);
+
+    // AND NEITHER RUNTIME IMPORTS THE OTHER TWO. The agreement above must be a coincidence
+    // of two independent transcriptions, not of one shared module.
+    for (const [label, file] of [
+      ['integration', join('src', 'integration', 'runtime', 'adapterSecretSource.ts')],
+      ['audit', join('src', 'audit', 'provider', 'runtime', 'auditSecretSource.ts')],
+    ] as const) {
+      const code = await readFile(join(process.cwd(), file), 'utf8');
+      expect(code, label).not.toMatch(/from\s+['"][^'"]*credentialRisk/);
+      expect(code, label).not.toMatch(/from\s+['"][^'"]*(adapterSecretSource|auditSecretSource)/);
     }
   });
 
@@ -365,7 +404,7 @@ describe('`§13`, `§14` — THE WIRE SURFACE IS ASSERTED AGAINST A HAND-AUTHORE
     ]);
   });
 
-  it('and the refusal reasons are exactly these sixteen', () => {
+  it('and the refusal reasons are exactly these seventeen', () => {
     expect([...REFUSAL_REASONS]).toEqual([
       'PROTOCOL_VERSION_MISMATCH',
       'MESSAGE_NOT_AN_OBJECT',
@@ -381,6 +420,9 @@ describe('`§13`, `§14` — THE WIRE SURFACE IS ASSERTED AGAINST A HAND-AUTHORE
       'PAYLOAD_HASH_MISMATCH',
       'CREDENTIAL_REVOKED',
       'CREDENTIAL_UNAVAILABLE',
+      // v1.3.7 correction: the resolved material is not the credential whose signed class-5
+      // record supplied this runtime's risk class.
+      'CREDENTIAL_IDENTITY_MISMATCH',
       'ADAPTER_NOT_LOADED',
       'CONCURRENCY_LIMIT_EXCEEDED',
     ]);

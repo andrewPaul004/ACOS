@@ -41,9 +41,12 @@ import { auditProviderReaderIdentity } from './readerIdentity.js';
  * `§14`: "Do not make audit verification depend on a control-plane `verified=true`."
  *
  * The list carries a protocol version, an identity, a provider id, a confinement root, two
- * module specifiers and one locator. There is no `ACOS_CONTROL_*` key, no effect id, no
- * outbox id and no expected outcome, so a reader has no environment slot a control-plane
- * belief could occupy even if a deployment wanted to pass one.
+ * module specifiers, one locator and two echoes of the AUDIT PLANE'S OWN reading of the
+ * signed class-5 record — its risk class and its `credential_id`. There is no
+ * `ACOS_CONTROL_*` key, no effect id, no outbox id and no expected outcome, so a reader has
+ * no environment slot a control-plane belief could occupy even if a deployment wanted to
+ * pass one. **Both echoes are produced by this plane's own verifier, never by the control
+ * plane's**, which is what keeps `§14`'s independence a fact about the graph.
  * =================================================================================
  */
 
@@ -86,8 +89,35 @@ export const ENV_AUDIT_SECRET_LOCATOR = 'ACOS_AUDIT_READ_SECRET_LOCATOR';
  * the class from here INSTEAD of from the bundle, which is the attack this comment describes.
  */
 export const ENV_AUDIT_CREDENTIAL_RISK_CLASS = 'ACOS_AUDIT_CREDENTIAL_RISK_CLASS_ECHO';
+/**
+ * `50 §2g` FIELD 1 — THE SIGNED EXPECTED CREDENTIAL IDENTITY, AS A TRUSTED LAUNCH ECHO.
+ *
+ * =================================================================================
+ * THE SECOND ECHO, AND IT ANSWERS A QUESTION THE FIRST ONE CANNOT
+ *
+ * `ENV_AUDIT_CREDENTIAL_RISK_CLASS` carries WHAT CLASS the signed record declares. This one
+ * carries WHICH CREDENTIAL that record is about, and the gap between the two is the defect
+ * this correction closes: a reader can start under a genuine `READ_ONLY` echo, from a
+ * genuine `audit_plane`-scoped signed record, with a locator genuinely disjoint from the
+ * integration plane's — and still resolve a send-capable token, because nothing compared the
+ * material in its hand to the record that governs it.
+ *
+ * **IT IS NOT AUTHORITY.** The AUDIT PLANE's own verifier read the class-5 bytes
+ * (`auditPlaneVerifier.ts`, from this plane's own copy, sharing no module with the control
+ * plane), `createAuditReaderRegistry` selected the record and refused every descriptor that
+ * did not match it, and only then does `auditReadClient.ts` fork. This value is the parent's
+ * echo of a decision already taken, and the child's one use for it is the comparison the
+ * parent cannot make, because the parent never holds resolved material.
+ *
+ * **IT CAN ONLY NARROW**, exactly as the risk-class echo can: the child compares the echo to
+ * what its source resolved, and any disagreement refuses.
+ *
+ * **AND IT IS AN IDENTITY, NEVER MATERIAL.** No credential material travels in any
+ * environment or on any IPC channel, on either plane.
+ */
+export const ENV_AUDIT_EXPECTED_CREDENTIAL_ID = 'ACOS_AUDIT_EXPECTED_CREDENTIAL_ID';
 
-/** THE CLOSED ALLOWLIST. Eight keys. A reader sees these and, from ACOS, nothing else. */
+/** THE CLOSED ALLOWLIST. Nine keys. A reader sees these and, from ACOS, nothing else. */
 export const AUDIT_READER_ENV_KEYS = [
   ENV_AUDIT_PROTOCOL_VERSION,
   ENV_AUDIT_READER_IDENTITY,
@@ -97,6 +127,7 @@ export const AUDIT_READER_ENV_KEYS = [
   ENV_AUDIT_SECRET_SOURCE_MODULE,
   ENV_AUDIT_SECRET_LOCATOR,
   ENV_AUDIT_CREDENTIAL_RISK_CLASS,
+  ENV_AUDIT_EXPECTED_CREDENTIAL_ID,
 ] as const;
 
 export type AuditReaderEnvKey = (typeof AUDIT_READER_ENV_KEYS)[number];
@@ -126,7 +157,7 @@ export const PLATFORM_INJECTED_ENV_KEYS: readonly string[] =
     : [];
 
 /**
- * The integration plane's seven keys, TRANSCRIBED rather than imported.
+ * The integration plane's eight keys, TRANSCRIBED rather than imported.
  *
  * An import would make the audit reader's module graph contain the integration plane's
  * protocol package, which is the coupling `readWire.ts`'s header refuses. Two independent
@@ -143,6 +174,7 @@ export const INTEGRATION_ENV_KEYS_FOR_DISJOINTNESS: readonly string[] = Object.f
   'ACOS_INTEGRATION_ADAPTER_MODULE',
   'ACOS_INTEGRATION_SECRET_SOURCE_MODULE',
   'ACOS_INTEGRATION_SECRET_LOCATOR',
+  'ACOS_INTEGRATION_EXPECTED_CREDENTIAL_ID',
 ]);
 
 /** `§14`'s "separate environment allowlist", as a computation rather than an observation. */
@@ -159,6 +191,15 @@ export interface AuditReaderLaunchConfiguration {
   readonly secretSourceModule: string;
   readonly secretLocator: string;
   readonly credentialRiskClass: string;
+  /**
+   * `50 §2g` field 1, as the AUDIT PLANE's own verifier read it out of the class-5 record.
+   *
+   * LOCATOR ISOLATION AND CREDENTIAL IDENTITY BINDING ARE DIFFERENT CONTROLS AND BOTH ARE
+   * KEPT. `createAuditReaderRegistry` still refuses a locator the integration plane holds;
+   * this value makes the reader refuse material that is not the credential the signed record
+   * governs, which a locator comparison cannot decide either way.
+   */
+  readonly expectedCredentialId: string;
 }
 
 /**
@@ -181,5 +222,6 @@ export function buildAuditReaderEnvironment(
     [ENV_AUDIT_SECRET_SOURCE_MODULE]: configuration.secretSourceModule,
     [ENV_AUDIT_SECRET_LOCATOR]: configuration.secretLocator,
     [ENV_AUDIT_CREDENTIAL_RISK_CLASS]: configuration.credentialRiskClass,
+    [ENV_AUDIT_EXPECTED_CREDENTIAL_ID]: configuration.expectedCredentialId,
   });
 }

@@ -192,6 +192,11 @@ export class IntegrationClient {
         adapterModule: descriptor.adapterModule,
         secretSourceModule: descriptor.secretSourceModule,
         secretLocator: descriptor.secretLocator,
+        // `50 §2g` FIELD 1's ECHO. The registry is where the AUTHORITY was read: this
+        // descriptor exists only because `createAdapterRuntimeRegistry` found a signed
+        // class-5 record for this `credentialId`, checked its adapter binding and its risk
+        // class, and refused to construct otherwise. See `ENV_EXPECTED_CREDENTIAL_ID`.
+        expectedCredentialId: descriptor.credentialId,
       }),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       serialization: 'json',

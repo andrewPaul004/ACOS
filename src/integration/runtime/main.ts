@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import {
   ENV_ADAPTER_ID,
   ENV_ADAPTER_MODULE,
+  ENV_EXPECTED_CREDENTIAL_ID,
   ENV_PROTOCOL_VERSION,
   ENV_RUNTIME_IDENTITY,
   ENV_RUNTIME_ROOT,
@@ -176,6 +177,18 @@ export async function composeIntegrationRuntime(): Promise<{
   const adapterModule = readEnv(ENV_ADAPTER_MODULE);
   const secretSourceModule = readEnv(ENV_SECRET_SOURCE_MODULE);
   const secretLocator = readEnv(ENV_SECRET_LOCATOR);
+  /*
+   * `50 §2g` FIELD 1's ECHO, READ HERE AND COMPARED IN THE HOST.
+   *
+   * `readEnv` refuses an absent or empty value, so a runtime launched WITHOUT an expected
+   * credential identity does not start. That is the fail-closed direction and it is the one
+   * that matters: the alternative — start, and skip the comparison when there is nothing to
+   * compare against — is precisely the defect this correction closes, one level up.
+   *
+   * It is NOT compared here, because at this point nothing has been resolved. The comparison
+   * needs the material's own identity, and the material is resolved per invocation.
+   */
+  const expectedCredentialId = readEnv(ENV_EXPECTED_CREDENTIAL_ID);
 
   for (const specifier of [adapterModule, secretSourceModule]) {
     if (!isInsideRuntimeRoot(runtimeRoot, specifier)) {
@@ -221,7 +234,7 @@ export async function composeIntegrationRuntime(): Promise<{
   }
 
   return {
-    configuration: Object.freeze({ adapterId, adapter, secretSource }),
+    configuration: Object.freeze({ adapterId, adapter, secretSource, expectedCredentialId }),
     runtimeIdentity,
   };
 }

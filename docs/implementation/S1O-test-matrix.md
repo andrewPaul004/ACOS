@@ -3,6 +3,11 @@
 Every obligation the mandate states, and the assertion that discharges it. **An obligation
 with no row is an obligation nobody tested.**
 
+**`§0` — THE OWNER CORRECTION'S OWN OBLIGATIONS ARE IN `§12` AND `§13`.** They are listed last
+because they were added last, not because they matter least: `§12` is the credential-identity
+binding, which is the defect the owner review found, and `§13` is the SendGrid sandbox
+correction and the test-path/evidence compatibility rule.
+
 ---
 
 ## 1. `§1`–`§7` — the credential-risk definition and its signed authority
@@ -131,3 +136,52 @@ with no row is an obligation nobody tested.**
   write because this repository wrote it to. `36 §13`'s empirical test is OPEN.
 * **That option B works.** It is not built.
 * **That any signature is discharged.** Class 5's is newly owed.
+
+---
+
+## 12. The owner correction — credential identity binding
+
+**`50 §2g` field 1, and the runtime-use requirement.** Every row below is new.
+
+| Obligation | Assertion | File |
+|---|---|---|
+| `CREDENTIAL_IDENTITY_MISMATCH` is its OWN closed refusal, on both planes | membership in `REFUSAL_REASONS` and in `PROVIDER_READ_REFUSALS`, each asserted beside the code it is NOT a synonym for | `credential-identity-binding.test.ts`, `audit-credential-identity-binding.test.ts` |
+| The refusal-set equalities are amended out loud | seventeen integration reasons, thirteen audit reasons, each an exact list | `source-boundary.test.ts`, `audit-read-protocol.test.ts` |
+| The expected identity reaches the child, and is an IDENTITY not material | the constructed environment equals the declared allowlist; the new key carries the credential id; no sentinel appears in the environment | both binding suites |
+| The three transcriptions of the provenance set agree | kernel, integration runtime and audit runtime lists compared, **and neither runtime imports the other two** | `source-boundary.test.ts` |
+| The kernel and per-plane comparisons agree on every case | five integration cases and four audit cases, including both empty-operand cases | both binding suites |
+| **`§12` attack** — signed `NON_MONETARY_WRITE`, resolved `MONEY_MOVING` | production REFUSES `CREDENTIAL_IDENTITY_MISMATCH` **and the adapter never ran** | `credential-identity-binding.test.ts` |
+| **`§12` discrimination** | `unsafeHandleWithoutCredentialIdentityBinding` DISPATCHES on the same input and reports the money-moving identity | same, with `unsafe-credential-identity-binding.ts` |
+| **`§13` attack** — signed `READ_ONLY`, resolved a send credential | production REFUSES before `readFromProvider` | `audit-credential-identity-binding.test.ts` |
+| **`§13` discrimination** | `unsafeHandleWithoutAuditIdentityBinding` READS on the same input and reports the send identity | same |
+| The matching pair proceeds, so neither refusal is vacuous | in-process dispatch and read both succeed and report the bound identity | both |
+| **A REAL FORKED RUNTIME refuses**, on both planes | the descriptor and locator are untouched and the FILE holds the other credential: integration returns `NOT_SENT_CONFIRMED`, audit returns `NO_EVIDENCE` / `CREDENTIAL_IDENTITY_MISMATCH`, and both PIDs differ from the test's | both |
+| The refusal teaches a closed code and neither identity | four-member refusal shape; neither credential id appears in the serialised reply | both |
+| **Locator inequality is NOT proof of credential separation** | `unsafeLocatorInequalityProvesSeparation` answers `true` on two locators that name one credential; production's comparison still refuses | `audit-credential-identity-binding.test.ts §3` |
+| **Locator equality is NOT proof of credential identity** | `unsafeLocatorComparisonAsIdentityBinding` answers `true`; production refuses the wrong material anyway | same |
+| **Both controls are kept** | a SHARED locator still throws `READER_LOCATOR_SHARED_WITH_INTEGRATION`, and the identity check still fires on an exclusively-held locator | same |
+| A TEST source declares its provenance | fixtures return `SYNTHETIC_TEST_IDENTITY`, and a source that names nothing resolves `UNAVAILABLE` | fixture sources |
+
+---
+
+## 13. The owner correction — the SendGrid record and the compatibility rule
+
+| Obligation | Assertion | File |
+|---|---|---|
+| `producesQueryableActivity` is **`false`**, not `null` | equality, plus `basis` and the official Sandbox Mode reference, plus the mechanism text naming both suppressed surfaces | `provider-selection.test.ts §6` |
+| The four prohibited uses are NAMED | accepted-count evidence, the `I36` oracle, Email Activity correlation, Event Webhook reconciliation | same |
+| What the mode IS for is also recorded | request-shape and credential-scope validation | same |
+| The negative is SETTLED, not pending | `SANDBOX_ACTIVITY_EVIDENCE = ABSENT` in `resolvedDocumentedNegatives`, and the old pending item is gone from the list | same |
+| Every `§7` account item is carried, none completed | eight markers present; every item still carries `ACCOUNT VALIDATION PENDING` | same |
+| SendGrid remains selected on a NON-sandbox path | `isSelectable` true, `evidencePathIncompatibility` null, `sandboxModeEnabled` false, controlled recipient required | `provider-selection.test.ts §7` |
+| The path names its provisioning items, including the sink recipient | six markers, plus "No customer recipient and no production" | same |
+| The `NON_PRODUCTION_TEST_PATH` finding cites the real path | evidence mentions `sandbox_mode=false` and says sandbox mode is NOT this path | same |
+| Mailgun is blocked TWICE, for two different reasons | one blocking finding AND an unresolved evidence path | same |
+| **CONTROL 16 discriminates** | the unsafe rule selects a record whose sandbox suppresses evidence **and that record passes the capability conjunction**; production refuses the path | `provider-selection.test.ts §8` |
+| A self-contradictory path is caught | sandbox enabled on a provider documented to suppress evidence, claiming evidence anyway | same |
+| **CONTROL 17 discriminates** | the unsafe rule reads `null` as pending; production refuses an unresolved evidence path, and answers `false` on the corrected record | same |
+| The readiness token says NONPRODUCTION and not SANDBOX | exact token equality, plus `toContain('SENDGRID')` and `not.toContain('SANDBOX')` | `s1m-readiness.test.ts` |
+| The token is DERIVED, so it cannot name a stale provider | two derivations asserted | same |
+| **No module still EMITS a `_SANDBOX_CREDENTIALS` token** | the three provider-selection modules are read and every match must be the mandate's own `<PROVIDER>` placeholder in prose | same |
+| Conjunct 6 can block the token on its own | a suppressing record yields `NOT_READY_TO_PROVISION` with the compatibility reason | same |
+| A READY result carries the settled negative AND the pending items | both lists non-empty beside the token | same |

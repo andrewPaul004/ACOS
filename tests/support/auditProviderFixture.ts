@@ -52,7 +52,17 @@ export function mintAuditSentinelSecret(label: string): string {
 export interface AuditSecretFixtureDocument {
   readonly providerId: string;
   readonly secret: string;
-  readonly identity?: string;
+  /**
+   * `50 §2g` FIELD 1 — WHICH CREDENTIAL THIS MATERIAL IS.
+   *
+   * Omitted, `write` supplies `AUDIT_READ_CREDENTIAL_ID` — the identity `readerADescriptor`
+   * names by default and the one the signed class-5 audit record carries — so the ordinary
+   * fixture is a MATCHING pair and every pre-existing audit test keeps its happy path.
+   *
+   * **A TEST THAT WANTS A MISMATCH SETS IT EXPLICITLY**, which is what makes
+   * `tests/integration/audit/audit-credential-identity-binding.test.ts` a deliberate attack.
+   */
+  readonly credentialIdentity?: string;
   readonly version?: string;
   readonly revoked?: boolean;
 }
@@ -77,7 +87,11 @@ export class AuditSecretFixtureDirectory {
 
   public write(name: string, document: AuditSecretFixtureDocument): string {
     const file = join(this.path, `${name}.json`);
-    writeFileSync(file, JSON.stringify(document), 'utf8');
+    const written: AuditSecretFixtureDocument = {
+      ...document,
+      credentialIdentity: document.credentialIdentity ?? AUDIT_READ_CREDENTIAL_ID,
+    };
+    writeFileSync(file, JSON.stringify(written), 'utf8');
     this.files.set(name, file);
     return file;
   }

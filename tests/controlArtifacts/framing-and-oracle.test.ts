@@ -65,7 +65,7 @@ const DIGEST_B = sha256(Buffer.from('artifact B bytes', 'utf8'));
 const IDENTITY = {
   artifactClass: 3,
   artifactId: 'acos.control.action_catalogue',
-  artifactVersion: 'acos.action_catalogue.2026-09-24',
+  artifactVersion: 'acos.action_catalogue.2026-09-28',
   contentSha256: DIGEST_A,
 };
 

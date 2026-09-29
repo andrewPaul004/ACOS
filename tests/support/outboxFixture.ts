@@ -209,6 +209,21 @@ export async function createOutboxHarness(): Promise<OutboxHarness> {
             'fulfilment.reship',
             RESHIP_CONSTRUCTOR_VERSION.constructorId,
           ),
+          /*
+           * S1P's `email.send`, FOR THE SAME REASON AND UNDER THE SAME LIMIT.
+           *
+           * `25 §14.1` revalidates the ORIGINAL enumeration/option identity at dispatch, so an
+           * effect the S1P validation seeder authorised cannot be dispatched unless the class
+           * is enumerable. `email.send` has NO production constructor — it is
+           * `UNGOVERNED_FAILS_CLOSED`, and `tests/policy/policy-set-gap-analysis.test.ts`
+           * asserts that by execution — so the fixture supplies the enumeration half exactly
+           * as it does for the other two constructor-less classes. **PRODUCTION'S REGISTRY IS
+           * UNTOUCHED AND STILL REGISTERS ONE CONSTRUCTOR.**
+           */
+          fixtureEnumerationConstructor(
+            'email.send',
+            EMAIL_SEND_CONSTRUCTOR_VERSION.constructorId,
+          ),
         ],
         records: [
           signConstructorVersion(signer, REFUND_VERSION_1_0),
@@ -229,6 +244,15 @@ export async function createOutboxHarness(): Promise<OutboxHarness> {
             changedFields: [],
             semanticChange: false,
             signedAt: RESHIP_CONSTRUCTOR_VERSION.signedAt,
+          }),
+          signConstructorVersion(signer, {
+            constructorId: EMAIL_SEND_CONSTRUCTOR_VERSION.constructorId,
+            actionClass: 'email.send',
+            semanticMajor: EMAIL_SEND_CONSTRUCTOR_VERSION.semanticMajor,
+            nonSemanticMinor: EMAIL_SEND_CONSTRUCTOR_VERSION.nonSemanticMinor,
+            changedFields: [],
+            semanticChange: false,
+            signedAt: EMAIL_SEND_CONSTRUCTOR_VERSION.signedAt,
           }),
         ],
         signer,
@@ -659,6 +683,27 @@ export const RESHIP_CONSTRUCTOR_VERSION = Object.freeze({
 
 /** `51 §2`'s MIE windows: monetary UNBOUNDED, count bounded, irrecoverable bounded. */
 export const RESHIP_WINDOWS: readonly string[] = ['W_DAY_MIE', 'W_MONTH_MIE'];
+
+/**
+ * S1P's `email.send` constructor-version identity. TEST-ONLY, and the same shape as the other
+ * two constructor-less classes'.
+ *
+ * `50 §2` row 19's signed class-19 artifact is NOT touched by S1P: nothing on the
+ * local-authorisation commit path consults `admitConstructorVersionRecords`, and adding a
+ * production constructor record for a class that has no production constructor would be
+ * claiming an authority the slice does not have. The reasoning is recorded in
+ * `docs/implementation/S1P-owner-clarifications.md`.
+ */
+export const EMAIL_SEND_CONSTRUCTOR_VERSION = Object.freeze({
+  constructorId: 'constructor:email.send:s1p-validation-fixture',
+  actionClass: 'email.send' as const,
+  semanticMajor: 1,
+  nonSemanticMinor: 0,
+  semanticChange: false,
+  changedFields: [] as const,
+  signedAt: new Date('2026-01-01T00:00:00.000Z'),
+  recordHash: 'fixture:email-send-constructor-record-hash',
+});
 
 export function reshipDispatchPayloadBytes(input: {
   readonly authorisationRef: string;

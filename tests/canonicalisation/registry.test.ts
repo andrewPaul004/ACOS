@@ -49,9 +49,13 @@ describe('S1B registers exactly one constructor', () => {
 
   it('the catalogue is larger than the registry, which is the point', () => {
     // `37 §2` S1: one REVERSIBLE, one COMPENSABLE, one IRRECOVERABLE, plus one rate-based.
+    // S1P adds `email.send` — the honest class for the real-provider `I36` validation send
+    // — and it too has NO constructor, which is one of the two barriers that keep it
+    // UNGOVERNED_FAILS_CLOSED. The gap between the catalogue and the registry widens by one.
     expect([...ACTION_CLASSES].sort()).toEqual([
       'campaign.budget.set',
       'campaign.pause',
+      'email.send',
       'fulfilment.reship',
       'refund.create',
     ]);

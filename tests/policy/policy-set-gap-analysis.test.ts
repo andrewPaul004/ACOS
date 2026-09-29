@@ -67,6 +67,24 @@ const DECLARED_STATUS: Readonly<Record<string, 'GOVERNED' | 'UNGOVERNED_FAILS_CL
     // `26 §11.2` row 5, the rate class. `26 §8`'s worked policy for it needs the forward
     // integral and window headroom, neither of which S1D implements. Same.
     'campaign.budget.set': 'UNGOVERNED_FAILS_CLOSED',
+    /*
+     * S1P's CLASS, AND THE DECLARATION THAT KEEPS IT FROM BECOMING A CAPABILITY.
+     *
+     * `email.send` was added to the class-3 catalogue so that S1P's real-provider `I36`
+     * validation could name the effect it actually performs. `§1.2` of the S1P correction
+     * mandate rules on what that addition may NOT do: "Adding the class for S1P must NOT
+     * silently enable autonomous production/customer email", "do NOT invent a general
+     * customer-email Cedar grant", "ordinary production policy treatment must remain
+     * UNGOVERNED_FAILS_CLOSED".
+     *
+     * So the class-2 artifact is UNCHANGED — its Cedar schema declares one action and this
+     * is not it — and the gap declaration below is where the status is recorded. The three
+     * assertions in the `UNGOVERNED` block execute that status against `email.send` exactly
+     * as they do against the other three: no registered policy construction, no Cedar action,
+     * and no registered constructor. An ordinary production `email.send` therefore denies at
+     * `26 §7` step C2, before policy, and `36 §3`'s "silently so" is removed by this table.
+     */
+    'email.send': 'UNGOVERNED_FAILS_CLOSED',
   });
 
 describe('every class in the closed catalogue has a declared, tested status', () => {
@@ -114,8 +132,10 @@ describe('the UNGOVERNED classes fail closed — asserted by execution, not by c
     (c) => DECLARED_STATUS[c] === 'UNGOVERNED_FAILS_CLOSED',
   );
 
-  it('there are three of them, so this suite is not vacuous', () => {
-    expect(ungoverned).toHaveLength(3);
+  it('there are four of them, so this suite is not vacuous', () => {
+    // THREE before S1P, four after it. The count is asserted rather than inferred so that a
+    // future catalogue addition that forgot its declared status fails here.
+    expect(ungoverned).toHaveLength(4);
   });
 
   it('none has a registered Cedar request construction — the builder refuses', () => {

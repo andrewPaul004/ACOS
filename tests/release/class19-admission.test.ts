@@ -126,7 +126,7 @@ function class19Bytes(records: readonly ConstructorTuple[]): Buffer {
     `${JSON.stringify(
       {
         artifact_id: 'acos.control.effect_constructors',
-        artifact_version: 'acos.effect_constructors.2026-09-24',
+        artifact_version: 'acos.effect_constructors.2026-09-29',
         records: records.map((entry) => ({
           constructor_id: entry.constructorId,
           action_class: entry.actionClass,
@@ -141,10 +141,63 @@ function class19Bytes(records: readonly ConstructorTuple[]): Buffer {
   );
 }
 
+/**
+ * THE S1P VALIDATION CONSTRUCTOR, ADDED TO THE CANDIDATE BYTES. CHANGED OUT LOUD.
+ *
+ * The repository release carried exactly ONE record until S1P needed a real `email.send`
+ * enumeration constructor. `artifacts/control/class-19.effect-constructors.json` is a
+ * CANDIDATE — no owner ceremony has been performed over it, exactly as for the class-3
+ * `email.send` entry — and `docs/implementation/S1P-release-candidate.md` records that.
+ *
+ * The suite below is unchanged in what it PROVES: membership is rooted in the verified bytes
+ * and every one of `§12`'s four attacks still refuses. What changed is the size of the
+ * manifested set, and asserting the old size would now be asserting the absence of a
+ * constructor this slice deliberately added.
+ */
+const S1P_VALIDATION_MANIFESTED: ConstructorTuple = Object.freeze({
+  constructorId: 'acos.constructor.email.send.s1p_validation',
+  actionClass: 'email.send',
+  semanticMajor: 1,
+  nonSemanticMinor: 0,
+});
+
+/**
+ * THE COMPLETE MANIFESTED SET, SIGNED BY ONE KEY.
+ *
+ * Admission checks BOTH directions: a supplied record outside the verified set is an attempt
+ * to create authority the owner did not sign, and a verified record the caller did NOT supply
+ * is an incomplete deployment. Both fail closed.
+ *
+ * So every happy-path case has to supply the whole set. Before S1P added the validation
+ * constructor the set had one member and `[record(owner)]` was the whole set by accident;
+ * now it is two, and passing one would be exercising `MANIFESTED_CONSTRUCTOR_MISSING` rather
+ * than the property the case names. The ATTACK cases below deliberately supply partial or
+ * foreign sets and keep their own literals.
+ */
+function fullSet(signer: TestSigner): readonly ConstructorVersionRecord[] {
+  return [
+    record(signer),
+    record(signer, {
+      constructorId: S1P_VALIDATION_MANIFESTED.constructorId,
+      actionClass: S1P_VALIDATION_MANIFESTED.actionClass,
+    }),
+  ];
+}
+
 describe('the verified class-19 artifact is what declares which constructor versions exist', () => {
-  it('the repository release carries exactly one record, at 1.0', () => {
+  it('the repository release carries the refund record and the S1P validation record', () => {
     const fixture = completeReleaseFixture({ dir: scratchDirectory('acos-s1l-c19-base-') });
-    expect(verifiedConstructorSet(bundleFor(fixture)).records).toEqual([MANIFESTED]);
+    const records = verifiedConstructorSet(bundleFor(fixture)).records;
+    expect(records).toEqual([S1P_VALIDATION_MANIFESTED, MANIFESTED]);
+    /*
+     * AND NEITHER IS A GENERAL PRODUCTION EMAIL CAPABILITY.
+     *
+     * The identifier says which one it is. A reader of the signed bytes must not be able to
+     * mistake the validation constructor for an ordinary `email.send` implementation, and
+     * `tests/policy/policy-set-gap-analysis.test.ts` proves by execution that the class is
+     * still `UNGOVERNED_FAILS_CLOSED` for ordinary traffic.
+     */
+    expect(S1P_VALIDATION_MANIFESTED.constructorId).toContain('s1p_validation');
   });
 
   it('the manifested record, correctly signed, is admitted and resolves', () => {
@@ -152,12 +205,20 @@ describe('the verified class-19 artifact is what declares which constructor vers
     const owner = newTestSigner();
     const resolver = verifiedConstructorVersionResolver(
       bundleFor(fixture),
-      [record(owner)],
+      fullSet(owner),
       owner.publicKey,
     );
     const identity = resolver.resolve(MANIFESTED.constructorId, 'refund.create');
     expect(identity.semanticMajor).toBe(1);
     expect(identity.nonSemanticMinor).toBe(0);
+
+    // AND THE S1P VALIDATION CONSTRUCTOR RESOLVES THROUGH THE SAME ADMISSION.
+    const validation = resolver.resolve(
+      S1P_VALIDATION_MANIFESTED.constructorId,
+      S1P_VALIDATION_MANIFESTED.actionClass as never,
+    );
+    expect(validation.semanticMajor).toBe(1);
+    expect(validation.nonSemanticMinor).toBe(0);
   });
 });
 
@@ -194,8 +255,8 @@ describe('§12 ATTACK B — a verification key that does not verify the manifest
 
     const resolver = verifiedConstructorVersionResolver(
       bundleFor(fixture),
-      [record(owner)],
-      // A key that does not verify the record the verified artifact declares.
+      fullSet(owner),
+      // A key that does not verify the records the verified artifact declares.
       stranger.publicKey,
     );
 
@@ -213,10 +274,12 @@ describe('§12 ATTACK B — a verification key that does not verify the manifest
   it('admission returns the caller’s records and never supplies one of its own', () => {
     const fixture = completeReleaseFixture({ dir: scratchDirectory('acos-s1l-c19-b2-') });
     const owner = newTestSigner();
-    const supplied = record(owner);
-    const admitted = admitConstructorVersionRecords(bundleFor(fixture), [supplied]);
-    expect(admitted).toHaveLength(1);
-    expect(admitted[0]).toBe(supplied);
+    const supplied = fullSet(owner);
+    const admitted = admitConstructorVersionRecords(bundleFor(fixture), supplied);
+    expect(admitted).toHaveLength(supplied.length);
+    // THE SAME OBJECTS, not equivalents: admission filters by membership and substitutes
+    // nothing of its own.
+    for (const entry of supplied) expect(admitted).toContain(entry);
   });
 });
 
@@ -320,10 +383,10 @@ describe('§13 — what is closed, and what is honestly still open', () => {
       );
     }
 
-    // And the ONE record the owner signed is admitted whichever key the caller offers,
-    // because membership is not the key's decision at all.
-    expect(admitConstructorVersionRecords(bundle, [record(attacker)])).toHaveLength(1);
-    expect(admitConstructorVersionRecords(bundle, [record(owner)])).toHaveLength(1);
+    // And the manifested SET is admitted whichever key the caller offers, because membership
+    // is not the key's decision at all. The signature is checked later, at resolve.
+    expect(admitConstructorVersionRecords(bundle, fullSet(attacker))).toHaveLength(2);
+    expect(admitConstructorVersionRecords(bundle, fullSet(owner))).toHaveLength(2);
   });
 
   it('two records for one manifested version are refused', () => {
@@ -331,7 +394,7 @@ describe('§13 — what is closed, and what is honestly still open', () => {
     const owner = newTestSigner();
     expect(
       reasonCode(() =>
-        admitConstructorVersionRecords(bundleFor(fixture), [record(owner), record(owner)]),
+        admitConstructorVersionRecords(bundleFor(fixture), [...fullSet(owner), record(owner)]),
       ),
     ).toBe('CONSTRUCTOR_RECORD_DUPLICATED');
   });

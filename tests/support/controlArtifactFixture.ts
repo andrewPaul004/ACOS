@@ -126,7 +126,7 @@ export const FIXTURE_ARTIFACT_SPECS: readonly FixtureArtifactSpec[] = Object.fre
   {
     artifactClass: 3,
     artifactId: 'acos.control.action_catalogue',
-    artifactVersion: 'acos.action_catalogue.2026-09-24',
+    artifactVersion: 'acos.action_catalogue.2026-09-28',
     fileName: 'class-03.action-catalogue.json',
   },
   {
@@ -139,7 +139,7 @@ export const FIXTURE_ARTIFACT_SPECS: readonly FixtureArtifactSpec[] = Object.fre
   {
     artifactClass: 19,
     artifactId: 'acos.control.effect_constructors',
-    artifactVersion: 'acos.effect_constructors.2026-09-24',
+    artifactVersion: 'acos.effect_constructors.2026-09-29',
     fileName: 'class-19.effect-constructors.json',
   },
   {

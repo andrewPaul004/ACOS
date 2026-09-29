@@ -9,3 +9,12 @@ coverage/
 /.vitest/
 spikes/durable-execution/.artifacts/
 NEXT_STEPS.md
+
+# S1P. The operator's SendGrid deployment documents hold real API keys and live OUTSIDE this
+# repository by design; these patterns exist for the case where an operator points a locator
+# at a path inside the working tree anyway. No file matching them is ever committed.
+*.sendgrid-deployment.json
+validation/sendgrid/**/*.local.json
+# S1P validation evidence. Sanitized by construction, and still a RUN ARTIFACT rather than a
+# source file: it is written per run, named by timestamp, and reviewed by being read.
+artifacts/s1p-validation/

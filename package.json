@@ -26,6 +26,7 @@
     "verify:perimeter": "tsx tools/perimeter/cli.ts",
     "verify:packaging": "tsx tools/integration-packaging/cli.ts",
     "report:provider-selection": "tsx tools/provider-selection/cli.ts",
+    "validate:sendgrid": "tsx validation/sendgrid/harness/run.ts",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {

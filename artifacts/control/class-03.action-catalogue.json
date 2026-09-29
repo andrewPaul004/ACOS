@@ -1,6 +1,6 @@
 {
   "artifact_id": "acos.control.action_catalogue",
-  "artifact_version": "acos.action_catalogue.2026-09-24",
+  "artifact_version": "acos.action_catalogue.2026-09-28",
   "action_classes": [
     {
       "action_class": "campaign.pause",
@@ -49,6 +49,18 @@
       "settlement_tolerance": "BAND",
       "adapter": "mock_ads",
       "method": "campaignBudgetSet"
+    },
+    {
+      "action_class": "email.send",
+      "recoverability": "IRRECOVERABLE",
+      "value_direction": "NONE",
+      "carries_vendor_monetary_field": false,
+      "cost_component_free": false,
+      "rate_based": false,
+      "irrecoverable_units": "1",
+      "settlement_tolerance": "NONE",
+      "adapter": "sendgrid_email",
+      "method": "emailSend"
     }
   ],
   "reason_codes": [
@@ -75,12 +87,14 @@
       "reason_code_scope"
     ],
     "fulfilment.reship": [],
-    "campaign.budget.set": []
+    "campaign.budget.set": [],
+    "email.send": []
   },
   "enumeration_max_age_seconds": {
     "campaign.pause": 120,
     "refund.create": 120,
     "fulfilment.reship": 120,
-    "campaign.budget.set": 120
+    "campaign.budget.set": 120,
+    "email.send": 120
   }
 }

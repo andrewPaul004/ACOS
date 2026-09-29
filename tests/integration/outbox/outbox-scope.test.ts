@@ -170,8 +170,12 @@ describe('`I66` — THE PREDICATE IS DERIVED FROM THE CATALOGUE, NOT FROM RECOVE
      * STATED AS AN ENUMERATION OVER THE WHOLE CATALOGUE, so a class added later without an
      * adapter — or with `INTERNAL_ONLY_ADAPTER` — changes this assertion rather than
      * slipping through.
+     *
+     * S1P ADDED ONE, AND THE ENUMERATION IS WHY THIS LINE MOVED RATHER THAN THE PROPERTY.
+     * `email.send` names the real adapter `sendgrid_email`, so it is an external write in
+     * exactly the way the other four are, and `I66`'s predicate says so for it too.
      */
-    expect(ACTION_CLASSES).toHaveLength(4);
+    expect(ACTION_CLASSES).toHaveLength(5);
     for (const actionClass of ACTION_CLASSES) {
       expect(requiresExternalDispatchFor(actionClass), actionClass).toBe(true);
       expect(ACTION_CATALOGUE[actionClass].adapter, actionClass).not.toBe(

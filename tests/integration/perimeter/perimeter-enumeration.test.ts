@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -60,9 +62,33 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
     expect(byRoot('adapterA')).toBeGreaterThanOrEqual(2);
     expect(byRoot('adapterB')).toBeGreaterThanOrEqual(2);
 
-    // AND EVERY ONE IS TEST_ONLY. `§18`: a synthetic provider "remains TEST-ONLY and is not
-    // a production perimeter entry."
-    expect(providerSites.every((site) => site.scope === 'TEST_ONLY')).toBe(true);
+    /*
+     * S1P AMENDS THE SECOND HALF OF THIS ASSERTION, OUT LOUD.
+     *
+     * It read: "AND EVERY ONE IS TEST_ONLY. `§18`: a synthetic provider 'remains TEST-ONLY
+     * and is not a production perimeter entry.'" That was true while every provider client
+     * in the repository was SYNTHETIC. S1P adds one that is not.
+     *
+     * So the rule is restated as what `§18` actually says — a site under `tests/` is
+     * TEST_ONLY and never a production entry — and the new obligation is added beside it:
+     * the real client is a PRODUCTION entry and must carry an `authorisation_ref`. The
+     * amended pair is strictly stronger than the sentence it replaces.
+     */
+    for (const site of providerSites.filter((entry) => entry.file.startsWith('tests'))) {
+      expect(site.scope, site.file).toBe('TEST_ONLY');
+    }
+
+    const sendGridSends = providerSites.filter((site) =>
+      site.file.includes(join('validation', 'sendgrid', 'integration')),
+    );
+    expect(sendGridSends.length).toBeGreaterThanOrEqual(2);
+    for (const site of sendGridSends) {
+      expect(site.scope, site.file).toBe('PRODUCTION');
+      // A SEND carries an `authorisation_ref`, never an exemption. `48 §4` item 2:
+      // "Production external writes require authorisation_ref."
+      expect(site.annotation.kind, site.file).toBe('AUTHORISED');
+    }
+    expect(report.productionAuthorised).toBeGreaterThanOrEqual(2);
   });
 
   it('`§18`: no broad exemption is admissible, and the banned list is enforced by value', () => {
@@ -71,7 +97,7 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
     }
   });
 
-  it('the roots cover the control plane and BOTH synthetic planes', () => {
+  it(`the roots cover the control plane, BOTH synthetic planes and the real validation package`, () => {
     /*
      * S1O ADDS `tests/audit-plane/`, and the reason is `48 §3`'s own: "An exemption is not a
      * hole. It is a **named, annotated, reviewed** hole, and the difference is that a
@@ -79,10 +105,22 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
      * an `authorisation_ref`; it does not exempt them from being ENUMERATED, and an
      * unenumerated read is unreviewed rather than exempt.
      */
+    /*
+     * S1P ADDS `validation/`, AND AMENDS THIS ACCEPTED ASSERTION OUT LOUD.
+     *
+     * `45 §3` warns about accepted boundary assertions changed quietly, so: the fourth root
+     * is the Twilio SendGrid non-production validation package, it holds the first REAL
+     * vendor clients this repository has ever contained, and its first path segment is
+     * deliberately NOT `tests` — `§18` scopes the `TEST_ONLY` carve-out to a "test synthetic
+     * provider", and a client that reaches `api.sendgrid.com` is not one. Its sites are
+     * therefore PRODUCTION perimeter entries, which is a WIDENING of what this check counts
+     * rather than a relaxation of what it requires.
+     */
     expect([...DEFAULT_PERIMETER_ROOTS]).toEqual([
       'src',
       expect.stringContaining('integration-plane'),
       expect.stringContaining('audit-plane'),
+      'validation',
     ]);
   });
 
@@ -94,24 +132,62 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
 
     const reads = report.sites.filter((site) => site.kind === 'PROVIDER_READ_CLIENT');
     for (const site of reads) {
-      // TEST_ONLY, always: `§18` — a test fixture is never a production perimeter entry.
-      expect(site.scope, site.file).toBe('TEST_ONLY');
-      // A READ carries an EXEMPTION, never an `authorisation_ref`: the two annotations are
-      // different claims and neither may stand in for the other.
+      /*
+       * S1P AMENDS THE SCOPE HALF OF THIS ASSERTION TOO, AND FOR THE SAME REASON.
+       *
+       * It read "TEST_ONLY, always". S1P's SendGrid Email Activity reader is a real
+       * provider read at PRODUCTION scope; the ANNOTATION requirement is unchanged and is
+       * the half that carries the meaning — `48 §2` row 13's exemption is `48 §3.6`'s and
+       * no other, so the reason and the ticket are still asserted by value on every read
+       * site in either scope.
+       */
       expect(site.annotation.kind, site.file).toBe('EXEMPT');
       if (site.annotation.kind === 'EXEMPT') {
         expect(site.annotation.reason).toBe('audit_plane_read_only');
         expect(site.annotation.ticket).toBe('48-3-6');
       }
     }
+    // The synthetic reader stays TEST_ONLY; the real one is a PRODUCTION entry.
+    for (const site of reads.filter((entry) => entry.file.startsWith('tests'))) {
+      expect(site.scope, site.file).toBe('TEST_ONLY');
+    }
+    expect(
+      reads.some(
+        (site) =>
+          site.scope === 'PRODUCTION' && site.file.includes(join('validation', 'sendgrid')),
+      ),
+    ).toBe(true);
 
     // AND NO SEND CLIENT LIVES IN THE AUDIT PLANE. This is the assertion `§16`'s "no send
     // operation" reduces to at the perimeter: the scanner finds zero `sendToProvider*`
     // declarations or calls under `tests/audit-plane/`.
     const auditSends = report.sites.filter(
-      (site) => site.kind === 'PROVIDER_CLIENT' && site.file.includes('audit-plane'),
+      (site) =>
+        site.kind === 'PROVIDER_CLIENT' &&
+        (site.file.includes('audit-plane') ||
+          site.file.includes(join('validation', 'sendgrid', 'audit'))),
     );
     expect(auditSends).toEqual([]);
+
+    /*
+     * S1P EXTENDS THIS ASSERTION TO THE REAL AUDIT PACKAGE, which is where it matters most:
+     * `36 §13` needs an attempted-write probe, and `§8.2` forbids that probe from becoming a
+     * normal audit capability. It lives in `validation/sendgrid/harness/`, it is a PRODUCTION
+     * perimeter entry in its own right, and it carries its OWN exemption reason so a reviewer
+     * can never mistake it for a read.
+     */
+    const scopeProbes = report.sites.filter(
+      (site) =>
+        site.annotation.kind === 'EXEMPT' &&
+        site.annotation.reason === 'credential_scope_conformance_probe',
+    );
+    expect(scopeProbes.length).toBeGreaterThanOrEqual(1);
+    for (const site of scopeProbes) {
+      expect(site.file, 'a scope probe outside the harness').toContain(
+        join('validation', 'sendgrid', 'harness'),
+      );
+      if (site.annotation.kind === 'EXEMPT') expect(site.annotation.ticket).toBe('36-13');
+    }
   });
 
   it('and the rendered artifact is deterministic', async () => {

@@ -90,6 +90,11 @@ const SPEC_51_2_3: Readonly<Record<string, bigint>> = Object.freeze({
   'refund.create': 0n,
   'fulfilment.reship': 1n,
   'campaign.budget.set': 0n,
+  // S1P. `email.send` is IRRECOVERABLE — the accepted architecture's own words, "an email
+  // send cannot be unsent" — and `51 §2.3`'s rule for every IRRECOVERABLE class in the
+  // current catalogue is ONE unit. The class-3 parser enforces the same coherence over the
+  // verified bytes, so this transcription and the artifact cannot drift apart silently.
+  'email.send': 1n,
 });
 
 /** `26 §5` and `26 §11.2`, hand-authored. */
@@ -98,6 +103,7 @@ const SPEC_RECOVERABILITY: Readonly<Record<string, string>> = Object.freeze({
   'refund.create': 'COMPENSABLE',
   'fulfilment.reship': 'IRRECOVERABLE',
   'campaign.budget.set': 'COMPENSABLE',
+  'email.send': 'IRRECOVERABLE',
 });
 
 describe('CLASS 3 — the verified artifact is the authority source', () => {

@@ -25,7 +25,19 @@
   // everything else — it forms owner signature messages and a mistake in it is a mistake in
   // a release package — and `tests/controlArtifacts/signer-boundary.test.ts` asserts that
   // nothing under `src/` imports anything under `tools/`.
-  "include": ["src/**/*.ts", "tests/**/*.ts", "tools/**/*.ts", "spikes/**/*.ts", "*.config.ts"],
+  // `validation/**` is the S1P non-production provider-validation package (S1P `§8`). It
+  // holds the only real vendor HTTP clients in the repository, so it is typechecked and
+  // linted like everything else — a mistake in it is a mistake that reaches a provider —
+  // and `tests/sendgrid/plane-separation.test.ts` asserts that nothing under `src/` imports
+  // anything under `validation/`, which is what keeps production's adapter registry empty.
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "tools/**/*.ts",
+    "validation/**/*.ts",
+    "spikes/**/*.ts",
+    "*.config.ts"
+  ],
   // tests/type-negative/ is the I21 compile-negative fixture set. Its files are REQUIRED
   // to fail type checking, and they are compiled by their own project from
   // tests/canonicalisation/i21-type-boundary.test.ts. Including them here would make the

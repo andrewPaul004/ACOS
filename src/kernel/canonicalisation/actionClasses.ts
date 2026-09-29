@@ -62,12 +62,43 @@ export type SettlementTolerance = 'EXACT' | 'BAND' | 'NONE';
  * one IRRECOVERABLE, all against a mock adapter — plus one rate-based class against a mock".
  *
  * The MEMBERSHIP is here. Which of them is which is `50 §2a` field 2's business.
+ *
+ * =================================================================================
+ * S1P ADDS `email.send`, AND ADDS ONLY THE NAME
+ *
+ * `44 §5.2`'s `I36` verification leg is measured against a REAL ESP, and the effect it
+ * measures is an email send. S1P's first drafts disguised that send as `campaign.pause` or
+ * `fulfilment.reship` so that no catalogue member had to be added; the independent review
+ * rejected it, and correctly — an action class is the architecture's own name for WHAT THE
+ * EFFECT IS, and a validation that lies about that is validating something else.
+ *
+ * **NO VENDOR IS NAMED HERE OR ANYWHERE UNDER `src/`.** The adapter identity this class
+ * routes to is `50 §2a` field 9's business and arrives from the SIGNED class-3 artifact;
+ * `48 §7` question 4's boundary property — that production source names no vendor — is
+ * unweakened by this addition and is asserted over the whole tree by the validation slice's
+ * own suite.
+ *
+ * The accepted architecture already rules on the class: `email.send` is `IRRECOVERABLE`
+ * ("an email send cannot be unsent") and is discussed at ONE MIE unit. The class-3 record
+ * transcribes that ruling; this line adds the TypeScript name the record's parser needs and
+ * nothing else — no recoverability, no adapter, no unit count and no authority, all of which
+ * arrive only from the verified class-3 artifact.
+ *
+ * **AND ADDING THE NAME DOES NOT ADD A CAPABILITY.** `email.send` has no Cedar policy, no
+ * registered policy construction and no registered constructor, so it denies at `26 §7` step
+ * C2 before policy is reached: `tests/policy/policy-set-gap-analysis.test.ts` declares it
+ * `UNGOVERNED_FAILS_CLOSED` and asserts that status BY EXECUTION. The only thing that can
+ * produce an authorised `email.send` effect is the non-production validation slice's own
+ * isolated seeder, which lives outside `src/` entirely and which the validation suite proves
+ * no production route reaches.
+ * =================================================================================
  */
 export const ACTION_CLASSES = [
   'campaign.pause',
   'refund.create',
   'fulfilment.reship',
   'campaign.budget.set',
+  'email.send',
 ] as const;
 
 export type ActionClass = (typeof ACTION_CLASSES)[number];

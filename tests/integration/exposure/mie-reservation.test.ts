@@ -63,21 +63,36 @@ beforeEach(async () => {
 });
 
 /**
- * `51 §2.3`'s table, HAND-TRANSCRIBED, restricted to the four classes `37 §2` S1 declares.
+ * `51 §2.3`'s table, HAND-TRANSCRIBED.
  *
- * The artifact's table has seven rows; three of them (`goodwill.credit.issue`,
- * `order.address.edit`, `email.send`) name classes that are not in this catalogue, and they
- * are listed in the comment rather than the map so the transcription is visibly complete:
+ * =================================================================================
+ * `email.send` MOVED FROM THE COMMENT INTO THE MAP, AND THAT IS THE WHOLE STORY OF S1P-C1
+ *
+ * The artifact's table has SEVEN rows. Until S1P, three of them named classes the closed
+ * catalogue did not contain, and they were listed in this comment rather than in the map so
+ * that the transcription stayed visibly complete:
  *
  *   goodwill.credit.issue  COMPENSABLE     0
  *   order.address.edit     IRRECOVERABLE   1
- *   email.send             IRRECOVERABLE   1
+ *   email.send             IRRECOVERABLE   1      <- NOW IN THE CATALOGUE
+ *
+ * **THE ARCHITECTURE HAD ALREADY RULED ON `email.send`.** `51 §2.3` declares it IRRECOVERABLE
+ * at ONE irrecoverable unit, and the sentence quoted in the coherence case below — "lowering
+ * `email.send` to 0 would remove the class from the ceiling entirely" — is the artifact's own
+ * worked example for this exact class.
+ *
+ * So S1P did not INVENT a recoverability or a unit count. It added the catalogue member the
+ * architecture already described, with the values the architecture already declared, and this
+ * row is the hand-authored transcription that now covers it. The other two remain in the
+ * comment, unchanged, because they remain outside the closed catalogue.
+ * =================================================================================
  */
 const SPEC_TABLE: ReadonlyArray<readonly [string, string, bigint]> = [
   ['refund.create', 'COMPENSABLE', 0n],
   ['campaign.pause', 'REVERSIBLE', 0n],
   ['campaign.budget.set', 'COMPENSABLE', 0n],
   ['fulfilment.reship', 'IRRECOVERABLE', 1n],
+  ['email.send', 'IRRECOVERABLE', 1n],
 ];
 
 async function mie(): Promise<ReturnType<typeof mieRows> extends Promise<infer T> ? T : never> {
@@ -170,7 +185,30 @@ describe('`51 §2.3` — THE CATALOGUE DECLARES THE UNIT COUNT, PER CLASS', () =
     // "A class present in the catalogue with no declared value is a **catalogue-validation
     // failure, not a class with a value of one**." The same rule, with more force, for a
     // class that is not in the catalogue at all.
-    expect(() => irrecoverableUnitsFor('email.send' as never)).toThrow(/closed action catalogue/);
+    //
+    // =================================================================================
+    // THE EXAMPLE MOVED, AND `45 §3` REQUIRES IT MOVED OUT LOUD.
+    //
+    // This case named `email.send` until S1P, for the good reason that `51 §2.3` DISCUSSES
+    // that class — the quoted sentence twenty lines above says "lowering `email.send` to 0
+    // would remove the class from the ceiling entirely" — while the closed catalogue did not
+    // CONTAIN it. It was the perfect uncatalogued example: named by the architecture, absent
+    // from the artifact.
+    //
+    // S1P added it to the signed class-3 catalogue, with `irrecoverable_units: 1`, which is
+    // exactly what `51 §2.3` had always said it would be. So the example is no longer
+    // uncatalogued, and the case needs a name that genuinely is.
+    //
+    // **THE PROPERTY UNDER TEST IS UNCHANGED AND IS NOT WEAKENED.** It is still "a class
+    // outside the closed catalogue has no implicit unit count", and `email.send` is now
+    // covered by the exhaustive loop above instead — which asserts, over the WHOLE catalogue,
+    // that every IRRECOVERABLE class declares exactly one unit. The class moved from one
+    // assertion to a stronger one.
+    // =================================================================================
+    expect(() => irrecoverableUnitsFor('sms.send' as never)).toThrow(/closed action catalogue/);
+    // AND THE CLASS THAT WAS THE EXAMPLE IS NOW IN THE CATALOGUE, AT THE UNIT COUNT `51 §2.3`
+    // ALWAYS DECLARED FOR IT. See `SPEC_TABLE`'s header.
+    expect(irrecoverableUnitsFor('email.send')).toBe(1n);
   });
 });
 

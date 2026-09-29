@@ -179,6 +179,22 @@ export const DEFAULT_PERIMETER_ROOTS: readonly string[] = [
   // `PROVIDER_READ_CLIENT` kind non-vacuous today — the repository has no real audit
   // read, so a scanner looking only at `src/` would report zero read sites forever.
   join('tests', 'audit-plane'),
+  /*
+   * S1P's Twilio SendGrid non-production validation package, AND THE FIRST ROOT HERE WHOSE
+   * SITES ARE REAL.
+   *
+   * **ITS FIRST PATH SEGMENT IS NOT `tests`, SO ITS SITES ARE SCANNED AT `PRODUCTION`
+   * SCOPE, AND THAT IS THE POINT.** `§18` scopes the `TEST_ONLY` carve-out to a "test
+   * synthetic provider"; `validation/sendgrid/` is not synthetic — its clients reach
+   * `api.sendgrid.com`. Admitting a real vendor client into the scope that is EXCLUDED
+   * from the production perimeter count is exactly the quiet weakening `48 §7` question 4
+   * exists to catch, so the send sites here must carry
+   * `PERIMETER_AUTHORISED(authorisation_ref)`, the audit-plane read sites must carry
+   * `PERIMETER_EXEMPT(audit_plane_read_only, 48-3-6)`, the operator-invoked capability
+   * probes must carry `PERIMETER_EXEMPT(credential_scope_conformance_probe, 36-13)`, and an
+   * unannotated site fails the build.
+   */
+  'validation',
 ];
 
 async function typescriptFilesUnder(root: string): Promise<readonly string[]> {

@@ -250,3 +250,121 @@ describe('`§19` item 6 — A STAGE-1 REFUSAL TOUCHES ZERO SECRET SOURCES', () =
     expect(source.indexOf('export function establishStage1Facts')).toBeLessThan(guardIndex);
   });
 });
+
+describe('`§16` — THE AZURE SDK IS IN THE CHILDREN AND IN NOTHING ELSE', () => {
+  /*
+   * =================================================================================
+   * WHY THIS BLOCK EXISTS, AND WHY THE CLOSURE WALKER HAD TO BE EXTENDED FOR IT
+   *
+   * The owner decision for credential binding is Azure Key Vault immutable secret VERSION
+   * binding, so each credential-holding CHILD now holds an Azure SDK and dials a second host.
+   * The coordinator must hold neither — it holds no SendGrid key, and it must equally hold no
+   * Azure credential and no Key Vault client, because a coordinator that could read the vault
+   * could read the vendor material the whole process separation exists to keep out of it.
+   *
+   * `resolveSpecifier` returns `null` for anything not starting with `.`, so PACKAGE
+   * dependencies were previously invisible to `computeClosure`: the walk followed repository
+   * modules and silently dropped `@azure/identity` along with everything else. A closure that
+   * cannot see packages cannot state either half of the property above.
+   *
+   * `RuntimeClosure.packages` is that extension — collected, not followed, because the
+   * transitive package graph is `package-lock.json`'s job. `§16`: "If adding Azure SDK
+   * dependencies causes an existing closure assertion to need legitimate expansion, update it
+   * explicitly and document why." This is that expansion, and this is why.
+   * =================================================================================
+   */
+  const AZURE = ['@azure/identity', '@azure/keyvault-secrets'];
+
+  it('the COORDINATOR holds no Azure credential and no Key Vault client', async () => {
+    const coordinator = await computeClosure({
+      name: 'S1P_COORDINATOR',
+      entryPoints: [
+        'validation/sendgrid/harness/cli.ts',
+        'validation/sendgrid/harness/probeClient.ts',
+      ],
+    });
+    expect(coordinator.packages.filter((name) => name.startsWith('@azure/'))).toEqual([]);
+    // ...and still no secret source, which is the accepted property this one sits beside.
+    expect(
+      coordinator.modules.filter((module) => module.endsWith('/secretSource.ts')),
+    ).toEqual([]);
+  });
+
+  it('the INTEGRATION child holds the Azure SDK, its own Key Vault binding, and no audit source', async () => {
+    const integration = await computeClosure({
+      name: 'INTEGRATION_ADAPTER:sendgrid_email',
+      entryPoints: [
+        'src/integration/runtime/main.ts',
+        'validation/sendgrid/integration/adapter.ts',
+        'validation/sendgrid/integration/secretSource.ts',
+      ],
+    });
+    for (const name of AZURE) expect(integration.packages).toContain(name);
+    expect(integration.modules).toContain('validation/sendgrid/integration/keyVault.ts');
+    expect(
+      integration.modules.filter((module) => module.startsWith('validation/sendgrid/audit/')),
+    ).toEqual([]);
+  });
+
+  it('the AUDIT child holds the Azure SDK, its OWN Key Vault binding, and no integration source', async () => {
+    const audit = await computeClosure({
+      name: 'AUDIT_READER:twilio_sendgrid',
+      entryPoints: [
+        'src/audit/provider/runtime/main.ts',
+        'validation/sendgrid/audit/reader.ts',
+        'validation/sendgrid/audit/secretSource.ts',
+      ],
+    });
+    for (const name of AZURE) expect(audit.packages).toContain(name);
+    expect(audit.modules).toContain('validation/sendgrid/audit/keyVault.ts');
+    expect(
+      audit.modules.filter((module) => module.startsWith('validation/sendgrid/integration/')),
+    ).toEqual([]);
+  });
+
+  it('the CONTROL PLANE holds no Azure SDK either — `I25` extends to the secret manager', async () => {
+    /*
+     * `I25` says the control closure reaches no module of the validation package. The same
+     * separation applied to packages: a control plane that imported a Key Vault client would
+     * be a control plane that could resolve vendor material, whatever its modules said.
+     */
+    const control = await computeClosure({
+      name: 'CONTROL_PLANE',
+      entryPoints: [
+        'src/kernel/gateway/effectGateway.ts',
+        'src/integration/control/integrationClient.ts',
+      ],
+    });
+    expect(control.packages.filter((name) => name.startsWith('@azure/'))).toEqual([]);
+  });
+
+  it('the PROBE child STATICALLY holds neither source, and so holds no Azure SDK of its own', async () => {
+    /*
+     * THE PROBE RUNTIME LOADS ITS SOURCE MODULE DYNAMICALLY, BY PATH, ONE PER LAUNCH.
+     *
+     * `computeClosure` deliberately does not follow `await import(...)` — following it would
+     * put every adapter into every runtime's closure and destroy exactly the separation this
+     * manifest measures. So the probe's STATIC closure holds neither secret source and
+     * therefore no Azure SDK, and that is the correct reading rather than a gap: the SDK
+     * arrives with whichever ONE source module the launch names.
+     *
+     * Which one it can name is the accepted property, unchanged by this slice:
+     * `buildProbeEnvironment` has exactly ONE source-module slot and exactly ONE locator slot,
+     * so a probe process can only ever resolve the single credential its role names. The cases
+     * earlier in this file drive that directly, against real forked children.
+     */
+    const probe = await computeClosure({
+      name: 'S1P_PROBE_RUNTIME',
+      entryPoints: ['validation/sendgrid/harness/probeRuntime.ts'],
+    });
+    expect(probe.packages.filter((name) => name.startsWith('@azure/'))).toEqual([]);
+    expect(probe.modules.filter((module) => module.endsWith('/secretSource.ts'))).toEqual([]);
+
+    // AND THE DYNAMIC LOAD IS THE REASON, not an accident of the entry point.
+    const runtime = readFileSync(
+      join('validation', 'sendgrid', 'harness', 'probeRuntime.ts'),
+      'utf8',
+    );
+    expect(runtime).toContain('await import(pathToFileURL(sourceModule).href)');
+  });
+});

@@ -1,5 +1,12 @@
 import { readFileSync } from 'node:fs';
 
+import {
+  createKeyVaultReader,
+  parseKeyVaultLocator,
+  resolveExactSecretVersion,
+  type KeyVaultReaderFactory,
+} from './keyVault.js';
+
 import type {
   AdapterSecretSource,
   CredentialIdentityProvenance,
@@ -41,7 +48,7 @@ import type {
  *                                 refuses a LIVE run on it (`INTEGRATION_IDENTITY_NOT_
  *                                 MATERIAL_BOUND`). `§3.1`: "If retained as a credential
  *                                 fixture, its live preflight status must fail closed."
- *   `SECRET_MANAGER_VERSION`   -> would assign `DEPLOYMENT_SECRET_VERSION`: an IMMUTABLE
+ *   `SECRET_MANAGER_VERSION`   -> assigns `DEPLOYMENT_SECRET_VERSION`: an IMMUTABLE
  *                                 secret-manager version identity returned BY THE MANAGER
  *                                 ALONGSIDE the material it versions, in one answer, so the
  *                                 identity is of the exact bytes returned.
@@ -49,12 +56,24 @@ import type {
  *                                 non-secret key id, established by a mechanism that can say
  *                                 the id belongs to the exact material returned.
  *
- * **THE LAST TWO ARE UNPROVISIONED, AND THEY REFUSE.** No platform secret manager is selected
- * anywhere in this repository — `§9` of the S1N mandate forbids selecting one, `31 §12`'s
- * technology table names none — and no mechanism exists that binds a SendGrid `api_key_id` to
- * material this process holds. `§3.2`: "If no concrete secret manager is selected, implement
- * the contract and leave the real live source UNPROVISIONED/PARTIAL. That is preferable to a
- * fake binding."
+ * =================================================================================
+ * **`SECRET_MANAGER_VERSION` IS NOW PROVISIONED — AZURE KEY VAULT, EXACT VERSION.**
+ *
+ * The owner has selected the mechanism: Azure Key Vault immutable secret VERSION binding. The
+ * secret material is a Key Vault secret; ACOS always fetches an EXACT version and never
+ * resolves `latest`; and the signed class-5 `credential_id` is the FULL VERSIONED SECRET ID
+ * Key Vault returns for that exact material:
+ *
+ *     https://<vault>.vault.azure.net/secrets/<secret-name>/<version>
+ *
+ * `keyVault.ts` in THIS package implements it, and the branch below is the only way into it.
+ * The material and the identity come out of ONE Key Vault response, which is what makes the
+ * binding real rather than adjacent — the defect correction 3 closed.
+ *
+ * `PROVIDER_KEY_ID_BINDING` REMAINS UNPROVISIONED AND STILL REFUSES. It is not implemented
+ * merely because it exists in the enum: no mechanism binds a SendGrid `api_key_id` to material
+ * this process holds, obtaining one would need a broad administrative credential no accepted
+ * architecture permits, and `§3.3` forbids adding one for this purpose.
  *
  * =================================================================================
  * `§3.3` — THE NONEXISTENT PROOF IS GONE
@@ -148,6 +167,59 @@ export function identityIsDerivedFromSecret(identity: string, secret: string): b
   return false;
 }
 
+/**
+ * THE NON-SECRET AZURE PRINCIPAL A SOURCE IS CONFIGURED TO RESOLVE AS.
+ *
+ * =================================================================================
+ * WHY THE SOURCE REPORTS THIS, AND NOT THE COORDINATOR
+ *
+ * The owner decision makes DISTINCT user-assigned managed identities part of the security
+ * boundary: the Azure principal allowed to read the send key must not be the one allowed to
+ * read the audit key. Enforcing that needs the parent to compare two values — and the parent
+ * must not obtain them by reading either plane's locator file, because a coordinator that
+ * could read a locator could read whatever a confused operator had put in it.
+ *
+ * So each SOURCE reports its own, through the ACCEPTED one-shot identity-probe boundary that
+ * already carries `resolvedIdentity` and `identityProvenance`. The integration child reports
+ * only the integration value; the audit child reports only the audit value; neither is ever
+ * handed the other's locator.
+ *
+ * **THE VALUE IS A GUID AND IS NON-SECRET.** A managed-identity client id names a principal;
+ * it authenticates nobody. Possession of it grants nothing, which is why it may cross the
+ * probe reply when a token or a client secret may not.
+ *
+ * **IT IS A DIFFERENT CONTROL FROM THE CREDENTIAL-IDENTITY CHECK, AND NEITHER SUBSTITUTES.**
+ * The Key Vault credential identity says WHICH SendGrid material and version was resolved; the
+ * managed-identity client id says WHICH AZURE PRINCIPAL was allowed to resolve it. Two planes
+ * could hold two distinct secrets behind one over-privileged identity, and that is exactly the
+ * configuration this reports.
+ * =================================================================================
+ */
+export interface SourcePrincipalReport {
+  /**
+   * The non-secret principal, or `null` when the mechanism has none.
+   *
+   * `FILE_FIXTURE` reports `null` and MUST: a file-backed fixture authenticates to no Azure
+   * principal, and reporting a plausible GUID would let an offline mechanism satisfy a live
+   * gate. `§2`'s requirement that the fixture path stay honestly synthetic is this `null`.
+   */
+  readonly principalIdentity: string | null;
+  /** Which mechanism answered, so a reviewer can tell a `null` apart from an absence. */
+  readonly mechanism: string | null;
+}
+
+/**
+ * The optional capability a secret source may implement.
+ *
+ * Feature-detected structurally by `probeRuntime.ts`, and declared HERE rather than on the
+ * accepted `AdapterSecretSource` contract in `src/`: the Azure principal is a property of the
+ * S1P validation mechanism, and widening a production interface for a validation-only concern
+ * would put it on every adapter source that will ever exist.
+ */
+export interface SourcePrincipalDescriber {
+  describeSourcePrincipal(): SourcePrincipalReport;
+}
+
 interface DeploymentDocument {
   readonly adapterId?: unknown;
   readonly sourceKind?: unknown;
@@ -155,6 +227,17 @@ interface DeploymentDocument {
   readonly credentialIdentity?: unknown;
   readonly version?: unknown;
   readonly revoked?: unknown;
+  /*
+   * THE KEY VAULT OPERANDS. Declared as `unknown` and parsed by `parseKeyVaultLocator`.
+   *
+   * **NONE OF THEM IS READ ON THE `FILE_FIXTURE` PATH, AND `apiKey` IS NEVER READ ON THE
+   * KEY VAULT PATH.** The two branches consume disjoint field sets, so a document cannot
+   * carry a fixture secret into a live resolution or a vault address into a fixture one.
+   */
+  readonly vaultUrl?: unknown;
+  readonly secretName?: unknown;
+  readonly secretVersion?: unknown;
+  readonly managedIdentityClientId?: unknown;
 }
 
 class SendGridSecretSource implements AdapterSecretSource {
@@ -162,9 +245,69 @@ class SendGridSecretSource implements AdapterSecretSource {
 
   private readonly locator: string;
 
-  public constructor(adapterId: string, locator: string) {
+  /**
+   * THE AZURE SDK BOUNDARY, AS A MODULE-TEST SEAM. `§10`.
+   *
+   * Defaults to `createKeyVaultReader`, which constructs the REAL
+   * `ManagedIdentityCredential` and the REAL `SecretClient`. `createAdapterSecretSource`
+   * below does not expose it, so the CONTROL PLANE cannot hand this process a network client
+   * — it passes an adapter id and a locator path and nothing else. The seam exists so
+   * `tests/sendgrid/key-vault-binding.test.ts` can drive every refusal without contacting
+   * Azure, and for no other reason.
+   */
+  private readonly readerFactory: KeyVaultReaderFactory;
+
+  public constructor(
+    adapterId: string,
+    locator: string,
+    readerFactory: KeyVaultReaderFactory = createKeyVaultReader,
+  ) {
     this.declaredAdapterId = adapterId;
     this.locator = locator;
+    this.readerFactory = readerFactory;
+  }
+
+  /**
+   * REPORT THE AZURE PRINCIPAL THIS SOURCE IS CONFIGURED TO RESOLVE AS.
+   *
+   * It re-reads and re-parses its OWN locator through the CLOSED parser — the same parse
+   * `resolve()` performs — so a document this source would refuse cannot report a principal
+   * either. A malformed or non-closed document answers `null`, and the stage-2 gate then
+   * refuses on `INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE` rather than on a guess.
+   *
+   * **NO MATERIAL IS TOUCHED.** This never contacts Azure, never constructs a credential and
+   * never reads the vault; it reads a GUID out of a configuration file it already reads.
+   */
+  public describeSourcePrincipal(): SourcePrincipalReport {
+    let document: DeploymentDocument;
+    try {
+      document = JSON.parse(readFileSync(this.locator, 'utf8')) as DeploymentDocument;
+    } catch {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (document.adapterId !== this.declaredAdapterId) {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (!isCredentialSourceKind(document.sourceKind)) {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (document.sourceKind !== 'SECRET_MANAGER_VERSION') {
+      /*
+       * A FIXTURE AUTHENTICATES TO NO AZURE PRINCIPAL, AND SAYS SO.
+       *
+       * Returning a plausible GUID here would let `FILE_FIXTURE` satisfy a gate that exists to
+       * constrain a live Azure configuration. The mechanism is named so the absence is
+       * legible; the principal is `null` because there is not one.
+       */
+      return { principalIdentity: null, mechanism: document.sourceKind };
+    }
+    const parsed = parseKeyVaultLocator(document);
+    return parsed.kind === 'LOCATOR'
+      ? {
+          principalIdentity: parsed.locator.managedIdentityClientId,
+          mechanism: 'SECRET_MANAGER_VERSION',
+        }
+      : { principalIdentity: null, mechanism: 'SECRET_MANAGER_VERSION' };
   }
 
   public resolve(): Promise<SecretResolution> {
@@ -196,15 +339,26 @@ class SendGridSecretSource implements AdapterSecretSource {
     }
 
     /*
-     * THE TWO BINDING MECHANISMS ARE UNPROVISIONED, AND THE REFUSAL IS HERE RATHER THAN IN A
-     * DOCUMENT.
+     * `§8` — THE PROVISIONED MECHANISM: AZURE KEY VAULT, EXACT SECRET VERSION.
      *
-     * A deployment that declares one of them is declaring an intention this repository cannot
-     * honour: there is no secret-manager client in this tree and no provider read-back that
-     * establishes a key id belongs to held material. Returning the material with a borrowed
-     * provenance is precisely the fake binding `§3` rejects, so the source resolves nothing.
-     * When a real mechanism is selected and built, it is implemented HERE, behind this
-     * branch, and every gate downstream already reads the provenance it assigns.
+     * Everything that decides the outcome happens in `keyVault.ts`: the closed operand parse,
+     * the canonical-vault narrowing, the single explicit-version read, the validation of the
+     * RETURNED identifier against the configuration, and the usability metadata. This branch
+     * only assigns the provenance the mechanism has earned.
+     */
+    if (document.sourceKind === 'SECRET_MANAGER_VERSION') {
+      return this.resolveFromKeyVault(document);
+    }
+
+    /*
+     * `PROVIDER_KEY_ID_BINDING` IS STILL UNPROVISIONED, AND THE REFUSAL IS HERE RATHER THAN
+     * IN A DOCUMENT.
+     *
+     * A deployment that declares it is declaring an intention this repository cannot honour:
+     * no provider read-back establishes that a SendGrid `api_key_id` belongs to material this
+     * process holds, and `scopeProbes.ts` measures a CAPABILITY rather than an identity.
+     * Returning the material with a borrowed provenance is precisely the fake binding `§3`
+     * rejects, so the source resolves nothing.
      */
     if (document.sourceKind !== 'FILE_FIXTURE') {
       return Promise.resolve({ kind: 'UNAVAILABLE' });
@@ -242,11 +396,91 @@ class SendGridSecretSource implements AdapterSecretSource {
       },
     });
   }
+
+  /**
+   * RESOLVE THE EXACT AZURE KEY VAULT SECRET VERSION THE LOCATOR NAMES.
+   *
+   * =================================================================================
+   * THE DOCUMENT'S OWN `credentialIdentity` IS NOT READ ON THIS PATH, AND THAT IS THE POINT
+   *
+   * A deployment document may carry a `credentialIdentity` field — the `FILE_FIXTURE` path
+   * requires one. On THIS path it is ignored entirely: the identity comes from
+   * `properties.id` in the Key Vault response and from nowhere else, so an operator who wrote
+   * a flattering identity beside the vault operands has written a value nothing reads.
+   *
+   * `tests/sendgrid/key-vault-binding.test.ts` drives exactly that case.
+   * =================================================================================
+   */
+  private async resolveFromKeyVault(document: DeploymentDocument): Promise<SecretResolution> {
+    const parsed = parseKeyVaultLocator(document);
+    if (parsed.kind === 'REFUSED') {
+      /*
+       * `§12` — THE REASON DOES NOT LEAVE THIS FUNCTION.
+       *
+       * `AdapterSecretSource` has exactly three outcomes and no diagnostic channel, which is
+       * the accepted contract: a source that could describe its failure to the host would be
+       * a source that could describe its material. The non-secret reason exists for the
+       * module's own tests, which call `keyVault.ts` directly.
+       */
+      return { kind: 'UNAVAILABLE' };
+    }
+
+    const resolution = await resolveExactSecretVersion(
+      parsed.locator,
+      this.readerFactory(parsed.locator),
+    );
+    if (resolution.kind === 'REFUSED') return { kind: 'UNAVAILABLE' };
+
+    return {
+      kind: 'RESOLVED',
+      credential: {
+        secret: resolution.secret,
+        /*
+         * **THE IDENTITY KEY VAULT RETURNED.** Not one this source composed, and not one the
+         * document offered.
+         */
+        credentialIdentity: resolution.credentialIdentity,
+        /*
+         * EARNED, NOT DECLARED. An immutable secret-manager version returned the material and
+         * its identifier in one answer, so `DEPLOYMENT_SECRET_VERSION` is what that mechanism
+         * establishes — and `preflight.ts` admits it for a LIVE run because of that, not
+         * because a document said so.
+         */
+        identityProvenance: PROVENANCE_BY_SOURCE_KIND.SECRET_MANAGER_VERSION,
+        version: resolution.version,
+      },
+    };
+  }
 }
 
+/**
+ * THE PRODUCTION FACTORY. **NO SEAM IS EXPOSED HERE.**
+ *
+ * `§10`: "Do NOT make the production source accept an arbitrary caller-provided network
+ * client from the control plane." Two fields — an adapter id and a locator path — and there
+ * is no third through which a client, a credential or a token could arrive. The runtime host
+ * calls this; the test seam is reachable only from inside this module's own test.
+ */
 export function createAdapterSecretSource(input: {
   readonly adapterId: string;
   readonly locator: string;
 }): AdapterSecretSource {
   return new SendGridSecretSource(input.adapterId, input.locator);
+}
+
+/**
+ * TEST-ONLY construction, for `tests/sendgrid/key-vault-binding.test.ts`.
+ *
+ * It exists so the Azure SDK boundary can be replaced by a double WITHOUT weakening the
+ * runtime contract above: the exported production factory still always uses the real
+ * credential and the real client, and this export is never referenced by `src/` or by the
+ * runtime host. `tests/sendgrid/prerequisites-and-separation.test.ts` computes the closures
+ * that keep that true.
+ */
+export function createAdapterSecretSourceForTest(input: {
+  readonly adapterId: string;
+  readonly locator: string;
+  readonly readerFactory: KeyVaultReaderFactory;
+}): AdapterSecretSource {
+  return new SendGridSecretSource(input.adapterId, input.locator, input.readerFactory);
 }

@@ -1,5 +1,12 @@
 import { readFileSync } from 'node:fs';
 
+import {
+  createAuditKeyVaultReader,
+  parseAuditKeyVaultLocator,
+  resolveAuditExactSecretVersion,
+  type AuditKeyVaultReaderFactory,
+} from './keyVault.js';
+
 import type {
   AuditCredentialIdentityProvenance,
   AuditReadSecretSource,
@@ -103,6 +110,59 @@ export function auditIdentityIsDerivedFromSecret(identity: string, secret: strin
   return false;
 }
 
+/**
+ * THE NON-SECRET AZURE PRINCIPAL A SOURCE IS CONFIGURED TO RESOLVE AS.
+ *
+ * =================================================================================
+ * WHY THE SOURCE REPORTS THIS, AND NOT THE COORDINATOR
+ *
+ * The owner decision makes DISTINCT user-assigned managed identities part of the security
+ * boundary: the Azure principal allowed to read the send key must not be the one allowed to
+ * read the audit key. Enforcing that needs the parent to compare two values — and the parent
+ * must not obtain them by reading either plane's locator file, because a coordinator that
+ * could read a locator could read whatever a confused operator had put in it.
+ *
+ * So each SOURCE reports its own, through the ACCEPTED one-shot identity-probe boundary that
+ * already carries `resolvedIdentity` and `identityProvenance`. The integration child reports
+ * only the integration value; the audit child reports only the audit value; neither is ever
+ * handed the other's locator.
+ *
+ * **THE VALUE IS A GUID AND IS NON-SECRET.** A managed-identity client id names a principal;
+ * it authenticates nobody. Possession of it grants nothing, which is why it may cross the
+ * probe reply when a token or a client secret may not.
+ *
+ * **IT IS A DIFFERENT CONTROL FROM THE CREDENTIAL-IDENTITY CHECK, AND NEITHER SUBSTITUTES.**
+ * The Key Vault credential identity says WHICH SendGrid material and version was resolved; the
+ * managed-identity client id says WHICH AZURE PRINCIPAL was allowed to resolve it. Two planes
+ * could hold two distinct secrets behind one over-privileged identity, and that is exactly the
+ * configuration this reports.
+ * =================================================================================
+ */
+export interface AuditSourcePrincipalReport {
+  /**
+   * The non-secret principal, or `null` when the mechanism has none.
+   *
+   * `FILE_FIXTURE` reports `null` and MUST: a file-backed fixture authenticates to no Azure
+   * principal, and reporting a plausible GUID would let an offline mechanism satisfy a live
+   * gate. `§2`'s requirement that the fixture path stay honestly synthetic is this `null`.
+   */
+  readonly principalIdentity: string | null;
+  /** Which mechanism answered, so a reviewer can tell a `null` apart from an absence. */
+  readonly mechanism: string | null;
+}
+
+/**
+ * The optional capability a secret source may implement.
+ *
+ * Feature-detected structurally by `probeRuntime.ts`, and declared HERE rather than on the
+ * accepted `AuditReadSecretSource` contract in `src/`: the Azure principal is a property of the
+ * S1P validation mechanism, and widening a production interface for a validation-only concern
+ * would put it on every adapter source that will ever exist.
+ */
+export interface AuditSourcePrincipalDescriber {
+  describeSourcePrincipal(): AuditSourcePrincipalReport;
+}
+
 interface AuditDeploymentDocument {
   readonly providerId?: unknown;
   readonly sourceKind?: unknown;
@@ -110,6 +170,17 @@ interface AuditDeploymentDocument {
   readonly credentialIdentity?: unknown;
   readonly version?: unknown;
   readonly revoked?: unknown;
+  /*
+   * THIS PLANE'S OWN KEY VAULT OPERANDS — its own vault, its own secret, its own managed
+   * identity. The integration plane's values never reach this document, because the audit
+   * runtime's environment allowlist has no slot for the integration locator and
+   * `createAuditReaderRegistry` refuses `READER_LOCATOR_SHARED_WITH_INTEGRATION` when the two
+   * locators collide.
+   */
+  readonly vaultUrl?: unknown;
+  readonly secretName?: unknown;
+  readonly secretVersion?: unknown;
+  readonly managedIdentityClientId?: unknown;
 }
 
 class SendGridAuditSecretSource implements AuditReadSecretSource {
@@ -117,9 +188,23 @@ class SendGridAuditSecretSource implements AuditReadSecretSource {
 
   private readonly locator: string;
 
-  public constructor(providerId: string, locator: string) {
+  /**
+   * THE AZURE SDK BOUNDARY, AS A MODULE-TEST SEAM. `§10`, and it is THIS PLANE'S OWN.
+   *
+   * Defaults to `createAuditKeyVaultReader` — the audit package's factory, constructing the
+   * real `ManagedIdentityCredential` and the real `SecretClient`. It is not the integration
+   * package's factory, and it could not be: these two packages share no module.
+   */
+  private readonly readerFactory: AuditKeyVaultReaderFactory;
+
+  public constructor(
+    providerId: string,
+    locator: string,
+    readerFactory: AuditKeyVaultReaderFactory = createAuditKeyVaultReader,
+  ) {
     this.declaredProviderId = providerId;
     this.locator = locator;
+    this.readerFactory = readerFactory;
   }
 
   /**
@@ -128,6 +213,39 @@ class SendGridAuditSecretSource implements AuditReadSecretSource {
    * another scope's material, and the only thing between the ask and the answer would be a
    * check inside the source.
    */
+  /**
+   * REPORT THIS PLANE'S OWN AZURE PRINCIPAL. Independently, through its own closed parser.
+   *
+   * A second implementation rather than a shared one, for the reason every rule in these two
+   * packages is stated twice: they share no module, and the audit plane's independence is what
+   * `48 §3.6`'s read-only exemption rests on.
+   */
+  public describeSourcePrincipal(): AuditSourcePrincipalReport {
+    let document: AuditDeploymentDocument;
+    try {
+      document = JSON.parse(readFileSync(this.locator, 'utf8')) as AuditDeploymentDocument;
+    } catch {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (document.providerId !== this.declaredProviderId) {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (!isAuditCredentialSourceKind(document.sourceKind)) {
+      return { principalIdentity: null, mechanism: null };
+    }
+    if (document.sourceKind !== 'SECRET_MANAGER_VERSION') {
+      // A fixture authenticates to no Azure principal. `null`, and the mechanism named.
+      return { principalIdentity: null, mechanism: document.sourceKind };
+    }
+    const parsed = parseAuditKeyVaultLocator(document);
+    return parsed.kind === 'LOCATOR'
+      ? {
+          principalIdentity: parsed.locator.managedIdentityClientId,
+          mechanism: 'SECRET_MANAGER_VERSION',
+        }
+      : { principalIdentity: null, mechanism: 'SECRET_MANAGER_VERSION' };
+  }
+
   public resolve(): Promise<AuditSecretResolution> {
     let document: AuditDeploymentDocument;
     try {
@@ -144,7 +262,19 @@ class SendGridAuditSecretSource implements AuditReadSecretSource {
     if (!isAuditCredentialSourceKind(document.sourceKind)) {
       return Promise.resolve({ kind: 'UNAVAILABLE' });
     }
-    // The two binding mechanisms are declared and UNPROVISIONED. See this module's header.
+    /*
+     * `§9` — THE SAME MECHANISM, APPLIED INDEPENDENTLY ON THIS PLANE.
+     *
+     * Azure Key Vault immutable secret VERSION binding, resolved through the audit package's
+     * OWN `keyVault.ts` with the audit plane's own managed identity, vault, secret name and
+     * version. The integration implementation is not imported and is not reachable from here.
+     */
+    if (document.sourceKind === 'SECRET_MANAGER_VERSION') {
+      return this.resolveFromKeyVault(document);
+    }
+
+    // `PROVIDER_KEY_ID_BINDING` remains declared and UNPROVISIONED. See this module's header:
+    // no mechanism binds a SendGrid `api_key_id` to material this process holds.
     if (document.sourceKind !== 'FILE_FIXTURE') {
       return Promise.resolve({ kind: 'UNAVAILABLE' });
     }
@@ -173,11 +303,61 @@ class SendGridAuditSecretSource implements AuditReadSecretSource {
       },
     });
   }
+
+  /**
+   * RESOLVE THIS PLANE'S EXACT AZURE KEY VAULT SECRET VERSION.
+   *
+   * The document's own `credentialIdentity` is NOT read on this path. The identity is
+   * `properties.id` from the audit plane's own Key Vault response and nothing else, so an
+   * operator who wrote an identity beside the vault operands wrote a value nothing reads.
+   */
+  private async resolveFromKeyVault(
+    document: AuditDeploymentDocument,
+  ): Promise<AuditSecretResolution> {
+    const parsed = parseAuditKeyVaultLocator(document);
+    if (parsed.kind === 'REFUSED') return { kind: 'UNAVAILABLE' };
+
+    const resolution = await resolveAuditExactSecretVersion(
+      parsed.locator,
+      this.readerFactory(parsed.locator),
+    );
+    if (resolution.kind === 'REFUSED') return { kind: 'UNAVAILABLE' };
+
+    return {
+      kind: 'RESOLVED',
+      credential: {
+        secret: resolution.secret,
+        // THE IDENTITY KEY VAULT RETURNED, for this plane's own secret version.
+        credentialIdentity: resolution.credentialIdentity,
+        // EARNED BY AN IMMUTABLE SECRET-MANAGER VERSION, independently of the send plane.
+        identityProvenance: AUDIT_PROVENANCE_BY_SOURCE_KIND.SECRET_MANAGER_VERSION,
+        version: resolution.version,
+      },
+    };
+  }
 }
 
+/**
+ * THE PRODUCTION FACTORY. Two fields, and no seam through which a network client could arrive.
+ */
 export function createAuditReadSecretSource(input: {
   readonly providerId: string;
   readonly locator: string;
 }): AuditReadSecretSource {
   return new SendGridAuditSecretSource(input.providerId, input.locator);
+}
+
+/**
+ * TEST-ONLY construction, for this plane's own Key Vault binding test.
+ *
+ * A SECOND such export rather than a shared one, for the reason every other rule in these two
+ * packages is stated twice: they share no module, and the audit plane's independence is what
+ * `48 §3.6`'s read-only exemption rests on.
+ */
+export function createAuditReadSecretSourceForTest(input: {
+  readonly providerId: string;
+  readonly locator: string;
+  readonly readerFactory: AuditKeyVaultReaderFactory;
+}): AuditReadSecretSource {
+  return new SendGridAuditSecretSource(input.providerId, input.locator, input.readerFactory);
 }

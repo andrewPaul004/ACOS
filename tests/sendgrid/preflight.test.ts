@@ -92,8 +92,94 @@ const CREDENTIALS_BOUND: Stage2Facts = Object.freeze({
   auditCredentialResolved: true,
   auditResolvedIdentity: 'twilio_sendgrid.audit_read',
   auditIdentityProvenance: 'DEPLOYMENT_SECRET_VERSION',
+  /*
+   * TWO **DIFFERENT** AZURE PRINCIPALS, because the established set must establish this too.
+   *
+   * The gate they feed is independent of the credential-identity gate above: those two
+   * identities say which SendGrid material each plane resolved; these say which Azure
+   * principal was allowed to resolve it.
+   */
+  integrationSourcePrincipal: '11111111-2222-3333-4444-555555555555',
+  auditSourcePrincipal: '99999999-8888-7777-6666-555555555555',
   configuredIntegrationCredentialId: 'twilio_sendgrid.validation_send',
   configuredAuditCredentialId: 'twilio_sendgrid.audit_read',
+});
+
+describe('THE AZURE PRINCIPAL GATES — A SECOND, INDEPENDENT SEPARATION CONTROL', () => {
+  /*
+   * =================================================================================
+   * WHY THIS IS NOT COVERED BY `CREDENTIALS_NOT_DISTINCT`
+   *
+   * That gate compares the SendGrid credential identities — which material each plane
+   * resolved. These compare the AZURE PRINCIPALS — which identity was allowed to resolve it.
+   *
+   * The configuration they catch is the one the other gate cannot see: two genuinely distinct
+   * SendGrid keys, in two genuinely distinct Key Vault secrets, both readable by ONE
+   * over-privileged user-assigned managed identity. Every credential-identity check passes,
+   * and the separation `48 §3.6`'s read-only exemption rests on does not exist.
+   * =================================================================================
+   */
+  it('the fully established set has DISTINCT principals and passes', () => {
+    expect(evaluateStage2(CREDENTIALS_BOUND)).toEqual([]);
+    expect(CREDENTIALS_BOUND.integrationSourcePrincipal).not.toBe(
+      CREDENTIALS_BOUND.auditSourcePrincipal,
+    );
+  });
+
+  it('**THE SAME managed identity on both planes REFUSES**, with distinct credentials', () => {
+    /*
+     * THE DISCRIMINATING CASE. Both SendGrid identities are still distinct and still match
+     * their configured expectations, so every accepted gate passes — and the run is refused
+     * anyway, on the principal alone.
+     */
+    const shared = '11111111-2222-3333-4444-555555555555';
+    const failures = evaluateStage2({
+      ...CREDENTIALS_BOUND,
+      integrationSourcePrincipal: shared,
+      auditSourcePrincipal: shared,
+    });
+    expect(failures).toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+    // ...and NOT because anything else broke.
+    expect(failures).not.toContain('CREDENTIALS_NOT_DISTINCT');
+    expect(failures).not.toContain('INTEGRATION_CREDENTIAL_IDENTITY_MISMATCH');
+    expect(failures).not.toContain('AUDIT_CREDENTIAL_IDENTITY_MISMATCH');
+  });
+
+  it('a child that reported NO principal refuses, per plane', () => {
+    const noIntegration = evaluateStage2({
+      ...CREDENTIALS_BOUND,
+      integrationSourcePrincipal: null,
+    });
+    expect(noIntegration).toContain('INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE');
+
+    const noAudit = evaluateStage2({ ...CREDENTIALS_BOUND, auditSourcePrincipal: null });
+    expect(noAudit).toContain('AUDIT_SOURCE_PRINCIPAL_UNAVAILABLE');
+  });
+
+  it('TWO ABSENCES ARE NOT DISTINCT — `null` does not equal `null` for this gate', () => {
+    /*
+     * The same rule `CREDENTIALS_NOT_DISTINCT` follows, and for the same reason: a pair that
+     * both failed to report has established no separation, and reading two absences as
+     * "different" would let the misconfiguration this gate exists for pass unnoticed.
+     */
+    const failures = evaluateStage2({
+      ...CREDENTIALS_BOUND,
+      integrationSourcePrincipal: null,
+      auditSourcePrincipal: null,
+    });
+    expect(failures).toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+  });
+
+  it('the two controls are INDEPENDENT — one shared SendGrid key still refuses on its own gate', () => {
+    // NON-VACUOUS IN THE OTHER DIRECTION: distinct principals do not excuse a shared key.
+    const failures = evaluateStage2({
+      ...CREDENTIALS_BOUND,
+      auditResolvedIdentity: CREDENTIALS_BOUND.integrationResolvedIdentity,
+      configuredAuditCredentialId: CREDENTIALS_BOUND.integrationResolvedIdentity,
+    });
+    expect(failures).toContain('CREDENTIALS_NOT_DISTINCT');
+    expect(failures).not.toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+  });
 });
 
 describe('`§4` — STAGE 1 REFUSES FROM FACTS NO CREDENTIAL CONTRIBUTED TO', () => {

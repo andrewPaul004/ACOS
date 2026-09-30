@@ -115,11 +115,52 @@ const SENDGRID_PROVIDER_ID = 'twilio_sendgrid';
  * Returns the resolution and nothing else. The caller reads its identity labels and, for the
  * capability roles, its material — and does so inside one expression, in one place.
  */
+/**
+ * The non-secret principal a source reports about itself, when it can.
+ *
+ * FEATURE-DETECTED STRUCTURALLY rather than required by the accepted source contract: the
+ * Azure principal is a property of the S1P validation mechanism, and widening
+ * `AdapterSecretSource` for it would put a validation-only member on every adapter source
+ * that will ever exist. A source without the capability reports `null`, and the stage-2 gate
+ * then refuses on `*_SOURCE_PRINCIPAL_UNAVAILABLE` rather than assuming anything.
+ */
+function principalOf(source: unknown): {
+  readonly principalIdentity: string | null;
+  readonly mechanism: string | null;
+} {
+  const describe = (source as { describeSourcePrincipal?: unknown }).describeSourcePrincipal;
+  if (typeof describe !== 'function') return { principalIdentity: null, mechanism: null };
+  try {
+    const report = (describe as () => unknown).call(source);
+    if (typeof report !== 'object' || report === null) {
+      return { principalIdentity: null, mechanism: null };
+    }
+    const { principalIdentity, mechanism } = report as {
+      principalIdentity?: unknown;
+      mechanism?: unknown;
+    };
+    return {
+      principalIdentity: typeof principalIdentity === 'string' ? principalIdentity : null,
+      mechanism: typeof mechanism === 'string' ? mechanism : null,
+    };
+  } catch {
+    // A describer that threw established nothing. It is not an error to report; it is an
+    // absence, and the gate treats an absence as a refusal.
+    return { principalIdentity: null, mechanism: null };
+  }
+}
+
+interface ResolvedOne {
+  readonly resolution: SecretResolution | AuditSecretResolution;
+  readonly principalIdentity: string | null;
+  readonly principalMechanism: string | null;
+}
+
 async function resolveOne(
   plane: S1PProbePlane,
   sourceModule: string,
   locator: string,
-): Promise<SecretResolution | AuditSecretResolution | 'MODULE_UNLOADABLE' | 'MODULE_SHAPE'> {
+): Promise<ResolvedOne | 'MODULE_UNLOADABLE' | 'MODULE_SHAPE'> {
   let loaded: unknown;
   try {
     loaded = (await import(pathToFileURL(sourceModule).href)) as unknown;
@@ -129,11 +170,23 @@ async function resolveOne(
   if (plane === 'INTEGRATION') {
     const factory = (loaded as Partial<IntegrationSourceModule>).createAdapterSecretSource;
     if (typeof factory !== 'function') return 'MODULE_SHAPE';
-    return factory({ adapterId: SENDGRID_ADAPTER_ID, locator }).resolve();
+    const source = factory({ adapterId: SENDGRID_ADAPTER_ID, locator });
+    const principal = principalOf(source);
+    return {
+      resolution: await source.resolve(),
+      principalIdentity: principal.principalIdentity,
+      principalMechanism: principal.mechanism,
+    };
   }
   const factory = (loaded as Partial<AuditSourceModule>).createAuditReadSecretSource;
   if (typeof factory !== 'function') return 'MODULE_SHAPE';
-  return factory({ providerId: SENDGRID_PROVIDER_ID, locator }).resolve();
+  const source = factory({ providerId: SENDGRID_PROVIDER_ID, locator });
+  const principal = principalOf(source);
+  return {
+    resolution: await source.resolve(),
+    principalIdentity: principal.principalIdentity,
+    principalMechanism: principal.mechanism,
+  };
 }
 
 export async function runProbe(
@@ -197,15 +250,16 @@ export async function runProbe(
     return;
   }
 
-  const resolution = await resolveOne(plane, sourceModule, locator);
-  if (resolution === 'MODULE_UNLOADABLE') {
+  const resolved = await resolveOne(plane, sourceModule, locator);
+  if (resolved === 'MODULE_UNLOADABLE') {
     refuse('SOURCE_MODULE_UNLOADABLE');
     return;
   }
-  if (resolution === 'MODULE_SHAPE') {
+  if (resolved === 'MODULE_SHAPE') {
     refuse('SOURCE_MODULE_SHAPE_INVALID');
     return;
   }
+  const resolution = resolved.resolution;
 
   if (role === 'IDENTITY') {
     /*
@@ -230,6 +284,16 @@ export async function runProbe(
           expectedCredentialId.length > 0 &&
           resolution.credential.credentialIdentity === expectedCredentialId,
         revoked: resolution.kind === 'CREDENTIAL_REVOKED',
+        /*
+         * THE CHILD'S OWN ANSWER ABOUT ITS OWN AZURE PRINCIPAL.
+         *
+         * Read from the locator THIS process was launched with, through THIS plane's closed
+         * parser. The coordinator never sees the locator; it sees this GUID, and compares it
+         * with the other plane's. `FILE_FIXTURE` reports `null`, so an offline mechanism can
+         * never satisfy the live distinct-principal gate.
+         */
+        sourcePrincipalIdentity: resolved.principalIdentity,
+        sourcePrincipalMechanism: resolved.principalMechanism,
         environmentKeys: Object.keys(process.env).sort(),
         pid: process.pid,
       },

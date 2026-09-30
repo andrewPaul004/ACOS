@@ -224,6 +224,35 @@ export const STAGE_2_GATES = [
   'AUDIT_IDENTITY_NOT_MATERIAL_BOUND',
   /** The one-shot credential process did not answer. Never a pass. */
   'CREDENTIAL_PROBE_PROCESS_FAILED',
+  /*
+   * =================================================================================
+   * THE AZURE PRINCIPAL GATES. A **SECOND, INDEPENDENT** CONTROL.
+   *
+   * `CREDENTIALS_NOT_DISTINCT` above asks WHICH SENDGRID MATERIAL each plane resolved. These
+   * ask WHICH AZURE PRINCIPAL WAS ALLOWED TO RESOLVE IT, and neither substitutes for the
+   * other: two planes can hold two genuinely distinct SendGrid keys behind ONE
+   * over-privileged user-assigned managed identity, and that configuration passes the
+   * credential-identity check while defeating the separation it exists to create.
+   *
+   * The owner decision makes distinct managed identities part of the security boundary rather
+   * than an operator recommendation, so it is a GATE and it fails closed.
+   *
+   * The operands are non-secret GUIDs reported BY THE ISOLATED CHILD PROCESSES from their own
+   * closed locator parses. The coordinator never reads either locator file.
+   * =================================================================================
+   */
+  /** The integration child could not report the Azure principal it resolves as. */
+  'INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE',
+  /** The audit child could not report the Azure principal it resolves as. */
+  'AUDIT_SOURCE_PRINCIPAL_UNAVAILABLE',
+  /**
+   * **BOTH PLANES RESOLVE AS THE SAME AZURE PRINCIPAL.**
+   *
+   * One identity able to read both the send key and the audit key is one compromise away from
+   * holding both, and `48 §3.6`'s read-only exemption rests on the audit plane being
+   * independently reachable. Same principal blocks the matrix.
+   */
+  'CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT',
 ] as const;
 
 export type Stage2Gate = (typeof STAGE_2_GATES)[number];
@@ -307,6 +336,20 @@ export interface Stage2Facts {
   readonly auditCredentialResolved: boolean;
   readonly auditResolvedIdentity: string | null;
   readonly auditIdentityProvenance: string | null;
+
+  /**
+   * THE NON-SECRET AZURE PRINCIPAL EACH CHILD REPORTED ABOUT ITSELF.
+   *
+   * A user-assigned managed-identity client id, parsed by that plane's OWN closed locator
+   * parser inside that plane's OWN one-shot process. `null` when the mechanism has none —
+   * which `FILE_FIXTURE` always reports, so an offline fixture cannot satisfy a live gate.
+   *
+   * **NOT READ BY THE COORDINATOR.** A parent that could read a locator file could read
+   * whatever an operator had put in it; these arrive on the probe reply, where a GUID is
+   * admissible and a token is not.
+   */
+  readonly integrationSourcePrincipal: string | null;
+  readonly auditSourcePrincipal: string | null;
 
   /** Echoed from stage 1 so the comparison is made here rather than trusted from the child. */
   readonly configuredIntegrationCredentialId: string | null;
@@ -487,6 +530,27 @@ export function evaluateStage2(facts: Stage2Facts): readonly Stage2Gate[] {
   }
 
   /*
+   * THE AZURE PRINCIPAL GATES. INDEPENDENT OF THE CREDENTIAL-IDENTITY GATE ABOVE.
+   *
+   * `null` is an ABSENCE, not a value: two planes that both failed to report a principal are
+   * not "distinct", and treating them as passing would let a misconfigured pair clear the one
+   * gate that stops a single Azure identity reading both vendor credentials.
+   */
+  if (facts.integrationSourcePrincipal === null) {
+    failures.push('INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE');
+  }
+  if (facts.auditSourcePrincipal === null) {
+    failures.push('AUDIT_SOURCE_PRINCIPAL_UNAVAILABLE');
+  }
+  if (
+    facts.integrationSourcePrincipal === null ||
+    facts.auditSourcePrincipal === null ||
+    facts.integrationSourcePrincipal === facts.auditSourcePrincipal
+  ) {
+    failures.push('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+  }
+
+  /*
    * CORRECTION 6'S SECOND HALF — THE COMPARISON IS AGAINST THE **CONFIGURED** IDENTITY.
    *
    * Stage 1 used that identity to SELECT the signed class-5 record; stage 2 compares it to
@@ -563,6 +627,9 @@ export const NOTHING_ESTABLISHED: Stage1Facts = Object.freeze({
 
 /** The stage-2 facts a run that resolved NOTHING starts from. Refuses on every gate. */
 export const NO_CREDENTIAL_FACTS: Stage2Facts = Object.freeze({
+  // No child answered, so no principal was established on either plane.
+  integrationSourcePrincipal: null,
+  auditSourcePrincipal: null,
   integrationProbeAnswered: false,
   integrationCredentialResolved: false,
   integrationResolvedIdentity: null,

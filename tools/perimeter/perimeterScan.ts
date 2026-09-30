@@ -66,6 +66,24 @@ export const CALL_SITE_KINDS = [
    * `PERIMETER_EXEMPT(audit_plane_read_only, 48-3.6)`.
    */
   'PROVIDER_READ_CLIENT',
+  /**
+   * `SECRET_MANAGER_CLIENT` is the S1P Key Vault addition, and it exists because an
+   * UNENUMERATED outbound destination is an UNREVIEWED one.
+   *
+   * The owner decision for credential binding is Azure Key Vault immutable secret VERSION
+   * binding, so each credential-holding child now dials a SECOND host: its own Key Vault data
+   * plane, to resolve the exact secret version whose identifier becomes the class-5
+   * `credential_id`. That is not a provider boundary — it dispatches no effect and carries no
+   * `authorisation_ref` — but it IS a network capability inside the package whose whole point
+   * is a controlled perimeter.
+   *
+   * `48 §3`: "An exemption is not a hole. It is a **named, annotated, reviewed** hole, and the
+   * difference is that a reviewer can find it." Reporting the Key Vault client as its own kind
+   * is what makes it findable. It is deliberately NOT reported as a `NETWORK_PRIMITIVE`,
+   * because the two carry different annotations and a secret-manager read must not be able to
+   * inherit a send site's `PERIMETER_AUTHORISED`.
+   */
+  'SECRET_MANAGER_CLIENT',
 ] as const;
 
 export type CallSiteKind = (typeof CALL_SITE_KINDS)[number];
@@ -100,6 +118,25 @@ const NETWORK_PRIMITIVES: readonly RegExp[] = [
   /from\s+['"](?:node:)?dgram['"]/,
   /new\s+WebSocket\b/,
   /\bXMLHttpRequest\b/,
+];
+
+/**
+ * The Azure Key Vault data-plane surface, as IMPORTS and as CONSTRUCTIONS.
+ *
+ * Both are matched, for the reason a provider client's declaration AND its calls are both
+ * sites: the import is where the capability ENTERS a package, and `new SecretClient(...)` is
+ * where a DESTINATION is chosen. A reviewer should be able to find either.
+ *
+ * `ManagedIdentityCredential` is included because it is the identity the secret manager is
+ * dialled AS. The owner decision forbids a credential chain precisely so that this is one
+ * deterministic principal, and an unannotated switch to another credential type is exactly
+ * the change a perimeter scan should surface.
+ */
+const SECRET_MANAGER_CLIENTS: readonly RegExp[] = [
+  /from\s+['"]@azure\/keyvault-secrets['"]/,
+  /from\s+['"]@azure\/identity['"]/,
+  /new\s+SecretClient\s*\(/,
+  /new\s+ManagedIdentityCredential\s*\(/,
 ];
 
 const HTTP_LIBRARIES: readonly RegExp[] = [
@@ -356,6 +393,9 @@ export async function scanPerimeter(
           kinds.push('NETWORK_PRIMITIVE');
         }
         if (HTTP_LIBRARIES.some((pattern) => pattern.test(line))) kinds.push('HTTP_LIBRARY');
+        if (SECRET_MANAGER_CLIENTS.some((pattern) => pattern.test(line))) {
+          kinds.push('SECRET_MANAGER_CLIENT');
+        }
         for (const client of declaredClients) {
           // A call, not the declaration: the declaration is the client, the calls are the
           // sites. `48 §4` item 2 annotates SITES.

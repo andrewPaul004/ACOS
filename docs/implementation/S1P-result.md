@@ -180,7 +180,7 @@ the final report accompanying this slice.
 | Item | Owner |
 | --- | --- |
 | a dedicated non-production SendGrid account, two scoped keys, a verified sender, an owner sink, the Email Activity entitlement | operator |
-| **selecting and building a credential-binding mechanism** | owner/deployment. This is what unblocks stage 2 |
+| ~~selecting and building a credential-binding mechanism~~ | **DONE.** The owner selected Azure Key Vault immutable secret VERSION binding, and both planes implement it — `validation/sendgrid/{integration,audit}/keyVault.ts`. What remains is the Azure resources and the two secret versions, which are provisioning |
 | two signed class-5 records carrying the REAL material-bound identities | owner ceremony, after the above |
 | the control-artifact release ceremony over the new class-3 bytes | owner |
 | an owner-signed `ConstructorVersionRecord` for the S1P validation constructor | owner ceremony. **The CONSTRUCTOR ITSELF IS NO LONGER OWED** — `validation/sendgrid/harness/validationEmailConstructor.ts` is checked-in code and the class-19 candidate bytes declare its tuple. What is owed is the SIGNATURE `50 §3i` admission checks the record against |
@@ -260,3 +260,39 @@ measurement, without which a live no-duplicate conclusion stays `UNRESOLVED`.
 
 `50 §3i`'s class-19 key-migration obligation also remains open. This slice does not close it
 and does not claim to.
+
+---
+
+## 12. The Azure Key Vault credential binding
+
+The owner decision that closed `50 §2g` field 1 is recorded in full in
+`docs/implementation/S1P-operator-procedure.md`. In summary: SendGrid material lives in an
+Azure Key Vault secret, ACOS fetches an **exact version and never `latest`**, and the signed
+class-5 `credential_id` is the full versioned secret id Key Vault returns for that exact
+material.
+
+`SECRET_MANAGER_VERSION` is therefore **no longer UNPROVISIONED**. Both sources implement it
+independently — the two packages share no module, by owner direction — and each resolves
+through its own managed identity, its own vault and its own secret version.
+`PROVIDER_KEY_ID_BINDING` remains declared and unprovisioned, and still refuses.
+
+### What the mechanism establishes, and what it does not
+
+It establishes that the identity a runtime presents is the identity of the EXACT bytes Key
+Vault returned, in one response. It does **not** establish that the SendGrid key behind those
+bytes has the scope its class-5 record claims — that is the capability probes' job, and they
+are unchanged.
+
+### The class-5 records are still absent, deliberately
+
+`artifacts/control/class-05.credential-scopes.json` carries no SendGrid records and no
+placeholder Key Vault ids. Real full versioned ids do not exist until the secrets are
+provisioned, and a fabricated one would make the candidate look more complete while making the
+authority false.
+
+### Rotation
+
+A signed class-5 record names one exact versioned secret id. Creating a new Key Vault version
+produces a new id, so repointing the locator alone makes the returned identity disagree with
+the signed one and the accepted host refuses **before SendGrid**. Authority follows the owner's
+signature, never the vault.

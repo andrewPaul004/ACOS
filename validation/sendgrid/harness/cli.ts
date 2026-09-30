@@ -468,6 +468,15 @@ export async function establishStage2Facts(
       auditCredentialResolved: audit?.resolved ?? false,
       auditResolvedIdentity: audit?.resolvedIdentity ?? null,
       auditIdentityProvenance: audit?.identityProvenance ?? null,
+      /*
+       * THE AZURE PRINCIPALS, AS EACH ISOLATED CHILD REPORTED ITS OWN.
+       *
+       * Carried straight through: this coordinator does not read either locator file and has
+       * no way to derive these itself. `null` when a child did not answer, which the gates
+       * read as an absence rather than as a match.
+       */
+      integrationSourcePrincipal: integration?.sourcePrincipalIdentity ?? null,
+      auditSourcePrincipal: audit?.sourcePrincipalIdentity ?? null,
       configuredIntegrationCredentialId: config.integrationCredentialId,
       configuredAuditCredentialId: config.auditCredentialId,
     }),

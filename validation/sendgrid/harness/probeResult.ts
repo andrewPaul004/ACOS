@@ -74,6 +74,23 @@ export interface CredentialIdentityFacts {
   /** `§24`: the source answered `CREDENTIAL_REVOKED`. */
   readonly revoked: boolean;
   /**
+   * **THE NON-SECRET AZURE PRINCIPAL THIS SOURCE IS CONFIGURED TO RESOLVE AS.**
+   *
+   * The user-assigned managed-identity client id, reported BY THE CHILD from its own closed
+   * locator parse. `null` when the mechanism has no Azure principal — which `FILE_FIXTURE`
+   * always reports, so an offline fixture can never satisfy a live Azure gate.
+   *
+   * It is here rather than read by the coordinator because the coordinator must not read
+   * either plane's locator file: a parent that could would be a parent that could read
+   * whatever a confused operator had put in one. A GUID names a principal and authenticates
+   * nobody, which is why it may cross this reply when a token may not.
+   *
+   * `CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT` is the gate that consumes it.
+   */
+  readonly sourcePrincipalIdentity: string | null;
+  /** Which mechanism answered, so a `null` principal is distinguishable from an absence. */
+  readonly sourcePrincipalMechanism: string | null;
+  /**
    * `Object.keys(process.env)` AS THE CHILD SAW IT. KEYS ONLY.
    *
    * `§17` of the S1O mandate's pattern, for the same reason: what the parent passed is the

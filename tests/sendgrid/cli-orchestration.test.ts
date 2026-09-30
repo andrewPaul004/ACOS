@@ -81,6 +81,10 @@ import { acceptSend } from '../sendgrid-doubles/simulatedAccount.js';
  * =================================================================================
  */
 
+/** The two distinct user-assigned managed identities a real deployment must configure. */
+const INTEGRATION_PRINCIPAL = '11111111-2222-3333-4444-555555555555';
+const AUDIT_PRINCIPAL = '99999999-8888-7777-6666-555555555555';
+
 let h: OutboxHarness;
 let scenario: S1PScenario | null = null;
 let workspace: string;
@@ -111,12 +115,19 @@ function probeStub(
     readonly auditSendOutcome?: string;
     readonly integrationReadOutcome?: string;
     readonly duplicateSent?: boolean;
+    /**
+     * Force BOTH planes onto one Azure principal, to drive the distinctness gate.
+     * `null` makes both children report NO principal, which is a different refusal.
+     */
+    readonly sourcePrincipal?: string | null;
+    /** Force BOTH planes onto one SendGrid credential identity. A different gate. */
+    readonly forceCredentialIdentity?: string;
   } = {},
 ): NonNullable<S1PHarnessSeams['probe']> {
   const provenance = overrides.identityProvenance ?? 'PROVIDER_KEY_ID';
   return (input): Promise<ProbeLaunchResult> => {
     if (input.role === 'IDENTITY') {
-      const expected = input.expectedCredentialId;
+      const expected = overrides.forceCredentialIdentity ?? input.expectedCredentialId;
       return Promise.resolve({
         kind: 'REPLY' as const,
         pid: 0,
@@ -137,6 +148,22 @@ function probeStub(
              * with and its own pid, which is how the isolation is evidenced rather than
              * asserted. The stub reports the same shape with no locator in it.
              */
+            /*
+             * AND THE AZURE PRINCIPAL EACH CHILD REPORTS ABOUT ITSELF.
+             *
+             * TWO DIFFERENT GUIDS, keyed off the plane, because a real deployment must give
+             * the two planes different user-assigned managed identities and the stage-2 gate
+             * now enforces it. A stub that reported one value for both would refuse every
+             * case in this suite on `CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT` — which is
+             * itself driven, deliberately, further down.
+             */
+            sourcePrincipalIdentity:
+              overrides.sourcePrincipal === undefined
+                ? input.plane === 'INTEGRATION'
+                  ? INTEGRATION_PRINCIPAL
+                  : AUDIT_PRINCIPAL
+                : overrides.sourcePrincipal,
+            sourcePrincipalMechanism: 'SECRET_MANAGER_VERSION',
             environmentKeys: ['ACOS_S1P_PROBE_ROLE', 'ACOS_S1P_PROBE_PLANE'],
             pid: 0,
           },
@@ -496,4 +523,139 @@ describe('THE SHIPPED DEFAULT — `main` WITH NO SEAMS MEASURES, AND REFUSES', (
     expect(evidence.providerOperationCount).toBe(0);
     expect(evidence.liveRunPerformed).toBe(false);
   }, 120_000);
+});
+
+describe('THE DISTINCT AZURE PRINCIPAL GATE, END TO END THROUGH `main`', () => {
+  /*
+   * =================================================================================
+   * WHY THIS IS HERE AND NOT ONLY IN THE PREFLIGHT SUITE
+   *
+   * `tests/sendgrid/preflight.test.ts` drives the GATE over fact sets. What it cannot show is
+   * the CONSEQUENCE: that a run whose two planes share one Azure managed identity never
+   * reaches the capability probes and performs zero SendGrid operations.
+   *
+   * The owner decision makes distinct user-assigned managed identities part of the security
+   * boundary rather than an operator recommendation, and a boundary that refuses late — after
+   * probing a provider with the very credentials it was meant to keep separate — would not be
+   * one. So the refusal is asserted where it bites.
+   *
+   * The principals arrive on the probe replies, from the isolated child processes. This suite
+   * substitutes the probe LAUNCHER, so what it drives is the orchestration's handling of what
+   * a child reported; `tests/sendgrid/key-vault-binding.test.ts` drives the sources actually
+   * producing those values from their own closed locators.
+   * =================================================================================
+   */
+
+  it('1 — integration MI A / audit MI B: the distinct-principal gate passes', async () => {
+    const environment = operatorEnvironment();
+    await main(environment, seams());
+
+    const evidence = writtenEvidence();
+    expect(evidence.stage2Failures).not.toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+    // The run got past stage 2 entirely, which is what makes case 2 a discrimination.
+    expect(evidence.stage2Failures).toEqual([]);
+  }, 180_000);
+
+  it('2, 3, 4 — the SAME managed identity on both planes REFUSES, probes never run, zero sends', async () => {
+    /*
+     * THE CASE THE OLD TEST 23 COULD NOT MAKE.
+     *
+     * Two distinct SendGrid credential identities, both matching their signed expectations —
+     * every accepted gate passes. One Azure principal for both planes, and the run stops.
+     */
+    const environment = operatorEnvironment();
+    let probesLaunched = 0;
+    let compositionsOpened = 0;
+    const composition = offlineComposition();
+    const exit = await main(
+      environment,
+      seams({
+        composition: {
+          ...composition,
+          open: (input: CompositionInput) => {
+            compositionsOpened += 1;
+            return composition.open(input);
+          },
+        },
+        probe: (input) => {
+          if (input.role !== 'IDENTITY') probesLaunched += 1;
+          return probeStub({ sourcePrincipal: INTEGRATION_PRINCIPAL })(input);
+        },
+      }),
+    );
+
+    expect(exit).toBe(1);
+    const evidence = writtenEvidence();
+    expect(evidence.stage2Failures).toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+
+    // 3 — NO CAPABILITY PROBE RAN. The refusal is in stage 2, which gates them.
+    expect(probesLaunched).toBe(0);
+    expect(evidence.probes).toEqual([]);
+
+    // 4 — ZERO SENDGRID OPERATIONS, and no composition was opened either.
+    expect(evidence.providerOperationCount).toBe(0);
+    expect(evidence.liveRunPerformed).toBe(false);
+    expect(compositionsOpened).toBe(0);
+    expect(evidence.killPoints).toEqual([]);
+  }, 180_000);
+
+  it('5 — the operands come from the CHILDREN, not from parent-authored constants', async () => {
+    /*
+     * The coordinator holds no locator and cannot derive a principal. It reports exactly what
+     * the probe replies carried — so a child that reported nothing produces a refusal, not a
+     * default.
+     */
+    const environment = operatorEnvironment();
+    const exit = await main(
+      environment,
+      seams({ probe: (input) => probeStub({ sourcePrincipal: null })(input) }),
+    );
+
+    expect(exit).toBe(1);
+    const evidence = writtenEvidence();
+    expect(evidence.stage2Failures).toContain('INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE');
+    expect(evidence.stage2Failures).toContain('AUDIT_SOURCE_PRINCIPAL_UNAVAILABLE');
+    expect(evidence.providerOperationCount).toBe(0);
+  }, 180_000);
+
+  it('9 — the distinct VENDOR CREDENTIAL gate remains separately discriminating', async () => {
+    /*
+     * NEITHER CONTROL SUBSTITUTES FOR THE OTHER.
+     *
+     * Here the two planes use different Azure principals — the new gate passes — and resolve
+     * the SAME SendGrid credential identity. The accepted `CREDENTIALS_NOT_DISTINCT` gate
+     * catches it on its own.
+     */
+    const environment = operatorEnvironment();
+    const exit = await main(
+      environment,
+      seams({
+        probe: (input) =>
+          probeStub({ forceCredentialIdentity: 'twilio_sendgrid.one_key_for_both' })(input),
+      }),
+    );
+
+    expect(exit).toBe(1);
+    const evidence = writtenEvidence();
+    expect(evidence.stage2Failures).toContain('CREDENTIALS_NOT_DISTINCT');
+    // ...and NOT because the Azure principals were wrong. They were fine.
+    expect(evidence.stage2Failures).not.toContain('CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT');
+    expect(evidence.providerOperationCount).toBe(0);
+  }, 180_000);
+
+  it('7 — no Azure token or material crosses the probe reply', async () => {
+    /*
+     * The reply carries a GUID, which names a principal and authenticates nobody. `§12`'s
+     * hygiene rule applied to the new field: a value that could authenticate would be a value
+     * the coordinator must not hold.
+     */
+    const environment = operatorEnvironment();
+    await main(environment, seams());
+
+    const evidence = writtenEvidence();
+    const serialised = JSON.stringify(evidence);
+    for (const forbidden of ['SG.', 'Bearer ', 'eyJ0', 'PRIVATE KEY', 'AZURE_CLIENT_SECRET']) {
+      expect(serialised, forbidden).not.toContain(forbidden);
+    }
+  }, 180_000);
 });

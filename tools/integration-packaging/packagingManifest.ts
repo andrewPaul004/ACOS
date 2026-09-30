@@ -45,6 +45,24 @@ export interface RuntimeClosure {
   readonly name: string;
   /** Repository-relative module paths, sorted. Deterministic across runs and platforms. */
   readonly modules: readonly string[];
+  /**
+   * THE BARE PACKAGE SPECIFIERS THE CLOSURE IMPORTS, SORTED. S1P KEY VAULT ADDITION.
+   *
+   * `resolveSpecifier` returns `null` for anything that does not start with `.`, so a package
+   * dependency was previously INVISIBLE to this manifest: the walk followed repository modules
+   * and silently dropped `@azure/identity`, `pg` and everything else.
+   *
+   * That was adequate while the only question was which of OUR modules a runtime carried. The
+   * Azure Key Vault credential binding makes it inadequate: the owner decision says the
+   * credential-holding children hold an Azure SDK and the coordinator holds none, and a
+   * closure that cannot see packages cannot state either half.
+   *
+   * So the specifiers are COLLECTED rather than followed. Their own transitive graph is not
+   * walked — that is `package-lock.json`'s job, not this manifest's — and the property this
+   * field supports is "which runtimes import a package at all", which is exactly the
+   * separation question `§16` asks.
+   */
+  readonly packages: readonly string[];
 }
 
 /**
@@ -95,6 +113,16 @@ const SIDE_EFFECT_IMPORT = /(?:^|\n)\s*import\s+['"]([^'"]+)['"]/g;
  * being asserted is about FIRST-PARTY module separation, and `node_modules` would make every
  * closure the same size and prove nothing.
  */
+/**
+ * The PACKAGE a bare specifier belongs to. `@azure/identity` and `@azure/identity/x` are one
+ * dependency, and reporting them separately would let a deep import hide behind a name a
+ * separation assertion did not list.
+ */
+function packageNameOf(specifier: string): string {
+  const segments = specifier.split('/');
+  return specifier.startsWith('@') ? segments.slice(0, 2).join('/') : (segments[0] ?? specifier);
+}
+
 function resolveSpecifier(fromFile: string, specifier: string, cwd: string): string | null {
   if (!specifier.startsWith('.')) return null;
   const absolute = resolve(dirname(resolve(cwd, fromFile)), specifier);
@@ -117,6 +145,7 @@ export async function computeClosure(
   cwd: string = process.cwd(),
 ): Promise<RuntimeClosure> {
   const seen = new Set<string>();
+  const packages = new Set<string>();
   const queue = [...runtime.entryPoints];
 
   while (queue.length > 0) {
@@ -136,7 +165,18 @@ export async function computeClosure(
         const specifier = match[1];
         if (specifier === undefined) continue;
         const resolved = resolveSpecifier(current, specifier, cwd);
-        if (resolved !== null && !seen.has(resolved)) queue.push(resolved);
+        if (resolved !== null) {
+          if (!seen.has(resolved)) queue.push(resolved);
+          continue;
+        }
+        /*
+         * A BARE SPECIFIER. Recorded, not followed.
+         *
+         * `node:` builtins are excluded because they are not dependencies in the sense `§16`
+         * asks about — every runtime has `node:fs` available whether it imports it or not, and
+         * listing them would bury the one fact this field exists to surface.
+         */
+        if (!specifier.startsWith('node:')) packages.add(packageNameOf(specifier));
       }
     }
   }
@@ -144,6 +184,7 @@ export async function computeClosure(
   return Object.freeze({
     name: runtime.name,
     modules: Object.freeze([...seen].sort()),
+    packages: Object.freeze([...packages].sort()),
   });
 }
 

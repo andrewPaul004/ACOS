@@ -152,24 +152,94 @@ describe('`§19` item 4 — A MUTABLE JSON LABEL IS NOT SUFFICIENT LIVE MATERIAL
   });
 });
 
-describe('`§3.2` — THE TWO BINDING MECHANISMS ARE DECLARED AND **UNPROVISIONED**', () => {
-  for (const kind of CREDENTIAL_SOURCE_KINDS.filter((entry) => entry !== 'FILE_FIXTURE')) {
-    it(`a document declaring \`${kind}\` resolves NOTHING`, async () => {
-      /*
-       * `§3.2`: "If no concrete secret manager is selected, implement the contract and leave
-       * the real live source UNPROVISIONED/PARTIAL. That is preferable to a fake binding."
-       *
-       * The document is otherwise complete and the material is there. The source refuses
-       * anyway, because no mechanism in this repository can bind that material to that
-       * identity — and returning it under a borrowed provenance is exactly the fake binding.
-       */
-      const resolution = await integrationSource(
-        { ...FILE_FIXTURE, sourceKind: kind },
-        `unprovisioned-${kind}`,
-      ).resolve();
-      expect(resolution.kind).toBe('UNAVAILABLE');
-    });
-  }
+/*
+ * =====================================================================================
+ * **THIS BLOCK CHANGED WHEN THE OWNER SELECTED A SECRET MANAGER, AND `45 §3` REQUIRES IT
+ * CHANGED OUT LOUD.**
+ *
+ * It previously asserted that BOTH binding mechanisms were unprovisioned and resolved nothing.
+ * One of them no longer is: the owner selected Azure Key Vault immutable secret VERSION
+ * binding, and `validation/sendgrid/{integration,audit}/keyVault.ts` implement it.
+ *
+ * Asserting the old statement would now be asserting the ABSENCE of a mechanism this slice
+ * deliberately added — and, worse, it would still have PASSED, because the documents below
+ * carry no Key Vault operands and would refuse on a parse failure rather than on the
+ * unprovisioned branch. A test that passes for a reason it does not name is the thing `45 §3`
+ * exists to prevent.
+ *
+ * So the block is split. What each half proves:
+ *
+ *   `PROVIDER_KEY_ID_BINDING`   still unprovisioned, still refuses on the branch itself. It
+ *                               is NOT implemented merely because it exists in the enum.
+ *   `SECRET_MANAGER_VERSION`    provisioned, and refuses a document that DECLARES it without
+ *                               supplying the closed Key Vault operands — which is a
+ *                               different refusal with a different cause.
+ *
+ * The mechanism's own thirty discriminating cases live in
+ * `tests/sendgrid/key-vault-binding.test.ts`, which drives both planes over the Azure-SDK
+ * seam without contacting Azure.
+ * =====================================================================================
+ */
+describe('`§3.2` — `PROVIDER_KEY_ID_BINDING` IS DECLARED AND **STILL UNPROVISIONED**', () => {
+  it('a document declaring `PROVIDER_KEY_ID_BINDING` resolves NOTHING', async () => {
+    /*
+     * `§3.3`: no mechanism binds a SendGrid `api_key_id` to material this process holds, and
+     * obtaining one would need a broad administrative credential no accepted architecture
+     * permits. The document is otherwise complete and the material is there; the source
+     * refuses anyway, because returning it under a borrowed provenance is the fake binding.
+     */
+    const resolution = await integrationSource(
+      { ...FILE_FIXTURE, sourceKind: 'PROVIDER_KEY_ID_BINDING' },
+      'unprovisioned-provider-key-id',
+    ).resolve();
+    expect(resolution.kind).toBe('UNAVAILABLE');
+  });
+
+  it('and the enum still declares exactly three mechanisms, one of them unimplemented', () => {
+    // A fourth mechanism added without deciding what it establishes fails here.
+    expect([...CREDENTIAL_SOURCE_KINDS]).toEqual([
+      'FILE_FIXTURE',
+      'SECRET_MANAGER_VERSION',
+      'PROVIDER_KEY_ID_BINDING',
+    ]);
+  });
+});
+
+describe('`§8` — `SECRET_MANAGER_VERSION` IS PROVISIONED, AND STILL REFUSES A BARE DECLARATION', () => {
+  it('a document DECLARING the mechanism without Key Vault operands resolves NOTHING', async () => {
+    /*
+     * DECLARING A MECHANISM IS NOT SUPPLYING ONE.
+     *
+     * This document names `SECRET_MANAGER_VERSION` and carries a fixture `apiKey` and a
+     * fixture `credentialIdentity` — the pre-correction shape with a new label. It has no
+     * vault, no secret name, no version and no managed identity, so the closed locator parse
+     * refuses and NO Key Vault reader is ever constructed.
+     *
+     * The old form of this case passed for the wrong reason: it was reading the unprovisioned
+     * branch. It now passes for the right one.
+     */
+    const resolution = await integrationSource(
+      { ...FILE_FIXTURE, sourceKind: 'SECRET_MANAGER_VERSION' },
+      'declared-without-operands',
+    ).resolve();
+    expect(resolution.kind).toBe('UNAVAILABLE');
+  });
+
+  it('and the fixture `apiKey` beside it is NOT what a Key Vault resolution would return', async () => {
+    /*
+     * The material on the Key Vault path comes from the vault, never from the document. A
+     * declaration that could fall back to the document's own `apiKey` would be a mechanism
+     * that binds nothing — exactly the defect correction 3 closed.
+     */
+    const resolution = await integrationSource(
+      { ...FILE_FIXTURE, sourceKind: 'SECRET_MANAGER_VERSION' },
+      'no-fallback-to-document-material',
+    ).resolve();
+    expect(resolution.kind).not.toBe('RESOLVED');
+  });
+});
+
+describe('`§3.2` — THE MIGRATION AND READ-BACK PROPERTIES ARE UNCHANGED', () => {
 
   it('a document with NO declared mechanism — the pre-correction shape — resolves nothing', () => {
     /*

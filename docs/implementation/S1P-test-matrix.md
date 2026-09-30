@@ -155,3 +155,61 @@ and `outcome.set.options[0].optionId` unchanged. It synthesises neither value, a
 enumerator instance is handed to `dispatchEnvironmentFor`, so dispatch-time revalidation is
 literally the same machinery over the same registry and resolver. The enumeration/revalidation
 identity match is driven directly in `validation-email-constructor.test.ts` items 6 and 7.
+
+---
+
+# Azure Key Vault credential binding — the discriminating suites
+
+`tests/sendgrid/key-vault-binding.test.ts` (36 cases) drives both planes over the narrow
+Azure-SDK seam. **No case contacts Azure**, and the last block asserts by walk that no file
+under `tests/` imports `@azure/*` at all.
+
+| `§11` group | What fails without the implementation |
+| --- | --- |
+| EXACT VERSION (1–5) | a configured V1 answered with V2 refuses `RETURNED_VERSION_MISMATCH`; a missing/`latest`/malformed version refuses at the LOCATOR PARSE, so no reader is even constructed; a source scan proves `getSecret(name)` and version listing appear nowhere; a recording reader proves exactly one ask and no retry |
+| MATERIAL-BOUND IDENTITY (6–12) | `credentialIdentity` is `properties.id` verbatim; a document's own `credentialIdentity` is not read on this path and its `apiKey` is not used; a returned id whose vault, name or version differs refuses with its own named reason; a missing id refuses even when the version field agreed; a versionless (two-segment) id is refused rather than treated as a match |
+| MATERIAL (13–16) | empty value, disabled version, out-of-window version, retrieval error and malformed response each refuse; the SDK exception body is asserted absent from the refusal |
+| AUTHENTICATION (17–20) | the credential is built from `locator.managedIdentityClientId` and never from `process.env`; thirteen forbidden credential types are asserted absent **from the code** (the scan strips comments, because these modules name the forbidden types in prose to explain the refusal); no Azure auth secret appears in either runtime entry point or the probe environment; the parsed locator has exactly four keys and drops an offered `apiKey`/`accessToken` |
+| PLANE SEPARATION (21–25) | the two closures share no module and each carries its OWN `keyVault.ts`; both carry the Azure SDK, which is the duplication the owner direction requires; the two planes resolve to different vaults under different managed identities; an integration-shaped document handed to the audit source refuses before any Key Vault operand is parsed |
+| ROTATION (26–30) | V1 signed + V1 returned proceeds; V2 resolved honestly against a V1 signature is refused; V2 becomes usable only when the signed identity IS the returned V2 id; a `FILE_FIXTURE` still reports `SYNTHETIC_TEST_IDENTITY` whatever identity the file writes |
+| SECRET HYGIENE (`§12`) | no refusal can carry `Bearer`, a token or an `Authorization` header; the resolved identity is a readable non-secret URL containing no material |
+
+`tests/sendgrid/credential-process-isolation.test.ts` gains `§16`'s package-closure block:
+the coordinator and the control plane hold **no** `@azure/*` package, each credential-holding
+child holds both Azure packages and its own `keyVault.ts` and none of the other plane's
+modules, and the probe child's STATIC closure holds neither source because it loads one
+dynamically by path — which is the accepted design, not a gap.
+
+**`RuntimeClosure.packages` is a deliberate, documented expansion of the closure walker.**
+`resolveSpecifier` returns `null` for bare specifiers, so package dependencies were previously
+invisible to the manifest; a closure that cannot see packages cannot state either half of
+"the children hold the SDK and the coordinator holds none". Specifiers are collected, not
+followed — the transitive graph is `package-lock.json`'s job.
+
+**The perimeter scanner gains a `SECRET_MANAGER_CLIENT` kind**, for the same reason: the
+credential-holding children now dial a SECOND host, and an unenumerated outbound destination
+is an unreviewed one. All eight Key Vault sites — two imports and two constructions per plane —
+are reported and carry `PERIMETER_EXEMPT(credential_material_resolution, 50-2g)`. It is
+deliberately not reported as a `NETWORK_PRIMITIVE`, so a secret-manager read can never inherit
+a send site's `PERIMETER_AUTHORISED`.
+
+---
+
+# The closed locator and the distinct-principal gate
+
+| Requirement | Suite | What fails without the fix |
+| --- | --- | --- |
+| §1.1, §1.2 — exact documents accepted | `key-vault-binding.test.ts` | the exact integration and audit documents resolve, and the reader factory is called exactly once |
+| §1.3–§1.6 — forbidden/unknown fields | same | eleven fields — `apiKey`, `credentialIdentity`, `accessToken`, `identityProvenance`, `version`, `clientSecret`, `tenantId`, `certificatePath`, `privateKey`, `simulatedAccountPath`, an undeclared name — each refuse `LOCATOR_FIELDS_NOT_CLOSED` **with zero reader constructions** |
+| §1 — both planes, independently | same | the audit plane is closed over its own field set, and neither plane accepts the other's owner field |
+| §1.7 — the fixture is unaffected | same | `FILE_FIXTURE` keeps `apiKey`/`credentialIdentity` and still reports `SYNTHETIC_TEST_IDENTITY` |
+| §1.8 — rejection, not ignoring | same | the old case asserted a fabricated identity "could not influence the result" while the document RESOLVED; it now refuses outright, and `factoryCalls === 0` is what distinguishes the two |
+| §2 — sources report their own principal | same | each source parses its OWN closed locator and reports its managed identity; a non-closed document reports `null`; `FILE_FIXTURE` reports `null`; the value is a GUID carrying no material |
+| §2 — the gate | `preflight.test.ts` | same principal on both planes refuses `CREDENTIAL_SOURCE_PRINCIPALS_NOT_DISTINCT` **while every credential-identity gate passes**; a missing principal refuses per plane; two absences are not "distinct" |
+| §2.1–§2.5, §2.7, §2.9 — end to end | `cli-orchestration.test.ts` | distinct principals pass stage 2; the same principal refuses with **zero capability probes, zero provider operations and no composition opened**; a child reporting nothing refuses rather than defaulting; the vendor-credential gate still fires on its own; no token crosses the evidence |
+
+**Two assertions were restated out loud.** The old test 7 asserted that a document carrying a
+fabricated `credentialIdentity` and an `apiKey` still RESOLVED — the permissive behaviour the
+review rejected. And `accessToken` left test 20's forbidden-name scan, because `keyVault.ts`
+now *names* it in `FORBIDDEN_LIVE_DOCUMENT_FIELDS` in order to reject it; the property is
+asserted instead as what it actually is, that no source READS an Azure token field.

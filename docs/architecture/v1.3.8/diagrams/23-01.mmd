@@ -1,0 +1,55 @@
+graph TB
+    OWNER["👤 Owner / Board<br/>root authority · approvals · capital"]
+
+    subgraph ACOS["ACOS"]
+      direction TB
+      CTRL["Control Plane<br/>(deterministic kernel)"]
+      REAS["Reasoning Plane<br/>(CEO + workers, stateless)"]
+      INTEG["Integration Plane<br/>(credential-holding adapters)"]
+      AUDIT["Audit Plane<br/>(separate store, independent writer)"]
+    end
+
+    subgraph EXT_TRUSTED["External systems — authoritative for their own records"]
+      COMMERCE["Commerce platform<br/>orders · catalog · fulfilment"]
+      PSP["Payment processor<br/>settlement · payouts · disputes"]
+      BANK["Bank<br/>deposit line"]
+      SUPPLY["Supplier / fulfilment APIs"]
+      ADS["Advertising platforms<br/>spend (authoritative)<br/>attribution (CLAIM only)"]
+      MODELS["Model providers"]
+    end
+
+    subgraph EXT_UNTRUSTED["External content — untrusted, zero authority"]
+      CUST["Customers"]
+      SUPMSG["Supplier messages"]
+      WEB["Web / competitor pages / reviews"]
+      MKTDATA["Market-intelligence vendors"]
+    end
+
+    OWNER -->|grants · approvals · objectives| CTRL
+    CTRL -->|briefings · escalations · MAL| OWNER
+
+    CTRL <-->|assembled context / typed proposals| REAS
+    REAS -.->|no direct path| EXT_TRUSTED
+    CTRL -->|authorised effects only| INTEG
+    INTEG --> COMMERCE
+    INTEG --> PSP
+    INTEG --> SUPPLY
+    INTEG --> ADS
+    REAS --> MODELS
+
+    COMMERCE -->|webhooks + reconciliation| CTRL
+    PSP --> CTRL
+    BANK --> CTRL
+    SUPPLY --> CTRL
+    ADS --> CTRL
+
+    EXT_UNTRUSTED -->|quarantined ingestion<br/>schema-validated claims only| CTRL
+
+    CTRL --> AUDIT
+    INTEG --> AUDIT
+    AUDIT --> OWNER
+
+    classDef untrusted fill:#3a1f1f,stroke:#a33,color:#eee
+    classDef trusted fill:#1f2f3a,stroke:#38a,color:#eee
+    class EXT_UNTRUSTED,CUST,SUPMSG,WEB,MKTDATA untrusted
+    class EXT_TRUSTED,COMMERCE,PSP,BANK,SUPPLY,ADS,MODELS trusted

@@ -1,0 +1,101 @@
+# SEEDED: a NULL case_ref performs a global clock search (applied). H3 MUST FAIL.
+
+# ACOS v1.3 / v1.3.1 / v1.3.2 / v1.3.3 / v1.3.4 mechanical consistency pass — 48 conditions
+
+C1    PASS  Fourteen BLOCKING ids each have exactly one ledger entry heading
+          14/14
+C2    PASS  Every ledger disposition is APPLIED or APPLIED WITH EXPLICIT RESIDUAL; zero NOT APPLIED
+          14 dispositions: ['APPLIED', 'APPLIED WITH EXPLICIT RESIDUAL']
+C3    PASS  All nine v1.3 verification cases present in 36
+          9/9
+C4    PASS  Every numbered deliverable declares v1.3 in its version line
+          21/21
+C5    PASS  MAL_total signature basis $756.00; no operational passage states $600 as a current MAL_total
+          no superseded MAL_total in operational text
+C6    PASS  Standing(month) 31-day is $186.00; no operational passage states $180 as standing
+          no superseded standing basis in operational text
+C23   PASS  Semantic superseded combinations absent from operational passages
+          8 denylist patterns, 0 operational hits
+C21   PASS  Every operational mirror-outage behaviour statement carries the state qualifier
+          no unqualified operational statements
+C22   PASS  The printed I3 commitment guard contains exactly the four declared operands
+          reserved+standing+presumed+realised present
+C24   PASS  REVOKED has zero outbound transitions in every operational transition statement
+          no outbound REVOKED transition found
+C25   PASS  No operational passage states the I8 bound as an undeclared 'inverse-sweep cadence'
+          all sites read sweep_cadence + vendor_reporting_lag
+C26   PASS  New identifiers I62 and I63 resolve in the registry and are cited in >=2 artifacts
+          both resolve, both multiply cited
+C27   PASS  Every invariant identifier used in an operational artifact resolves in the registry
+          74 declared
+C28   PASS  The §2.8 DB-enforced enumeration contains 25 rows, matching §0 (v1.3.4: 23 -> 25)
+          enumerated 25
+C29   PASS  Registry counts are arithmetically consistent (60 + 13 = 73)
+E1    PASS  Rate-class semantics consistent: total_exposure = ordinary reservation = 0.00, economic exposure in I3 term 2, no term-1 reading anywhere normative
+          8 required statements present; 7 denylist patterns, 0 normative hits
+E2    PASS  Ledger disposition summary is computed from the entries and equals 7 / 7 / 0
+          computed 7 APPLIED / 7 RESIDUAL / 0 NOT APPLIED over 14 entries; printed 7 / 7; groups computed [('2', '5'), ('5', '1'), ('0', '1')] printed [('2', '5'), ('5', '1'), ('0', '1')]
+E3    PASS  No operational artifact references a superseded invariant registry as current authority
+          3 total references, 0 normative (all remaining are explicitly historical)
+E4    PASS  Scalar cessation_lag is not the active I54 operand anywhere normative; the per-adapter cessation specification is, and the conservative default stands
+          16 total references, 0 active; specification named in registry, 24 and 51; no-REVOKED default present
+E5    PASS  Implementation brief §7 contains exactly ten pass-revocation conditions numbered 1–10 once each
+          found 10 numbered conditions: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+E6    PASS  Audit-plane ownership count agrees: registry §0, registry §1 owner column, and 30 §6.1's list
+          owner column 23; 30 §6.1 lists 23; registry §0 states 23; symmetric difference none
+E7    PASS  The DB-enforced row count agrees between registry §0, §2.8's heading and §2.8's body
+          heading=True body=True §0=True
+F1    PASS  ACOS-JCS-1 NULL framing: reserved 0xFFFFFFFF word stated, payload bound stated, overflow fails closed, injectivity stated, no normative line carries the withdrawn one-byte sentinel
+          7 required statements present; 3 denylist patterns, 0 normative hits
+F2    PASS  The ACOS-JCS-1 cross-references agree with 30 5.3: 36's VC-A3 case and 50's class-20 row both carry the corrected NULL rule
+          4 required cross-reference statements present
+F3    PASS  30 5.3's worked examples are pairwise distinct where the specification distinguishes them: SQL NULL is FF FF FF FF and nothing else is; empty string and empty bytea are both length 0; bytea 0x00 and JSON literal null differ from NULL
+          parsed 5 rows: null=FF FF FF FF emptyText=00 00 00 00 emptyBytes=00 00 00 00 bytes00=00 00 00 01 00 jsonNull=00 00 00 04 6E 75 6C 6C; distinct=4
+G1    PASS  The $20.00 degraded per-action approval floor is declared in the authoritative quantity location (51 §3.7) with its identifier, units, operand, strict boundary semantics, OWNER DECISION provenance and control-artifact effect
+          6 required statements present in 51 §3.7
+G2    PASS  Every operational reference to the degraded approval floor resolves to the declared operand: 30 §5.1a specifies it, and 30 §5.1 row 2, 22 §3.1 and 36's VC-A6 each cite 51 §3.7
+          5 citing statements present
+G3    PASS  No operational passage equates the degraded approval floor with the $25.00 per_action_max, and 30 §5.1a plus 51 §3.7 state the distinction positively
+          3 denylist patterns, 0 non-historical hits; distinction stated
+G4    PASS  The degraded approval-floor comparison uses total_exposure; vendor_amount, dispatch amounts, model amounts, rationale amounts and grant prose are excluded by name, and 36's fixture forbids a caller-supplied boolean
+          operand=True exclusions=True fixture=True deny=[]
+G5    PASS  The mirror-lag CRITICAL threshold is exactly 15 minutes at every site that states a value, with its operand, inclusive boundary at timestamp precision, and its inability to create state, fabricate a signal, grant an override or move a limit
+          8 required statements present; 0 sites state a value other than 15
+G6    PASS  The prolonged audit-unreachability FULL-HALT threshold is exactly 30 minutes at every site that states a value, with its single-valued operand, declared timer start/reset semantics, inclusive boundary, all-class effect and the resolved override composition
+          11 required statements present; 0 sites state a value other than 30
+G7    PASS  The full-halt threshold is strictly greater than the mirror-lag threshold, computed from 51 §3.8's two declared values, with prose minutes and ISO-8601 notation agreeing on each
+          lag=(15, 15) halt=(30, 30); strictly greater=True
+G8    PASS  Audit insert-quota saturation remains incident-only, is named in STORE_WRITE_REJECTED's exclusion list, and no operational passage makes it a cause of the corroboration signal
+          4 required statements present; 0 saturation-as-cause hits
+G9    PASS  STORE_WRITE_REJECTED is an audit-owned derivation requiring an audit-observed, authenticated, admissible, canonical, non-colliding, non-duplicate, in-quota attempt that then failed at the store write; the semantic class is named, the concrete mapping is closed and unknown errors fail closed
+          all 19 conjuncts and class statements present
+G10   PASS  The STORE_WRITE_REJECTED exclusion list is present and carries all seventeen declared members -- canonical mismatch, row-hash mismatch, chain mismatch, collision, duplicate, credentials, signature, privilege, policy, cancellation, pre-ingress timeout, retryable serialization, deadlock and unknown errors included -- and the exclusion is stated as normative
+          17 declared exclusions all present; exclusion is normative
+H1    PASS  The effect->case binding is declared kernel-owned, immutable and never model-supplied; all nine forbidden sources are excluded by name; K7 forbids a model to influence it; the AuthorizationRequest carries it as kernel-computed; and I64 states it
+          4 positives and 9 named exclusions present
+H2    PASS  Claim-time clock-bearing derives from the effect's own immutable case_ref against a currently live, I56-provenanced statutory clock of the same company and case; no enqueue-time boolean, persisted column or caller parameter is authority; both directions are live; I65 and VC-A6c carry it
+          7 required statements present; I65 and VC-A6c present
+H3    FAIL  A NULL case_ref yields a determinate false without a lookup, and no operational passage admits a global clock search, a nearest-case match or an any-clock-that-fits fallback
+          missing: ['There is no global clock search, no nearest-case match, no fallback and no heuristic.']; fallback hits: [('30-observability-audit-and-escalation.md', 986)]
+H4    PASS  Where several qualifying live clocks exist the evidentiary clock is selected deterministically — earliest deadline, tie-broken by ascending clock_ref — the selection is separated from the boolean, the reference is persisted only where row 3 is the reason, and a caller never chooses it
+          5 required statements present; evidence is row-3-only and journaled
+H5    PASS  An otherwise-valid IRRECOVERABLE effect is dispatch-eligible in NORMAL at every site that states a state-qualified answer, the eligibility is scoped to item 4 alone, and reaching it is stated not to assert execution
+          both tables and both bounding statements agree on NORMAL
+H6    PASS  IRRECOVERABLE halts in UNCORROBORATED_STALL at every site that states it, and the 22 §3.1 row still carries exactly two Halt cells
+          all four sites halt
+H7    PASS  IRRECOVERABLE halts in CORROBORATED_DEGRADED at every site that states it; the degraded invariant is preserved positively; and the two consequences the correction has elsewhere — 36 §6's as-NORMAL equality and §5.6's inversion gaining a second row — are both recorded rather than left implicit
+          all sites halt; stated positively; the 36 §6 equality and the §5.6 inversion consequences are both recorded, with the permissiveness ordering preserved
+H8    PASS  The FULL-HALT POSTURE halts row 1 in every state and does not restore it, and §5.1a's rows-3-and-4-only composition is unchanged by v1.3.4
+          3 required statements present; §5.1a intact
+H9    PASS  An ordinary degraded-mode owner override cannot unlock IRRECOVERABLE in any state; §5.7.2's scope rule and its structural exclusion of the class are unchanged, and 22 §3.1 still says so
+          3 new statements plus the three unchanged accepted ones
+H10   PASS  The outbox state machine is ENQUEUED -> CLAIMED with no transition out of CLAIMED, and no operational passage introduces a visibility timeout, a claim expiry, a stale-lease reaper or any reclaim as a mechanism
+          4 required statements; 4 denylist patterns, 0 hits outside a refusal
+H11   PASS  The outbox scope is every external-write effect and only those, derived from the closed catalogue rather than from recoverability or from a caller; the three narrowly-scoped sites are widened; and I66 states it
+          6 required statements present; all three narrow sites widened; I66 present
+H12   PASS  The claim journal row's field order is explicitly declared field by field in the specification, is numbered 1..20 without gaps, matches an independent transcription held in this gate, is stated normative with the independence and insertion-order obligations, and moves control-artifact class 20
+          20 fields in declared order, 1..20, normative
+H13   PASS  The implementation sequence splits the outbox: S1 builds the durable schema, tag, recovery and non-reclaimable claim; the real adapter, HTTP, provider idempotency/query, unknown-outcome transition, sandbox and reconciliation remain later; and I36's two legs are attributed to the two slices that can run them
+          7 S1 items, 6 later items, I36 split in both 37 and the registry
+
+RESULT: 47 PASS / 1 FAIL

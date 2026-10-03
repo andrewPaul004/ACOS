@@ -1,0 +1,50 @@
+graph TB
+    OWN["Human Owner / Board"]
+
+    subgraph AUDIT["AUDIT PLANE — separate DB, separate creds"]
+      K11["K11 Audit Store<br/>hash-chained<br/>I1–I16 invariants<br/>adverse-facts computation"]
+    end
+
+    subgraph CONTROL["CONTROL PLANE — deterministic. Runs with all models offline."]
+      K7["K7 Work Orchestrator<br/>DBOS"]
+      K3["K3 Policy &amp; Authority"]
+      K4["K4 EFFECT GATEWAY<br/>the only path out"]
+      K5["K5 Exposure Ledger<br/>money + irrecoverable count"]
+      K6["K6 Financial Truth<br/>no model in path"]
+      K1["K1 State"]
+      K8["K8 Evidence"]
+      K9["K9 Decisions"]
+      K10["K10 Escalation"]
+      K15["K15 Ingress"]
+    end
+
+    subgraph REASON["REASONING PLANE — stateless, no credentials, untrusted"]
+      W1["Research worker"]
+      W2["Triage worker"]
+      W3["CEO function — DEFERRED<br/>scheduled; no private or<br/>ungoverned memory"]
+      UG["Utterance Gate<br/>T-U0/T-U1/T-U2"]
+    end
+
+    subgraph INTEG["INTEGRATION PLANE — the only credential holders, no models"]
+      A1["Commerce adapter"]
+      A2["Comms adapter"]
+      A3["Market-data adapter<br/>read-only"]
+    end
+
+    EXT[("External systems<br/>and all external content")]
+
+    OWN -->|approve / deny / grant| K9
+    K11 -->|briefing + adverse facts| OWN
+
+    K7 -->|context_spec bundle| REASON
+    REASON -->|propose_intent only| K4
+    K4 --> K3
+    K3 --> K5
+    K4 -->|authorised dispatch| INTEG
+    INTEG --> EXT
+    EXT -->|untrusted data| K15 --> K1
+    INTEG -->|settlement, not model output| K6
+    CONTROL -->|append-only insert| K11
+
+    classDef gate fill:#7f1d1d,color:#fff,stroke:#450a0a
+    class K4 gate

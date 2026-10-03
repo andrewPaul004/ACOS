@@ -149,6 +149,76 @@ export interface ProviderCapabilityRecord {
     readonly reference: string;
     readonly basis: ObservationBasis;
   };
+  /**
+   * `v1.3.8`, ADR-027 — THE SIGNED PROVIDER-PUSH EVIDENCE SURFACE, WHERE THE PROVIDER HAS ONE.
+   *
+   * =================================================================================
+   * WHY THIS IS A SEPARATE MEMBER AND NOT MORE PROSE ON `activityQuery`
+   *
+   * `activityQuery` records a surface ACOS QUERIES. A signed webhook is a surface the
+   * provider PUSHES, authenticated by its own signature. The two have different operands,
+   * different credentials — the push needs none — and, decisively, **different completeness
+   * properties**: a bounded query has the coverage its bound declares, and an authenticated
+   * push has NO established completeness at all until one is measured.
+   *
+   * Merging them into one field would let a reader inherit the query's coverage reasoning
+   * while reading push evidence, which is the single mistake ADR-027 decision 6 exists to
+   * prevent.
+   *
+   * `undefined` for a provider with no such surface, or none yet researched. **An absent
+   * member is not a documented negative** — the same distinction `CAPABILITY_STATUSES` keeps
+   * between `ABSENT` and `UNRESOLVED`.
+   */
+  readonly signedProviderPush?: {
+    /** The provider's own name for the mechanism. */
+    readonly mechanism: string;
+    /** Whether the provider's FREE tier includes it, which is why this mode was reachable. */
+    readonly includedInFreeTier: boolean | null;
+    /**
+     * The CLOSED verification profile class 28 field 5 names (`50 §2h`, `S1P-W3`). **Not a
+     * bare algorithm name**: "ECDSA" alone leaves the signed input, its order, the digest, the
+     * signature encoding, the key representation and the curve to the implementer.
+     */
+    readonly verificationProfile: string;
+    /** The exact header carrying the signature. */
+    readonly signatureHeader: string;
+    /** The exact header carrying the timestamp that is signed with the body. */
+    readonly timestampHeader: string;
+    /** The full procedure the profile expands to, as the provider documents and implements it. */
+    readonly verificationProcedure: string;
+    /**
+     * The ONE representation of the provider-returned public key, which class 28 stores
+     * verbatim. The provider's official helpers are wrappers around it, not separate formats.
+     */
+    readonly publicKeyRepresentation: string;
+    /**
+     * What the signature covers. **The decisive operational fact**: verification reads the
+     * EXACT RAW REQUEST BYTES together with the provider's timestamp header, so a payload
+     * parsed and re-serialised before verification verifies something the provider never
+     * signed.
+     */
+    readonly signatureCovers: string;
+    /** The provider event type that means "accepted, ready for delivery". */
+    readonly acceptedEventType: string;
+    /** The provider field identifying one EVENT. The ingest-deduplication operand. */
+    readonly eventIdentityField: string;
+    /** The provider field identifying one MESSAGE. The accepted-count operand. */
+    readonly messageIdentityField: string;
+    /** How the ACOS correlation reaches the event, and under which key. */
+    readonly correlationRoundTrip: string;
+    /** The provider's documented retry behaviour for a non-2xx response. */
+    readonly deliveryRetry: string;
+    /**
+     * **`false` WHEREVER THE PROVIDER DOCUMENTS NO GUARANTEE, AND THAT IS THE HONEST ANSWER.**
+     *
+     * Authenticating each POST establishes nothing about whether every event the provider
+     * generated arrived. The retry behaviour above bounds how long a FAILED delivery is
+     * retried; it is not a statement that an event was generated.
+     */
+    readonly deliveryCompletenessGuaranteed: boolean;
+    readonly reference: string;
+    readonly basis: ObservationBasis;
+  };
   /** `§19`: the provider-visible ACOS correlation mechanism. */
   readonly correlation: {
     readonly sendField: string;
@@ -260,6 +330,8 @@ const SG_ACTIVITY_GUIDE =
 const SG_SANDBOX =
   'https://www.twilio.com/docs/sendgrid/for-developers/sending-email/sandbox-mode';
 const SG_LIMITS = 'https://www.twilio.com/docs/sendgrid/api-reference/mail-send/limitations';
+const SG_EVENT_WEBHOOK =
+  'https://www.twilio.com/docs/sendgrid/for-developers/tracking-events/getting-started-event-webhook';
 const SG_CATEGORIES =
   'https://www.twilio.com/docs/sendgrid/for-developers/sending-email/categories';
 const SG_403 =
@@ -318,6 +390,63 @@ export const SENDGRID_CAPABILITY_RECORD: ProviderCapabilityRecord = Object.freez
     ]),
     rateLimit: '6 requests per minute; HTTP 429 above it',
     reference: SG_ACTIVITY_GUIDE,
+    basis: DOCUMENTED,
+  }),
+  /*
+   * v1.3.8, `S1P-W1` — THE SURFACE S1P NOW USES, AND WHY IT EXISTS.
+   *
+   * The owner declines SendGrid's paid Additional Email Activity History feature, so
+   * `activityQuery` above describes a surface this account does not have. It is retained
+   * verbatim because it remains a true record of the provider's capability and because the
+   * generic `PROVIDER_READ` mode is retained for providers where it is the right answer.
+   *
+   * **THE SELECTED MODE FOR SENDGRID S1P IS `SIGNED_PROVIDER_PUSH` (ADR-027).** Under it the
+   * `email_activity.read` credential, its Key Vault secret and the paid entitlement are NOT
+   * required; the integration `mail.send` credential is unchanged and is the only SendGrid
+   * API credential this mode needs.
+   */
+  signedProviderPush: Object.freeze({
+    mechanism: 'Signed Event Webhook',
+    includedInFreeTier: true,
+    verificationProfile: 'SENDGRID_EVENT_WEBHOOK_V1',
+    signatureHeader: 'X-Twilio-Email-Event-Webhook-Signature',
+    timestampHeader: 'X-Twilio-Email-Event-Webhook-Timestamp',
+    verificationProcedure:
+      'SHA-256 over (exact timestamp header octets || exact raw body octets), timestamp FIRST; ' +
+      'the signature header strictly standard-Base64-decoded to one DER ASN.1 ECDSA-Sig-Value ' +
+      '(r, s); ECDSA verification on P-256. No negotiation, no request-selected algorithm, no ' +
+      'fallback verifier (50 §2h P1-P10)',
+    publicKeyRepresentation:
+      'the API member `public_key` is standard Base64 of a DER X.509 SubjectPublicKeyInfo ' +
+      '(id-ecPublicKey, namedCurve prime256v1), as sendgrid-go (base64.StdEncoding + ' +
+      'x509.ParsePKIXPublicKey), sendgrid-java (X509EncodedKeySpec) and sendgrid-python (PEM ' +
+      '"PUBLIC KEY" armour) all interpret it. The prose documentation names no curve; P-256 ' +
+      "rests on the official helpers' published test fixture",
+    signatureCovers:
+      'the SendGrid timestamp header together with the EXACT RAW REQUEST PAYLOAD BYTES. ' +
+      'Parsing or re-serialising the body before verification can invalidate the ' +
+      'signature, so verification must read the raw bytes and must run BEFORE any parse',
+    acceptedEventType: 'processed',
+    eventIdentityField: 'sg_event_id',
+    messageIdentityField: 'sg_message_id',
+    correlationRoundTrip:
+      'v3 Mail Send custom_args are returned in Event Webhook events. The ACOS tag travels ' +
+      "under the EXISTING key `acos_correlation_tag` and is NOT renamed. The adapter also " +
+      'emits the tag as a category; under push evidence the CUSTOM ARGUMENT is ' +
+      'authoritative, because its key names ACOS explicitly where a category is a flat ' +
+      'label an account may use for its own purposes',
+    deliveryRetry:
+      'a non-2xx response causes retry at increasing intervals for up to 24 hours after ' +
+      'the event. THIS BOUNDS RETRY OF A FAILED DELIVERY AND IS NOT A COMPLETENESS OR ' +
+      'VISIBILITY GUARANTEE',
+    /*
+     * **DOCUMENTED ABSENCE, NOT AN ASSUMPTION.** SendGrid publishes no exactly-once or
+     * complete-delivery guarantee for the Event Webhook stream, and `§24`'s rule applies:
+     * a silence is recorded as a silence. `I36`'s no-duplicate conclusion therefore remains
+     * `UNRESOLVED` under this mode, exactly as it was under the read mode.
+     */
+    deliveryCompletenessGuaranteed: false,
+    reference: SG_EVENT_WEBHOOK,
     basis: DOCUMENTED,
   }),
   correlation: Object.freeze({

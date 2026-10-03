@@ -1,0 +1,250 @@
+# SEEDED: two distinct provider messages no longer a duplicate finding (1/1 edits applied). M4 MUST FAIL.
+
+# ACOS v1.3 / v1.3.1 / v1.3.2 / v1.3.3 / v1.3.4 / v1.3.5 / v1.3.6 / v1.3.7 / v1.3.8 mechanical consistency pass — 127 conditions
+
+C1    PASS  Fourteen BLOCKING ids each have exactly one ledger entry heading
+          14/14
+C2    PASS  Every ledger disposition is APPLIED or APPLIED WITH EXPLICIT RESIDUAL; zero NOT APPLIED
+          14 dispositions: ['APPLIED', 'APPLIED WITH EXPLICIT RESIDUAL']
+C3    PASS  All nine v1.3 verification cases present in 36
+          9/9
+C4    PASS  Every numbered deliverable declares v1.3 in its version line
+          21/21
+C5    PASS  MAL_total signature basis $756.00; no operational passage states $600 as a current MAL_total
+          no superseded MAL_total in operational text
+C6    PASS  Standing(month) 31-day is $186.00; no operational passage states $180 as standing
+          no superseded standing basis in operational text
+C23   PASS  Semantic superseded combinations absent from operational passages
+          8 denylist patterns, 0 operational hits
+C21   PASS  Every operational mirror-outage behaviour statement carries the state qualifier
+          no unqualified operational statements
+C22   PASS  The printed I3 commitment guard contains exactly the four declared operands
+          reserved+standing+presumed+realised present
+C24   PASS  REVOKED has zero outbound transitions in every operational transition statement
+          no outbound REVOKED transition found
+C25   PASS  No operational passage states the I8 bound as an undeclared 'inverse-sweep cadence'
+          all sites read sweep_cadence + vendor_reporting_lag
+C26   PASS  New identifiers I62 and I63 resolve in the registry and are cited in >=2 artifacts
+          both resolve, both multiply cited
+C27   PASS  Every invariant identifier used in an operational artifact resolves in the registry
+          78 declared
+C28   PASS  The §2.8 DB-enforced enumeration contains 25 rows, matching §0 (v1.3.4: 23 -> 25)
+          enumerated 25
+C29   PASS  Registry counts are arithmetically consistent (60 + 13 = 73)
+E1    PASS  Rate-class semantics consistent: total_exposure = ordinary reservation = 0.00, economic exposure in I3 term 2, no term-1 reading anywhere normative
+          8 required statements present; 7 denylist patterns, 0 normative hits
+E2    PASS  Ledger disposition summary is computed from the entries and equals 7 / 7 / 0
+          computed 7 APPLIED / 7 RESIDUAL / 0 NOT APPLIED over 14 entries; printed 7 / 7; groups computed [('2', '5'), ('5', '1'), ('0', '1')] printed [('2', '5'), ('5', '1'), ('0', '1')]
+E3    PASS  No operational artifact references a superseded invariant registry as current authority
+          3 total references, 0 normative (all remaining are explicitly historical)
+E4    PASS  Scalar cessation_lag is not the active I54 operand anywhere normative; the per-adapter cessation specification is, and the conservative default stands
+          16 total references, 0 active; specification named in registry, 24 and 51; no-REVOKED default present
+E5    PASS  Implementation brief §7 contains exactly ten pass-revocation conditions numbered 1–10 once each
+          found 10 numbered conditions: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+E6    PASS  Audit-plane ownership count agrees: registry §0, registry §1 owner column, and 30 §6.1's list
+          owner column 23; 30 §6.1 lists 23; registry §0 states 23; symmetric difference none
+E7    PASS  The DB-enforced row count agrees between registry §0, §2.8's heading and §2.8's body
+          heading=True body=True §0=True
+F1    PASS  ACOS-JCS-1 NULL framing: reserved 0xFFFFFFFF word stated, payload bound stated, overflow fails closed, injectivity stated, no normative line carries the withdrawn one-byte sentinel
+          7 required statements present; 3 denylist patterns, 0 normative hits
+F2    PASS  The ACOS-JCS-1 cross-references agree with 30 5.3: 36's VC-A3 case and 50's class-20 row both carry the corrected NULL rule
+          4 required cross-reference statements present
+F3    PASS  30 5.3's worked examples are pairwise distinct where the specification distinguishes them: SQL NULL is FF FF FF FF and nothing else is; empty string and empty bytea are both length 0; bytea 0x00 and JSON literal null differ from NULL
+          parsed 5 rows: null=FF FF FF FF emptyText=00 00 00 00 emptyBytes=00 00 00 00 bytes00=00 00 00 01 00 jsonNull=00 00 00 04 6E 75 6C 6C; distinct=4
+G1    PASS  The $20.00 degraded per-action approval floor is declared in the authoritative quantity location (51 §3.7) with its identifier, units, operand, strict boundary semantics, OWNER DECISION provenance and control-artifact effect
+          6 required statements present in 51 §3.7
+G2    PASS  Every operational reference to the degraded approval floor resolves to the declared operand: 30 §5.1a specifies it, and 30 §5.1 row 2, 22 §3.1 and 36's VC-A6 each cite 51 §3.7
+          5 citing statements present
+G3    PASS  No operational passage equates the degraded approval floor with the $25.00 per_action_max, and 30 §5.1a plus 51 §3.7 state the distinction positively
+          3 denylist patterns, 0 non-historical hits; distinction stated
+G4    PASS  The degraded approval-floor comparison uses total_exposure; vendor_amount, dispatch amounts, model amounts, rationale amounts and grant prose are excluded by name, and 36's fixture forbids a caller-supplied boolean
+          operand=True exclusions=True fixture=True deny=[]
+G5    PASS  The mirror-lag CRITICAL threshold is exactly 15 minutes at every site that states a value, with its operand, inclusive boundary at timestamp precision, and its inability to create state, fabricate a signal, grant an override or move a limit
+          8 required statements present; 0 sites state a value other than 15
+G6    PASS  The prolonged audit-unreachability FULL-HALT threshold is exactly 30 minutes at every site that states a value, with its single-valued operand, declared timer start/reset semantics, inclusive boundary, all-class effect and the resolved override composition
+          11 required statements present; 0 sites state a value other than 30
+G7    PASS  The full-halt threshold is strictly greater than the mirror-lag threshold, computed from 51 §3.8's two declared values, with prose minutes and ISO-8601 notation agreeing on each
+          lag=(15, 15) halt=(30, 30); strictly greater=True
+G8    PASS  Audit insert-quota saturation remains incident-only, is named in STORE_WRITE_REJECTED's exclusion list, and no operational passage makes it a cause of the corroboration signal
+          4 required statements present; 0 saturation-as-cause hits
+G9    PASS  STORE_WRITE_REJECTED is an audit-owned derivation requiring an audit-observed, authenticated, admissible, canonical, non-colliding, non-duplicate, in-quota attempt that then failed at the store write; the semantic class is named, the concrete mapping is closed and unknown errors fail closed
+          all 19 conjuncts and class statements present
+G10   PASS  The STORE_WRITE_REJECTED exclusion list is present and carries all seventeen declared members -- canonical mismatch, row-hash mismatch, chain mismatch, collision, duplicate, credentials, signature, privilege, policy, cancellation, pre-ingress timeout, retryable serialization, deadlock and unknown errors included -- and the exclusion is stated as normative
+          17 declared exclusions all present; exclusion is normative
+H1    PASS  The effect->case binding is declared kernel-owned, immutable and never model-supplied; all nine forbidden sources are excluded by name; K7 forbids a model to influence it; the AuthorizationRequest carries it as kernel-computed; and I64 states it
+          4 positives and 9 named exclusions present
+H2    PASS  Claim-time clock-bearing derives from the effect's own immutable case_ref against a currently live, I56-provenanced statutory clock of the same company and case; no enqueue-time boolean, persisted column or caller parameter is authority; both directions are live; I65 and VC-A6c carry it
+          7 required statements present; I65 and VC-A6c present
+H3    PASS  A NULL case_ref yields a determinate false without a lookup, and no operational passage admits a global clock search, a nearest-case match or an any-clock-that-fits fallback
+          4 required statements present; 3 denylist patterns, 0 non-historical hits
+H4    PASS  Where several qualifying live clocks exist the evidentiary clock is selected deterministically — earliest deadline, tie-broken by ascending clock_ref — the selection is separated from the boolean, the reference is persisted only where row 3 is the reason, and a caller never chooses it
+          5 required statements present; evidence is row-3-only and journaled
+H5    PASS  An otherwise-valid IRRECOVERABLE effect is dispatch-eligible in NORMAL at every site that states a state-qualified answer, the eligibility is scoped to item 4 alone, and reaching it is stated not to assert execution
+          both tables and both bounding statements agree on NORMAL
+H6    PASS  IRRECOVERABLE halts in UNCORROBORATED_STALL at every site that states it, and the 22 §3.1 row still carries exactly two Halt cells
+          all four sites halt
+H7    PASS  IRRECOVERABLE halts in CORROBORATED_DEGRADED at every site that states it; the degraded invariant is preserved positively; and the two consequences the correction has elsewhere — 36 §6's as-NORMAL equality and §5.6's inversion gaining a second row — are both recorded rather than left implicit
+          all sites halt; stated positively; the 36 §6 equality and the §5.6 inversion consequences are both recorded, with the permissiveness ordering preserved
+H8    PASS  The FULL-HALT POSTURE halts row 1 in every state and does not restore it, and §5.1a's rows-3-and-4-only composition is unchanged by v1.3.4
+          3 required statements present; §5.1a intact
+H9    PASS  An ordinary degraded-mode owner override cannot unlock IRRECOVERABLE in any state; §5.7.2's scope rule and its structural exclusion of the class are unchanged, and 22 §3.1 still says so
+          3 new statements plus the three unchanged accepted ones
+H10   PASS  The outbox state machine is ENQUEUED -> CLAIMED with no transition out of CLAIMED, and no operational passage introduces a visibility timeout, a claim expiry, a stale-lease reaper or any reclaim as a mechanism
+          4 required statements; 4 denylist patterns, 0 hits outside a refusal
+H11   PASS  The outbox scope is every external-write effect and only those, derived from the closed catalogue rather than from recoverability or from a caller; the three narrowly-scoped sites are widened; and I66 states it
+          6 required statements present; all three narrow sites widened; I66 present
+H12   PASS  The claim journal row's field order is explicitly declared field by field in the specification, is numbered 1..20 without gaps, matches an independent transcription held in this gate, is stated normative with the independence and insertion-order obligations, and moves control-artifact class 20
+          20 fields in declared order, 1..20, normative
+H13   PASS  The implementation sequence splits the outbox: S1 builds the durable schema, tag, recovery and non-reclaimable claim; the real adapter, HTTP, provider idempotency/query, unknown-outcome transition, sandbox and reconciliation remain later; and I36's two legs are attributed to the two slices that can run them
+          7 S1 items, 6 later items, I36 split in both 37 and the registry
+J1    PASS  Every authorised IRRECOVERABLE external effect reserves its declared irrecoverable units at local authorisation, into reserved_irrecoverable, on EVERY applicable MIE window instance; 26 §7 step R states it; 24 §3 K5 prints the RESERVE transition; I67 carries it
+          3 statements in 25 §10.1, 2 in 26 §7 step R, the K5 RESERVE row, and I67
+J2    PASS  irrecoverable_units is declared per action class in the closed catalogue, is 1 for every IRRECOVERABLE class and 0 otherwise, is never model- or caller-supplied, admits no implicit default, and is signed control-artifact content
+          2 statements in 25 §10.1, 6 in 51 §2.3, and class 3 carries it
+J3    PASS  An IRRECOVERABLE effect with an unknown outcome reaches PRESUMED_EXECUTED and the declared movement is reserved -> presumed, stated positively as NOT reserved -> realised; 24 §3 K5 prints it; and I3's term 3 has exactly one producer per ledger
+          3 statements, the PRESUME row in both 25 §10.1 and 24 §3 K5, and I3's per-ledger producers
+J4    PASS  The reserved -> presumed movement leaves the three-term sum unchanged and creates no headroom, stated in 25 §10.1, 24 §3 K5 and I3; and nothing is released on an unknown outcome
+          no-headroom stated in three artifacts; nothing released on unknown
+J5    PASS  An ADAPTER_RETURNED outcome on an IRRECOVERABLE effect reaches PRESUMED_EXECUTED and performs the same movement exactly once, while REVERSIBLE and COMPENSABLE keep the awaiting-verification state; and an adapter response is still never independent verification
+          the recoverability split printed in full, with the not-verification statement and ADR-026
+J6    PASS  I20's right-hand side is the immutable historical committed-reservation basis rather than the current reserved_irrecoverable column, with the inversion reason stated; no ACOS-side or mock quantity may stand in for its left-hand side; and I20 is recorded OPEN for the provider comparison
+          the historical basis, the inversion reason, the substitution ban, and I20 OPEN
+J7    PASS  NOT_SENT_CONFIRMED is admissible only on positive trusted-adapter proof and never from an error string, reaches a state DISTINCT from the later provider-reconciled NEVER_SENT, releases the reservation with no presumed or realised increment, touches no presumed unit, and anything that may have escaped is OUTCOME_UNKNOWN
+          7 statements in 25 §7.1/§7.2, K4's distinctness, and I69
+J8    PASS  DISPATCH_NOT_SENT_CONFIRMED is terminal and never returns the same claimed outbox row to ENQUEUED, READY, a retry state or a second claim; a further attempt is a new proposal, authorisation and effect/outbox identity; and I36 records that no outcome makes a claimed row claimable again
+          the terminal-state prohibition, the new-identity rule, and I36's three v1.3.5 clauses
+J9    PASS  The generic post-claim ADAPTER_FAILED -> retry is prohibited: 24 §3 K4's wording is CORRECTED to scope retry to pre-claim workflow failures, ADAPTER_FAILED carries no local policy and reaches no state, ADR-026 records the correction, and the old unqualified sentence survives nowhere in the operational corpus
+          K4 corrected, ADAPTER_FAILED policy-free, ADR-026 records it, 0 surviving old sentences
+J10   PASS  Two serialization epochs are declared by name -- an authority lease and a DISPATCH lease, each held continuously with no release or reacquisition inside it -- the asynchronous gap holds no session lock as an explicit property with its five named safety mechanisms, the dispatch lease is stated NOT to be the same lease, and I70 carries it
+          both epochs named, 5 gap mechanisms, the not-the-same-lease rule, and I70
+J11   PASS  v1.3.4's single-continuous-lease wording is explicitly SUPERSEDED with its reason, VC-C3 states the old wording is not the guarantee and is not to be asserted, a later reacquisition is stated not to be the same lease, and no operational passage still prints the unqualified span
+          supersession stated with its reason; 2 VC-C3 statements; 0 unqualified spans
+J12   PASS  Dispatch-time revalidation is mandatory, revalidates the ORIGINALLY authorised effect against current authoritative state using the original identity facts, is the equivalent of C′'s content-addressed non-substitution check, constructs no payload and substitutes no option; I53 extends to the dispatch boundary; 26 §7 states it
+          7 statements in 25 §14.1, I53 at the dispatch boundary, and 26 §7's concurrency row
+J13   PASS  The claim cannot occur before dispatch revalidation: 30 §5.1's ordering block places the dispatch lease and the revalidation ahead of the claim's BEGIN, a claim before revalidation is a declared defect, a revalidation outside the lease proves nothing, and a stale effect REFUSES the claim
+          3 statements, the printed order lease -> revalidation -> claim, and the refusal
+J14   PASS  The dispatch lease spans all seven steps in order -- revalidation, claim-time authority, CLAIM, CLAIM COMMIT, adapter, outcome transaction, OUTCOME COMMIT -- held continuously with no release or reacquisition inside the epoch, and VC-C3(b) validates the exclusion with a real two-session test
+          7 span steps in order, continuity stated, and the two-session exclusion test
+J15   PASS  A stale effect after a legitimate gap mutation REFUSES the claim with nothing dispatched and nothing substituted, the reservation is left held with no invented release, the denial is coarse, VC-C3(b) requires the two unsafe implementations to fail, and a crash inside the dispatch epoch is not a reclaim path
+          refusal, held reservation, coarse denial, two must-fail seeds, and no crash reclaim
+J16   PASS  acos.journal.dispatch_outcome.v1's field order is declared field by field in 30 §5.3a, numbered 1..20 without gaps, matches an independent transcription held in this gate element-wise, names the adjacent same-typed swap pair, carries no MIE quantity, is required to fail VC-A3 on a seeded swap, and moves control-artifact class 20 a third time
+          20 fields in declared order, 1..20, normative
+K1    PASS  Ed25519 is THE declared owner control-artifact signature algorithm -- RFC 8032 PureEdDSA over Curve25519, covering the primary artifact signature, the second-factor signature, the manifest envelope and the Cedar/O4 signatures -- with no custom curve, no RSA alternative, no algorithm negotiation in S1, and any other algorithm identifier REFUSED
+          4 statements, all four signing surfaces, and no competing algorithm
+K2    PASS  The primary and second-factor verification keys MUST be distinct -- distinct raw public-key bytes and therefore distinct key ids, a deployment configuring one key in both slots fails closed at bootstrap, and a second signature under the primary key does not satisfy the requirement; key_id is SHA-256(raw public key) and is not itself the trust anchor
+          5 distinctness statements, the key_id rule, and the anchor caveat
+K3    PASS  The two root public keys are EXTERNALLY PROVISIONED deployment roots, never control artifacts, never manifest rows, never discovered from a database, manifest, network, model, caller or API; the manifest may carry key ids for checking but cannot define trust and a different key FAILS CLOSED; a signature does not establish its own verifier; and root rotation is a ceremony, not a runtime key search
+          7 statements in 50 §3a, 2 in 49 §3.9, and the 4-part rotation ceremony
+K4    PASS  TRUST-ON-FIRST-USE IS FORBIDDEN, stated in 50 §3a and again in 49 §3.9, with the three routes it would take -- remembering the first verifying key, accepting any valid Ed25519 key, and a per-request key parameter -- each named and denied, and no passage permitting it
+          the prohibition in both artifacts, its three routes denied, and no contrary passage
+K5    PASS  The artifact signature envelope BINDS domain, signer role, class, artifact id, version and content hash, checked as a PRINTED ORDER rather than as membership, signed by Ed25519 directly; and each binding's substitution attack is named -- cross-class, cross-artifact, version, content and role
+          6 framed fields in printed order, direct Ed25519, and 5 named substitutions
+K6    PASS  The signature framing is INDEPENDENT of ACOS-JCS-1 and of the artifact being signed -- no rule referenced, no JSON, no reserialization, a NULL that is not representable at all, and a class-20 bootstrap that uses only SHA-256, the fixed CAS framing and Ed25519
+          5 independence statements, the class-20 bootstrap rule, and the three admitted primitives
+K7    PASS  content_hash is SHA-256 over EXACT ARTIFACT BYTES, never a parsed object, a reserialised JSON document, a pretty-printed object, a TypeScript literal or a row set; v1.3.5's canonicalised-content property is explicitly SUPERSEDED; and a signed artifact may not co-exist with a hard-coded literal as a second authority source
+          5 hashing statements and the 3-part single-source rule
+K8    PASS  Class 3's content is CLOSED -- 50 §2a enumerates ten per-class fields and four catalogue-level records, numbered 1..14 without gaps, states the boundary's other side, and §2's class-3 row carries no 'incl.', 'including' or 'etc.' open-membership language
+          14 closed fields numbered 1..14 and a class-3 row with no open tail
+K9    PASS  irrecoverable_units belongs to CLASS 3 -- field 7 of 50 §2a's closed schema, restated in 50 §2d's split table and corrected in 51 §2.3 -- the change is ownership and not one numeric value, the figures are unmoved, and v1.3.5's class-17 assignment survives nowhere as a live claim
+          3 statements in 50, 4 in 51 §2.3, and the v1.3.5 assignment withdrawn
+K10   PASS  Degraded-mode threshold ownership is UNAMBIGUOUS -- class 27's schema is closed at exactly four static quantities numbered 1..4, the $20.00 approval floor moves from class 3 to class 27 as an OWNERSHIP correction with no value change, class 3 no longer claims it in either 50 §2 or 50 §2a, 51 §3.7 records the correction, and no runtime state is class-27 content
+          4 closed quantities, the ownership correction in both artifacts, and the MAL basis unmoved
+K11   PASS  Per-company window_registry rows are RUNTIME STATE and not deploy-time signed content: class 17 is retired from the manifest with no empty artifact retained, the number is reserved and deprecated, the inventory records it as a non-member, the four runtime-integrity controls that govern it instead are named, and I19 is not extended into a database-row-signing system
+          7 disposition statements, 4 named runtime controls, and the retired inventory row
+K12   PASS  Class 20 has a CONCRETE artifact: artifacts/acos-jcs-1.spec.v1.txt exists, is 13479 bytes, contains no CR byte, and its RECOMPUTED SHA-256 equals the digest declared in 50 §2's class-20 row, 50 §2b, 50 §6 and 30 §5.3a -- a digest that drifted from the bytes, or a declaration removed, fails here
+          13479 bytes, LF only, recomputed digest matches, 3 declarations in 50 and 1 in 30
+K13   PASS  The four independent ACOS-JCS-1 implementations stay separate from the class-20 specification bytes: each may hold a byte-identical COPY, no implementation's source is ever hashed as class 20, and a valid class-20 signature proves the specification is owner-approved and proves NO implementation conforms -- VC-A3 remains the conformance mechanism in all three artifacts that mention it
+          5 statements in 50 §2b, 3 in 30 §5.3a, and VC-A3's standing restated in 36
+K14   PASS  EVERY in-scope pre-live artifact carries TWO signatures -- a primary owner signature and a distinct second-factor approval signature, with a single valid signature REFUSED and never reported as verified -- and all FIVE live inventory rows (v1.3.7 adds class 5) demand both plus manifest membership
+          5 statements in 50 §4 and 6 inventory rows each requiring both signatures
+K15   PASS  The MANIFEST CORE itself is dual-signed -- a primary and a second-factor Ed25519 signature under a SEPARATE domain, over a message that binds the format version, the epoch, both expected key ids and the core digest in printed order, with the manifest's own two signatures outside the signed bytes
+          7 framed fields in printed order and 4 required statements
+K16   PASS  The manifest entry SET and ORDER are deterministic: the core carries an exact entry_count and the exact ordered entries, sorted ascending by (artifact_class, artifact_id, artifact_version) with each key's comparison declared, the order is a property of the bytes rather than of map iteration, an exact tie is a defect, and the core's field sequence is checked in printed order
+          12 framed core fields in printed order and 9 required statements
+K17   PASS  The deployment PINS the active manifest identity: manifest_id is SHA-256 over the exact core bytes under the fixed framing and not ACOS-JCS-1, the trusted configuration pins both root keys AND EXPECTED_ACTIVE_MANIFEST_ID, the pin is checked BEFORE the signatures, and no mutable runtime trust state is introduced
+          7 statements in 50 §3e
+K18   PASS  A valid OLD signed manifest cannot satisfy the active pin -- the rejection table names the old manifest, the deleted entry, the inserted entry and the reordering, each rejected on the pin -- and 'the highest epoch found on disk' is explicitly NOT rollback protection and is used nowhere
+          4 rejection rows, the epoch disclaimer, and no epoch-selection rule anywhere
+K19   PASS  BOOTSTRAP verifies BEFORE READY: eight steps in printed order, from loading the provisioned keys through both signatures on every artifact, with any failure failing closed before any authority execution -- no degraded subset, no admitted effect -- and the declared incident semantics retained with no silent fallback, no network fetch and no fabricated journal chain
+          8 bootstrap steps in printed order, fail-closed before READY, and 6 retained failure rules
+K20   PASS  RELOAD verifies BEFORE PUBLICATION: the full bootstrap ceremony runs against the candidate, publication is atomic, a failed candidate never replaces the active bundle, and there is no partial swap and no per-artifact hot reload
+          3 statements in occasion 2
+K21   PASS  Authority consumers accept ONLY the verified bundle capability: raw loaders are not exposed, no caller or model may manufacture it, the active bundle is immutable so a disk change has no authority effect until an explicit reload, per-request re-verification is not required, external dispatch cannot proceed without it, and no polling cadence exists -- SCHED is withdrawn from the registry
+          10 statements in 50 §3f and the registry's enforcement column corrected
+K22   PASS  The Cedar policy bundle is INSIDE the signed owner-artifact framework: class 2 has a concrete bundle artifact, admission to the engine requires the verified manifest, the content hash AND both signatures, a hash-only bundle is REFUSED, the accepted policy_version digest is retained unchanged and is declared NOT to be the class-2 content hash, and no semantic claim is conflated with it
+          6 statements, the accepted digest retained, and the semantic obligations left where they were
+K23   PASS  The external anchor I17b is NOT required for bootstrap: it stays an S3 deliverable, the deployment pin is what rejects a rollback, the anchor adds only later historical and non-repudiation protection, and S1K is declared not to depend on it
+          3 statements in 37 §2's S1K gate
+K24   PASS  The pre-live gate is SEQUENCED BEFORE the first real vendor call: 37 §2 prints the nine required items in order inside S1's block, ahead of the vendor slice -- checked by string POSITION, not membership -- S4's own entry records the same ordering, and the entry states that no production signing code exists at v1.3.6
+          9 gate items in printed order, ahead of the vendor slice, with S4 agreeing
+K25   PASS  Unrelated S4 work REMAINS LATER: the remaining signed classes, the later owner briefing, the unrelated S4 audit mechanisms and provider reconciliation each stay at S4, S4 keeps its own manifest entry for them, and class 19's migration onto the same roots is declared future work rather than silently claimed to satisfy the owner root model
+          4 retained S4 items plus S4's own entry, and class 19 declared as follow-on
+L1    PASS  MONEY_MOVING is defined over the CREDENTIAL's provider capability envelope and NOT over the action ACOS intends to call: 50 §2g states the subject twice, prints the nine clauses in order, requires that no second independently held credential be needed, and ADR-024 records the same ruling and says S1N's action-derived reading was wrong IN KIND
+          the credential-level subject stated twice, the nine clauses in order, and ADR-024 agreeing
+L2    PASS  A MIXED capability envelope takes the HIGHEST reachable class: maximum privilege is stated as the rule, the email-send-plus-refund case is decided explicitly as MONEY_MOVING, and the lowest, the average and the intended readings are each denied by name
+          the maximum-privilege rule, its worked case, and three denied readings
+L3    PASS  A MISSING classification FAILS CLOSED rather than defaulting permissive: the set is declared as exactly three values and no fourth, the three appear in order, no UNKNOWN member survives anywhere else in the section, and an absent, unparseable or out-of-set value refuses the configuration and stops the process from starting
+          3 statements, the three values in order, and no UNKNOWN member
+L4    PASS  Class 5's content is CLOSED at exactly seven fields with no open tail, the seven are printed in order, and fields 5-7 are consistency-checked against field 4 and against each other so a record that disagrees with itself is REFUSED rather than believed
+          4 closure statements and the seven fields in printed order
+L5    PASS  The classification is SIGNED authority owned by class 5: 50 §2g names the signer and the halt scope, the five unsigned sources are each denied by name, 50 §2f carries all three fields field-first with class 5 as their single owner, and ADR-024 states the same reason for the placement
+          the signer, five denied sources, three field-first rows, and ADR-024's rationale
+L6    PASS  Class 5 is the field's SINGLE owner and class 3 is NOT widened to take it: the class-5 row names §2g as its closure and owes a fresh signature, class 3 stays at exactly ten per-class fields plus four catalogue records with no fifteenth entry, and §2f states that the new rows add no doubly-owned field
+          the class-5 row closed by §2g, class 3 unchanged at 10+4, and §2f's no-double-owner statement
+L7    PASS  A PROVIDER or ACCOUNT response cannot self-declare the risk class: the declaration is required to come from signed bytes, and the provider response, the account response and the adapter's own self-description are each named among the sources that may not supply, override or widen a field
+          the signed-bytes requirement and the named self-declaration sources
+L8    PASS  The FIRST MONEY_MOVING credential triggers option B as a refusal and not a warning: both 50 §2g and ADR-024 print the two-part conjunction, state that whichever occurs first wins, and state that neither half weakens the other
+          the conjunction and the whichever-first rule in both artifacts
+L9    PASS  The THIRD-ADAPTER half is UNCHANGED and remains a refusal: the count is stated as fewer than three under ADR-024's existing counting rule, and v1.3.7 declares the half unchanged and derivation-free rather than restating it in new terms
+          the fewer-than-three conjunct and the unchanged-half statement
+L10   PASS  Option B is still REQUIRED and still UNBUILT: 50 §2g, ADR-024 and 37 §2 each say the execution proxy is unimplemented at v1.3.7, and 50 §2g states that refusal at configuration is the only behaviour available while it does not exist
+          the unimplemented statement in three artifacts and the refusal rationale
+L11   PASS  Class 5 enters the PRE-LIVE signed set as a dual-signed MANIFEST MEMBER and NOTHING ELSE moves: 50 §6's row requires both signatures and membership, 50 §6 states that exactly one entry is added, and 37 §2 carries the gate item plus SEQ-04's argument and names the classes that stay put
+          the dual-signed member row, 50 §6's one-entry statement, and 37 §2's gate item plus SEQ-04
+L12   PASS  48 §3.6's read-only exemption gains a SIGNED operand without weakening I8 or 36 §13: the three obligations are separated by their evidence, the attempted-write test is declared NOT discharged by any signed declaration, a provider whose reading credential can also send is named as a provider-selection finding the consistency check cannot rescue, and row 13 records both halves
+          4 statements separating declaration from empirical proof, and row 13 carrying both
+L13   PASS  50 §2g field 1 is a MATERIAL-BOUND identity rather than an alias: the field row and the section both define it as the identity of the exact credential material a runtime may present, the two admissible provider forms are printed, the raw secret, its hash and a token prefix are each forbidden by name, and a provider for which no such identity can be defined forces PARTIAL rather than a claimed binding
+          the field-1 row, the two provider forms, three forbidden forms and the PARTIAL rule
+L14   PASS  The RESOLVED credential identity must EQUAL the SIGNED one before the provider boundary, on both planes independently: the requirement is stated as a refusal, the integration plane and the audit plane each carry their own row, the audit plane reads its OWN verification rather than the control plane's, each refusal is declared to happen before adapter code and before any provider query, and the secret source must return a mandatory non-secret identity whose null value is insufficient
+          the comparison rule, both plane rows, and both before-the-boundary refusals
+L15   PASS  LOCATOR equality is insufficient for identity binding, stated in both directions and with both controls retained: two locators may name one credential so inequality proves no separation, one locator may be repointed so equality proves no identity, and 48 §3.6's separate-source rule is declared neither to imply nor to be implied by the binding
+          the two-control statement and both directions of the locator gap
+L16   PASS  The expected credential identity travels as a TRUSTED ECHO that is not authority: the signed artifact remains the authority, the parent is stated to have verified it already, the reason the comparison cannot happen in the parent is printed as I25, no credential material travels on IPC or in any environment on either plane, and §2g's existing prohibition on an environment variable supplying a field is unchanged beside it
+          the echo's four statements and the retained environment-variable prohibition
+L17   PASS  A safe test mode that suppresses the provider's evidence surface does NOT satisfy the I36 validation path: 36 §5 states the rule as a quoted prohibition, prints the four-step chain one bounded design must carry end to end, denies by name the reading that a sandbox mechanism plus a separate activity API is sufficient, and requires the selection record to declare the ONE path it intends to run
+          the prohibition, the four-step chain, and the two-independent-capabilities denial
+L18   PASS  SendGrid Sandbox Mode is recorded as UNABLE to serve as the I36 activity-evidence path: the documented negative is printed, the four things the mode cannot be used for are named, the I36-compatible path is declared to be a dedicated non-production identity with sandbox mode DISABLED and an owner-controlled sink recipient, and neither the oracle table nor the gate table still names a bare provider sandbox
+          the documented negative, the four prohibitions, the real path, and both corrected rows
+L19   PASS  Credential identity binding is declared NOT to prove provider-side scope conformance: 50 §2g, 48 §3.6 and 36 §13 each separate the two, each names the empirical probe set including the audit credential's provider-refused send attempt, and each states that no signature and no signed-byte consistency check discharges it
+          the separation and the empirical probe set, in all three deliverables
+M1    PASS  Signature verification is the trust boundary and its ORDER is normative: ADR-027 verifies over the exact raw bytes BEFORE any parse, a parsed-first body and a re-serialised-then-verified body are each declared never evidence, and 48 §8 requires both headers before parsing
+          the normative order, both never-evidence rules, and the header precondition
+M2    PASS  The provider-push trust root is owner-controlled: 50 §2h forbids a runtime fetch from the provider, forbids an unsigned environment variable as authority, forbids a key-discovery fallback on rotation, and declares an uncoordinated mismatch UNAVAILABLE rather than clean or zero
+          the four prohibitions and the mismatch disposition
+M3    PASS  The provider EVENT identity is the ingest-deduplication operand, and a redelivery creates no evidence and increments no count
+M4    FAIL  I36's push-mode accepted count is DISTINCT PROVIDER MESSAGE IDENTITIES — never the event count, the callback count or the pre-deduplication count — and two distinct message identities under one correlation FAIL immediately
+          operand: True; excess rule: False; substitutions refused: True
+M5    PASS  A malformed event inside an authenticated batch makes the observation INCOMPLETE/UNRESOLVED and never lets the readable sibling become a trusted count of one
+M6    PASS  Durable commit precedes acknowledgement, in ADR-027's order and in 48 §8's enforcement list
+M7    PASS  The ingress receiver holds no provider send credential, no provider read credential and no vendor mutation capability of any kind
+          all three prohibitions
+M8    PASS  A provider callback supplies observations and never authority: it cannot create an authorisation, enqueue, dispatch or re-dispatch an effect, in ADR-027 and in 48 §8
+M9    PASS  I8 under push evidence: an unaccounted authenticated event is a POSITIVE finding immediately, and a period with no such finding is INCOMPLETE rather than clean
+M10   PASS  Absence is not zero and the retry horizon is not a visibility guarantee: zero observed messages do not establish nothing was sent, and the provider's retry horizon is refused as a completeness bound in both the registry and ADR-027
+M11   PASS  The SendGrid S1P prerequisite set drops the email_activity.read credential under the selected SIGNED_PROVIDER_PUSH mode, while the generic PROVIDER_READ mechanism is retained as inactive
+M12   PASS  The webhook verification key is NOT class-5 credential material: class 28 owns it, credential_risk_class is undefined over it, and class 5 stays closed at seven fields
+          both separations
+M13   PASS  Provider evidence is data-minimised and the correlation metadata carries no personal data: the recipient address and the raw body are must-fail persistence cases, and PII in correlation metadata is a must-fail send case
+M14   PASS  A synthetic provider test event is configuration evidence and never live provider-send evidence
+M15   PASS  Class 28 is a CLOSED DISCRIMINATED UNION over evidence_mode: PROVIDER_READ carries exactly three fields, SIGNED_PROVIDER_PUSH exactly eight, the parser rejects missing, extra, push-on-read and missing-push fields, and no universal eight-field shape is stated
+          both variants exact, seven parser rules, no universal shape
+M16   PASS  The SendGrid verification profile is CLOSED: SENDGRID_EVENT_WEBHOOK_V1 fixes both header names, timestamp || raw-body order, SHA-256, strict standard Base64 signature decoding, one DER ECDSA-Sig-Value, and forbids negotiation, request selection and fallback; no generic verification_algorithm field survives
+          P1-P10 closed, ADR-027 step 5 agrees, no generic field
+M17   PASS  The verification key has ONE canonical stored representation — the exact provider-returned public_key string, strict standard Base64 of one DER P-256 SubjectPublicKeyInfo — and no alternate encoding is ever tried
+          one representation, one parse
+M18   PASS  key_identity is MATERIAL-BOUND: derived as lowercase_hex(SHA-256) over exactly the DER octets the verifier consumes, recomputed by the artifact verifier with refusal on disagreement, never a typed label, and re-derived on every key change
+          derivation, recomputation, rotation
+M19   PASS  ingress_identity is a canonical HTTPS URL mechanically compared by the running receiver: it refuses to start on a launch-echo mismatch and refuses every request whose target differs, and 48 §8 G12 enforces it
+          grammar, start binding, per-request binding
+
+RESULT: 126 PASS / 1 FAIL

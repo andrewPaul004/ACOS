@@ -104,7 +104,7 @@ export function testOnlyKeyPair(seed: Buffer): SigningKeyPair {
 /**
  * `50 §6`'s inventory as the fixture assembles it, in manifest order.
  *
- * SEVEN members after v1.3.7. Class 5 is the one v1.3.7 adds, and the fixture reads its
+ * EIGHT members after v1.3.8 (class 28, `50 §2h`). Class 5 is the one v1.3.7 adds, and the fixture reads its
  * bytes out of `artifacts/control/` like every other deployed artifact — a test that
  * needs a different credential set edits them through `mutate`, which is the byte-level
  * surface the signature covers.
@@ -159,6 +159,17 @@ export const FIXTURE_ARTIFACT_SPECS: readonly FixtureArtifactSpec[] = Object.fre
     artifactId: 'acos.control.degraded_mode_config',
     artifactVersion: 'acos.degraded_mode_config.2026-09-24',
     fileName: 'class-27.degraded-mode-config.json',
+  },
+  {
+    // v1.3.8, `50 §2h`. The repository's deployed class-28 bytes carry ONE synthetic
+    // `PROVIDER_READ` channel and no push channel: no real provider key exists in this
+    // repository. A test that needs a `SIGNED_PROVIDER_PUSH` channel builds one from a
+    // TEST-ONLY P-256 key (`tests/support/providerEvidenceFixture.ts`) and edits it in
+    // through `mutate`, the byte-level surface the signature covers.
+    artifactClass: 28,
+    artifactId: 'acos.control.provider_evidence_trust',
+    artifactVersion: 'acos.provider_evidence_trust.2026-10-03',
+    fileName: 'class-28.provider-evidence-trust.json',
   },
 ]);
 

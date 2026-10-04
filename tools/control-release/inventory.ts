@@ -47,7 +47,7 @@ export interface InventoryMember {
 }
 
 /**
- * `50 §6`'s SEVEN pre-live members, in ascending class order.
+ * `50 §6`'s EIGHT pre-live members, in ascending class order.
  *
  * **v1.3.7 adds class 5** (`50 §2g`, `S1N-C1`), and nothing else. `37 §2`'s SEQ-04 gives
  * the reason: ADR-024's option-B money-moving trigger had no mechanised operand, and a
@@ -96,6 +96,14 @@ export const PRE_LIVE_INVENTORY: readonly InventoryMember[] = Object.freeze([
     artifactId: 'acos.control.degraded_mode_config',
     declaredVersion: null,
     boundary: '50 §2c',
+  }),
+  Object.freeze({
+    // v1.3.8 adds class 28 (`50 §2h`, `S1P-W1`), and nothing else: the provider-evidence
+    // trust record — a closed discriminated union over `evidence_mode` — joins `50 §6`.
+    artifactClass: 28,
+    artifactId: 'acos.control.provider_evidence_trust',
+    declaredVersion: null,
+    boundary: '50 §2h',
   }),
 ]);
 

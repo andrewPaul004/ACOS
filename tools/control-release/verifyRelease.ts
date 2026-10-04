@@ -437,6 +437,7 @@ export const DEPLOYED_FILE_NAMES: Readonly<Record<number, string>> = Object.free
   20: 'class-20.acos-jcs-1.spec.v1.txt',
   24: 'class-24.audit-signing-key.json',
   27: 'class-27.degraded-mode-config.json',
+  28: 'class-28.provider-evidence-trust.json',
 });
 
 /** Verify a RELEASE directory by verifying the package it carries. */

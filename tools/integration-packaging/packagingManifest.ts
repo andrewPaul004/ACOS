@@ -99,7 +99,115 @@ export const S1N_PACKAGED_RUNTIMES: readonly PackagedRuntime[] = [
       'tests/integration-plane/adapterB/secretSource.ts',
     ],
   },
+  {
+    /*
+     * v1.3.8, `48 §8` row I1 — THE PROVIDER-EVIDENCE INGRESS, AN INDEPENDENTLY DEPLOYABLE
+     * AUDIT-PLANE PROCESS.
+     *
+     * "**Its public HTTP reachability is an INGRESS REQUIREMENT, not permission to perform
+     * external writes.** A process that must be reachable from the internet is the process that
+     * most needs its outbound capability enumerated at zero, and the dependency-closure
+     * obligation below is how that is checked rather than asserted." `evaluateIngressSeparation`
+     * is that obligation.
+     */
+    name: 'AUDIT_PROVIDER_EVIDENCE_INGRESS',
+    entryPoints: ['src/audit/providerEvidence/ingressMain.ts'],
+  },
 ];
+
+/** The ingress runtime's name in the manifest. */
+export const INGRESS_RUNTIME_NAME = 'AUDIT_PROVIDER_EVIDENCE_INGRESS';
+
+/**
+ * The ONLY bare package the ingress closure may import. `pg`, for the audit-side evidence store.
+ * Not `@azure/identity`, not `@azure/keyvault-secrets` — the ingress holds no SendGrid credential
+ * and no Azure audit Key Vault secret, and a closure that could import the SDK could resolve one.
+ */
+export const INGRESS_PERMITTED_PACKAGES: readonly string[] = Object.freeze(['pg']);
+
+/**
+ * `48 §8` "What the receiver MUST NOT hold", as closure obligations over module paths.
+ *
+ * Each rule names a module family the receiver must not reach. A FUTURE ACCIDENTAL IMPORT of a
+ * SendGrid send client, an integration credential source, a provider-read runtime, the effect
+ * gateway, the outbox or the authorisation path into the receiver puts that module into this
+ * closure, and the matching obligation FAILS the packaging gate — which `npm run verify` runs.
+ */
+export function evaluateIngressSeparation(
+  ingress: RuntimeClosure | undefined,
+): readonly SeparationFinding[] {
+  if (ingress === undefined) {
+    return Object.freeze([
+      {
+        obligation: '48 §8 — the provider-evidence ingress closure was computed',
+        satisfied: false,
+        offending: [INGRESS_RUNTIME_NAME],
+      },
+    ]);
+  }
+  const modules = ingress.modules;
+  const rule = (
+    obligation: string,
+    predicate: (module: string) => boolean,
+  ): SeparationFinding => {
+    const offending = modules.filter(predicate);
+    return { obligation, satisfied: offending.length === 0, offending };
+  };
+  const findings: SeparationFinding[] = [
+    rule(
+      '48 §8 G10 — the ingress closure holds NO provider send or write client',
+      (module) =>
+        module.includes('providerClient') ||
+        module.includes('requestMapping') ||
+        module.includes('validationPayload') ||
+        module.includes('/adapter') ||
+        module.startsWith('validation/'),
+    ),
+    rule(
+      '48 §8 — the ingress closure holds NO credential source of either plane and NO secret locator',
+      (module) =>
+        module.includes('secretSource') ||
+        module.includes('SecretSource') ||
+        module.includes('keyVault') ||
+        module.startsWith('src/integration/'),
+    ),
+    rule(
+      '48 §8 — the ingress closure holds NO provider READ runtime or read client',
+      (module) => module.startsWith('src/audit/provider/'),
+    ),
+    rule(
+      '48 §8 / ADR-027 decision 7 — the ingress closure reaches NO kernel module: no gateway, ' +
+        'no outbox, no authorisation, no policy, no control-artifact writer',
+      (module) => module.startsWith('src/kernel/'),
+    ),
+    rule(
+      '48 §8 — the ingress closure holds NO test, tooling or validation module (no test key)',
+      (module) =>
+        module.startsWith('tests/') || module.startsWith('tools/') || module.startsWith('validation/'),
+    ),
+  ];
+  const packages = ingress.packages.filter((name) => !INGRESS_PERMITTED_PACKAGES.includes(name));
+  findings.push({
+    obligation: '48 §8 — the ingress closure imports no package but `pg` (no Azure SDK)',
+    satisfied: packages.length === 0,
+    offending: packages,
+  });
+  // NON-VACUITY: the closure really is the receiver, verified by this plane's own verifier.
+  const required = [
+    'src/audit/providerEvidence/receiver.ts',
+    'src/audit/providerEvidence/sendgridEventWebhookV1.ts',
+    'src/audit/controlArtifacts/auditPlaneVerifier.ts',
+  ];
+  const absent = required.filter((module) => !modules.includes(module));
+  findings.push({
+    obligation:
+      '48 §8 — the ingress closure is the real receiver: it holds the verifier, the profile and ' +
+      'the audit plane’s own control-artifact verification',
+    satisfied: absent.length === 0,
+    offending: absent,
+  });
+  return Object.freeze(findings);
+}
 
 const IMPORT_SPECIFIER = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+['"]([^'"]+)['"]/g;
 const SIDE_EFFECT_IMPORT = /(?:^|\n)\s*import\s+['"]([^'"]+)['"]/g;
@@ -295,6 +403,9 @@ export function evaluateSeparation(closures: readonly RuntimeClosure[]): readonl
       offending: reachesDatabase,
     });
   }
+
+  // v1.3.8, `48 §8` — the provider-evidence ingress holds no send, credential or authority path.
+  findings.push(...evaluateIngressSeparation(byName.get(INGRESS_RUNTIME_NAME)));
 
   return Object.freeze(findings);
 }

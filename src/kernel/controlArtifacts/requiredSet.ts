@@ -17,7 +17,8 @@
  *    as follow-on work) and **class 24** (the audit-plane signing key's published public
  *    half [...]). **Both require both signatures and both are manifest members.**"
  *
- * So the required set is SIX classes, and `37 §2`'s S1K gate list — which names classes 3,
+ * So the required set was SIX classes at v1.3.6 — SEVEN after v1.3.7 adds class 5 (`50 §2g`) and
+ * EIGHT after v1.3.8 adds class 28 (`50 §2h`) — and `37 §2`'s S1K gate list — which names classes 3,
  * 20, 27 and the Cedar bundle — is the list of classes whose RUNTIME CONSUMERS this slice
  * migrates, not the list of manifest members. The two lists are different lengths on
  * purpose and both are transcribed here rather than reconciled into one.
@@ -140,6 +141,17 @@ export const REQUIRED_PRE_LIVE_ARTIFACTS: readonly RequiredArtifact[] = Object.f
     declaredVersion: null,
     fileName: 'class-27.degraded-mode-config.json',
     boundary: '50 §2c',
+  }),
+  Object.freeze({
+    // v1.3.8, `S1P-W1`. `50 §6`: "v1.3.8 adds exactly one more — class 28 — because `§2h`
+    // gives inbound provider evidence a trust root, and a verification key read from anywhere
+    // unsigned is unsigned authority over what ACOS believes a provider did." A closed
+    // discriminated union over `evidence_mode` (`S1P-W2`).
+    artifactClass: 28,
+    artifactId: 'acos.control.provider_evidence_trust',
+    declaredVersion: null,
+    fileName: 'class-28.provider-evidence-trust.json',
+    boundary: '50 §2h',
   }),
 ]);
 

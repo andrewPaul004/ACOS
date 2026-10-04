@@ -524,12 +524,27 @@ describe('`§38` — THE UNMIRRORED EVIDENCE PATH, END TO END', () => {
     // There is no audit-plane function evaluating `I17f(c)` over dispatch outcomes.
     expect(evaluators.rows.map((r) => r.proname)).toEqual([]);
     // And no provider-side observation exists to compare a tag against.
+    //
+    // v1.3.8 (`A0009`, ADR-027) adds the authenticated provider-push evidence STORE — exactly
+    // three tables, and no other provider/vendor/delivery table. A store is not an observation:
+    // in this suite no push channel is declared and no ingress runs, so the store is EMPTY, and
+    // nothing in the audit plane compares a provider event against an `I17f` tag. The real-provider
+    // leg remains OPEN.
     const providerish = await h.auditOwner.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'public' AND (table_name LIKE '%provider%'
-           OR table_name LIKE '%vendor%' OR table_name LIKE '%delivery%')`,
+           OR table_name LIKE '%vendor%' OR table_name LIKE '%delivery%')
+        ORDER BY table_name`,
     );
-    expect(providerish.rows).toEqual([]);
+    expect(providerish.rows.map((row) => row.table_name)).toEqual([
+      'provider_evidence_event',
+      'provider_evidence_inconsistency',
+      'provider_evidence_observation',
+    ]);
+    for (const table of providerish.rows.map((row) => row.table_name)) {
+      const rows = await h.auditOwner.query<{ n: string }>(`SELECT COUNT(*)::TEXT AS n FROM ${table}`);
+      expect(rows.rows[0]!.n, table).toBe('0');
+    }
   });
 });
 

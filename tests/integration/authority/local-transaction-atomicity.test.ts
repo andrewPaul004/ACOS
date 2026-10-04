@@ -9,6 +9,7 @@ import { LOCAL_COMMIT_POINTS } from '../../../src/kernel/authorisation/localAuth
 import type { LocalCommitPoint } from '../../../src/kernel/authorisation/localAuthorisationErrors.js';
 import { createHarness, type Harness } from '../../support/fixture.js';
 import { loadCommerceFixture } from '../../support/enumerationFixture.js';
+import { withoutProviderEvidenceSurface } from '../../support/providerEvidenceSurface.js';
 import {
   S1E_PASS_ORDER,
   loadAuthorityWorld,
@@ -464,7 +465,9 @@ describe('the two-transaction pattern does not exist in `src/`', () => {
           continue;
         }
         if (!entry.name.endsWith('.ts')) continue;
-        const code = (await readFile(path, 'utf8'))
+        // v1.3.8 — the declared provider-evidence surface (`providerEvidenceSurface.ts`): only the
+        // ingress's exact INBOUND `node:http` import line is removed, and only from its own file.
+        const code = withoutProviderEvidenceSurface(path, await readFile(path, 'utf8'))
           .replace(/\/\*[\s\S]*?\*\//g, '')
           .replace(/(^|[^:])\/\/.*$/gm, '$1');
         for (const pattern of [

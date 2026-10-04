@@ -9,6 +9,7 @@ import { KILL_POINT_ROWS } from './killPoints.js';
 import type { ObservationDeps, ObservationResult } from './observation.js';
 import type { VisibilityBound } from './visibilityBound.js';
 import { observeCorrelation } from './observation.js';
+import { observePushCorrelation, type SignedPushEvidencePort } from './pushEvidence.js';
 import type { KillPointEvidence } from './evidence.js';
 import type { I20ScenarioOperand } from './i20.js';
 
@@ -118,11 +119,22 @@ export interface ScenarioRuntimeConfig {
   /** `50 §2g` field 1 — the EXACT expected identity, from the trusted configuration. */
   readonly integrationCredentialId: string;
 
-  readonly auditRuntimeRoot: string;
-  readonly auditReaderModule: string;
-  readonly auditSecretSourceModule: string;
-  readonly auditSecretLocator: string;
-  readonly auditCredentialId: string;
+  /**
+   * v1.3.8 — THE SENDGRID AUDIT-READ RUNTIME, PRESENT ONLY UNDER `PROVIDER_READ`.
+   *
+   * Under `SIGNED_PROVIDER_PUSH` (ADR-027) there is no SendGrid audit credential, no audit
+   * locator and no reader child, so this is `null` — never a set of placeholder strings.
+   */
+  readonly auditReader: AuditReaderRuntimeConfig | null;
+}
+
+/** The `PROVIDER_READ` audit reader's launch configuration. */
+export interface AuditReaderRuntimeConfig {
+  readonly runtimeRoot: string;
+  readonly readerModule: string;
+  readonly secretSourceModule: string;
+  readonly secretLocator: string;
+  readonly credentialId: string;
 }
 
 /** One launched integration runtime, as the driver needs it. */
@@ -212,6 +224,16 @@ export interface ScenarioPorts {
    * a provider guarantee it does not have.
    */
   readonly visibilityBound: VisibilityBound;
+  /**
+   * v1.3.8, ADR-027 — THE PROVIDER-EVIDENCE MODE, SELECTED BY PRESENCE.
+   *
+   * ABSENT: `PROVIDER_READ`, exactly as before — the audit reader runtime is launched and Email
+   * Activity is read through it. PRESENT: `SIGNED_PROVIDER_PUSH` — NO audit reader is launched,
+   * no provider read occurs, and the oracle reads the audit store's authenticated push evidence
+   * through this port (`pushEvidence.ts`). A composition selects it from the VERIFIED class-28
+   * record for the provider; the driver never chooses a mode itself.
+   */
+  readonly signedPushEvidence?: SignedPushEvidencePort;
 }
 
 /** One scenario's measured result, with everything an evidence row and `I20` need. */
@@ -256,13 +278,22 @@ export function integrationDescriptorFor(
 
 /** Build the audit reader descriptor. `§11.1` item 8. */
 export function auditDescriptorFor(runtime: ScenarioRuntimeConfig): AuditReaderDescriptor {
+  const reader = runtime.auditReader;
+  if (reader === null) {
+    // UNDER `SIGNED_PROVIDER_PUSH` NO AUDIT READER EXISTS, and asking for one is a defect in
+    // the caller rather than a request to be satisfied with placeholder values.
+    throw new Error(
+      'no SendGrid audit-read runtime is configured: the verified evidence mode is not ' +
+        'PROVIDER_READ, so no audit reader may be launched',
+    );
+  }
   return {
     providerId: runtime.providerId,
-    credentialId: runtime.auditCredentialId,
-    runtimeRoot: runtime.auditRuntimeRoot,
-    readerModule: runtime.auditReaderModule,
-    secretSourceModule: runtime.auditSecretSourceModule,
-    secretLocator: runtime.auditSecretLocator,
+    credentialId: reader.credentialId,
+    runtimeRoot: reader.runtimeRoot,
+    readerModule: reader.readerModule,
+    secretSourceModule: reader.secretSourceModule,
+    secretLocator: reader.secretLocator,
   };
 }
 
@@ -522,6 +553,8 @@ export async function runScenario(
       i20Operand: {
         scenarioLabel,
         providerAcceptedCount: null,
+        // Nothing was observed: no identity set, not an empty one.
+        observedProviderMessageIds: null,
         historicalReservationUnits: 0n,
       },
       providerOperationCount: 0,
@@ -540,8 +573,10 @@ export async function runScenario(
 
   // 5, 6 and 7 — THE DESCRIPTOR, THE FORKED RUNTIME, THE ADAPTER BEHIND IT.
   const integration = await ports.launchIntegration(integrationDescriptorFor(runtime, row.point));
-  // 8 and 9 — THE AUDIT DESCRIPTOR AND ITS OWN, SEPARATE, FORKED RUNTIME.
-  const audit = await ports.launchAuditReader(auditDescriptorFor(runtime));
+  // 8 and 9 — THE AUDIT DESCRIPTOR AND ITS OWN, SEPARATE, FORKED RUNTIME. Under
+  // `SIGNED_PROVIDER_PUSH` there is no provider read and therefore no reader runtime at all.
+  const push = ports.signedPushEvidence;
+  const audit = push === undefined ? await ports.launchAuditReader(auditDescriptorFor(runtime)) : null;
 
   let providerOperationCount = 0;
   try {
@@ -574,11 +609,40 @@ export async function runScenario(
     const afterKill = await ports.localStateFor(effect.idempotencyKey);
 
     const window = ports.observationWindow();
-    const deps: ObservationDeps = {
-      read: audit.read,
-      delay: ports.delay,
-      now: ports.nowMs,
-    };
+    /*
+     * THE ONE ORACLE, OVER WHICHEVER EVIDENCE THE VERIFIED MODE NAMES. Both branches return the
+     * accepted `ObservationResult`, so `verdictFor` judges a push-evidence row by exactly the
+     * rule it judges a read-evidence row by.
+     */
+    const observe = (bound: {
+      readonly lastPossibleWriteAtMs: number;
+    }): Promise<ObservationResult> =>
+      push !== undefined
+        ? observePushCorrelation(
+            { port: push, delay: ports.delay, now: ports.nowMs },
+            {
+              correlationTag,
+              periodStartMs: window.periodStartMs,
+              periodEndMs: window.periodEndMs,
+              maxAttempts: ports.observationBound.maxAttempts,
+              intervalMs: ports.observationBound.intervalMs,
+              maxDurationMs: ports.observationBound.maxDurationMs,
+              stabilisationObservations: ports.observationBound.stabilisationObservations,
+              visibilityBound: ports.visibilityBound,
+              lastPossibleWriteAtMs: bound.lastPossibleWriteAtMs,
+            },
+          )
+        : observeCorrelation(
+            { read: audit!.read, delay: ports.delay, now: ports.nowMs } satisfies ObservationDeps,
+            {
+              correlationTag,
+              periodStartMs: window.periodStartMs,
+              periodEndMs: window.periodEndMs,
+              ...ports.observationBound,
+              visibilityBound: ports.visibilityBound,
+              lastPossibleWriteAtMs: bound.lastPossibleWriteAtMs,
+            },
+          );
     /*
      * `§4.2` — THE SETTLING WINDOW BEGINS AT THE LAST POSSIBLE WRITE.
      *
@@ -586,14 +650,7 @@ export async function runScenario(
      * so the interval is measured from here.
      */
     const firstWriteAtMs = ports.nowMs();
-    const observationBefore = await observeCorrelation(deps, {
-      correlationTag,
-      periodStartMs: window.periodStartMs,
-      periodEndMs: window.periodEndMs,
-      ...ports.observationBound,
-      visibilityBound: ports.visibilityBound,
-      lastPossibleWriteAtMs: firstWriteAtMs,
-    });
+    const observationBefore = await observe({ lastPossibleWriteAtMs: firstWriteAtMs });
 
     // 11 — RECOVERY/RE-ENTRY, THROUGH THE SAME GATEWAY ENTRY POINT. KILL POINT 6.
     const recovery = await dispatchAuthorisedEffect(environment, {
@@ -627,14 +684,7 @@ export async function runScenario(
      * `recoveryAtMs` closes it, because the window cannot end until the interval has run from
      * the last thing that could have written.
      */
-    const observationAfter = await observeCorrelation(deps, {
-      correlationTag,
-      periodStartMs: window.periodStartMs,
-      periodEndMs: window.periodEndMs,
-      ...ports.observationBound,
-      visibilityBound: ports.visibilityBound,
-      lastPossibleWriteAtMs: recoveryAtMs,
-    });
+    const observationAfter = await observe({ lastPossibleWriteAtMs: recoveryAtMs });
 
     /*
      * THE PROVIDER-OPERATION COUNT IS THE **PROVIDER'S**, NOT A LOCAL TALLY.
@@ -677,26 +727,29 @@ export async function runScenario(
          * rather than from a local call counter. Point 1 is the legitimate exception the
          * accepted matrix names: nothing was claimed, so the recovery is a FIRST claim.
          */
-        redispatchOccurred:
-          observationBefore.providerAcceptedCount === null ||
-          observationAfter.providerAcceptedCount === null
-            ? null
-            : row.point !== 1 &&
-              observationAfter.providerAcceptedCount > observationBefore.providerAcceptedCount,
+        redispatchOccurred: redispatchFinding(row, observationBefore, observationAfter),
         finalEffectState: afterRecovery.finalEffectState,
         verdict,
         note,
       }),
       i20Operand: {
         scenarioLabel,
-        providerAcceptedCount: observationAfter.providerAcceptedCount,
+        /*
+         * v1.3.8 — AN EXACT `I20` OPERAND ONLY FROM A SETTLED OBSERVATION.
+         *
+         * A count observed under a bound that cannot settle absence (live SendGrid today, in
+         * EITHER mode: `UNESTABLISHED`) is a LOWER BOUND — a missing record could hide another
+         * accepted message — so it feeds `I20` as `null` (UNRESOLVED), and zero is not an exact
+         * zero. The lower bound is carried separately and never as the numerator.
+         */
+        ...exactOrObserved(observationAfter),
         historicalReservationUnits: await ports.reservationUnitsFor(effect.effectId),
       },
       providerOperationCount,
     };
   } finally {
     await integration.close();
-    await audit.close();
+    if (audit !== null) await audit.close();
   }
 }
 
@@ -739,6 +792,68 @@ function notRunRow(row: KillPointRow, correlationTag: string, note: string): Kil
  * "re-entry" was the only interesting part — which is points 2 to 5 with extra steps, and
  * which would have reported a local outcome row that `KILL_POINT_ROWS`' row 6 does not expect.
  */
+/**
+ * v1.3.8 — WHETHER AN OBSERVATION'S COUNT IS EXACT RATHER THAN A LOWER BOUND.
+ *
+ * Exact only when the observation produced a count AND its bound settles absence: the
+ * deterministic offline fixture, or a completed evidence-backed settling interval. Under an
+ * `UNESTABLISHED` bound — live SendGrid today, under `PROVIDER_READ` and under
+ * `SIGNED_PROVIDER_PUSH` alike — the count is what had been observed, and a missing record (an
+ * Email Activity lag, an undelivered webhook) could conceal another accepted message.
+ */
+/**
+ * The `I20` provider half of ONE scenario's operand, from its after-recovery observation.
+ *
+ * The identities are COPIED from `ObservationResult.providerMessageIds` — the provider message
+ * ids the oracle actually saw — never reconstructed from a count, never an event id or a
+ * correlation tag. The exact count is present only when the observation settles absence, and
+ * then it travels WITH the identity set it counts.
+ */
+export function exactOrObserved(
+  observation: ObservationResult,
+):
+  | { readonly providerAcceptedCount: number; readonly observedProviderMessageIds: readonly string[] }
+  | { readonly providerAcceptedCount: null; readonly observedProviderMessageIds: readonly string[] } {
+  const ids = observation.providerMessageIds;
+  return observationSettlesAbsence(observation) && observation.providerAcceptedCount !== null
+    ? { providerAcceptedCount: observation.providerAcceptedCount, observedProviderMessageIds: ids }
+    : { providerAcceptedCount: null, observedProviderMessageIds: ids };
+}
+
+export function observationSettlesAbsence(observation: ObservationResult): boolean {
+  return (
+    observation.providerAcceptedCount !== null &&
+    (observation.visibilityBoundKind === 'FIXTURE_DETERMINISTIC' ||
+      observation.settlingIntervalCompleted)
+  );
+}
+
+/**
+ * v1.3.8 — `redispatchOccurred`, TRUE / FALSE / NULL, AND NEVER FALSE FROM AN UNBOUNDED ABSENCE.
+ *
+ *   TRUE   POSITIVE provider evidence: more DISTINCT provider message identities carry this
+ *          scenario's correlation than its canonical expectation admits. Seeing an extra message
+ *          proves it exists; no completeness guarantee is needed (ADR-027 decision 6). Measured on
+ *          message identities, never on callback or local adapter-call counts.
+ *   FALSE  only when BOTH observations settle absence (`observationSettlesAbsence`) and the
+ *          settled counts show no increase across the recovery for an already-claimed effect.
+ *   NULL   absence cannot be established — the honest answer for any live run today when no
+ *          duplicate was seen. A count unchanged at 1 under an `UNESTABLISHED` bound does not
+ *          prove that no second message was accepted.
+ */
+export function redispatchFinding(
+  row: KillPointRow,
+  before: ObservationResult,
+  after: ObservationResult,
+): boolean | null {
+  const distinctAfter = new Set(after.providerMessageIds).size;
+  if (distinctAfter > row.expectedProviderAcceptedCountAfterRecovery) return true;
+  if (!observationSettlesAbsence(before) || !observationSettlesAbsence(after)) return null;
+  return (
+    row.point !== 1 && (after.providerAcceptedCount ?? 0) > (before.providerAcceptedCount ?? 0)
+  );
+}
+
 export function derivePointSixRow(
   results: readonly ScenarioResult[],
 ): { readonly row: KillPointEvidence; readonly i20Operand: I20ScenarioOperand } {
@@ -747,18 +862,34 @@ export function derivePointSixRow(
     (result) => result.row.point >= 2 && result.row.point <= 5,
   );
 
-  const measured = reEntryRows.filter((result) => result.row.providerAcceptedCount !== null);
-  const anyUnresolved = reEntryRows.length !== measured.length || reEntryRows.length === 0;
+  /*
+   * v1.3.8 — POINT 6 FINALITY, IN THIS ORDER:
+   *
+   *   1  ANY positive redispatch evidence on points 2 to 5           FAIL immediately
+   *   2  ANY re-entry NOT refused ALREADY_CLAIMED (a local fact)     FAIL
+   *   3  EVERY re-entry row proved no redispatch under an
+   *      absence-settling bound (`redispatchOccurred === false`)     PASS
+   *   4  otherwise                                                    UNRESOLVED
+   *
+   * Equal counts before and after are NOT proof under an `UNESTABLISHED` bound: a missing
+   * provider record could conceal a second message. Live runs today therefore end UNRESOLVED
+   * unless a duplicate is SEEN, which FAILS.
+   */
+  const anyRedispatch = reEntryRows.some((result) => result.row.redispatchOccurred === true);
   const everyRecoveryRefused = reEntryRows.every(
     (result) => result.row.recovery === 'CLAIM_REFUSED:ALREADY_CLAIMED',
   );
-  const noRedispatch = reEntryRows.every((result) => result.row.redispatchOccurred === false);
+  const allProvedNoRedispatch =
+    reEntryRows.length > 0 &&
+    reEntryRows.every((result) => result.row.redispatchOccurred === false);
 
-  const verdict: KillPointEvidence['verdict'] = anyUnresolved
-    ? 'UNRESOLVED'
-    : everyRecoveryRefused && noRedispatch
-      ? 'PASS'
-      : 'FAIL';
+  const verdict: KillPointEvidence['verdict'] = anyRedispatch
+    ? 'FAIL'
+    : !everyRecoveryRefused && reEntryRows.length > 0
+      ? 'FAIL'
+      : allProvedNoRedispatch
+        ? 'PASS'
+        : 'UNRESOLVED';
 
   return {
     row: Object.freeze({
@@ -773,20 +904,25 @@ export function derivePointSixRow(
       observation: null,
       providerAcceptedCount: null,
       recovery: everyRecoveryRefused ? 'CLAIM_REFUSED:ALREADY_CLAIMED' : 'MIXED',
-      redispatchOccurred: anyUnresolved ? null : !noRedispatch,
+      redispatchOccurred: anyRedispatch ? true : allProvedNoRedispatch ? false : null,
       finalEffectState: null,
       verdict,
-      note: anyUnresolved
-        ? 'at least one of points 2 to 5 produced no trustworthy provider count, so the ' +
-          're-entry property could not be evaluated against the provider'
-        : verdict === 'PASS'
-          ? 'across points 2 to 5, every re-entry through the accepted gateway was refused ' +
-            'ALREADY_CLAIMED and the provider-side accepted count was unchanged by the ' +
-            'recovery attempt. **THIS PROPERTY IS CHECKABLE IN ITS FAILING DIRECTION**, which ' +
-            'is why it may PASS where a zero-expectation row may not: an INCREASE would be a ' +
-            'positive observation, so a bounded non-observation cannot conceal one'
-          : 'at least one re-entry was not refused, or the provider-side count increased ' +
-            'across a recovery for an already-CLAIMED effect',
+      note:
+        verdict === 'FAIL'
+          ? anyRedispatch
+            ? 'POSITIVE provider evidence of a redispatch: at least one of points 2 to 5 shows ' +
+              'more distinct provider message identities under its correlation than its ' +
+              'canonical expectation admits'
+            : 'at least one re-entry through the accepted gateway was NOT refused ALREADY_CLAIMED'
+          : verdict === 'PASS'
+            ? 'across points 2 to 5, every re-entry was refused ALREADY_CLAIMED and every ' +
+              'no-redispatch finding was made under a bound that SETTLES absence (the ' +
+              'deterministic offline fixture, or a completed evidence-backed interval)'
+            : 'no redispatch was SEEN, but at least one of points 2 to 5 was observed under a ' +
+              'bound that cannot settle absence (live SendGrid today: UNESTABLISHED). Equal ' +
+              'counts before and after re-entry do not prove that no second message was ' +
+              'accepted — a missing provider record could conceal one — so point 6 is ' +
+              'UNRESOLVED; a duplicate, if seen, would FAIL it',
     }),
     i20Operand: {
       scenarioLabel: 'kill-point-6',
@@ -799,6 +935,8 @@ export function derivePointSixRow(
        * arithmetic for a row that authorised nothing.
        */
       providerAcceptedCount: 0,
+      // And it OBSERVES nothing of its own: the EMPTY identity set, adding nothing to the union.
+      observedProviderMessageIds: Object.freeze([]),
       historicalReservationUnits: 0n,
     },
   };

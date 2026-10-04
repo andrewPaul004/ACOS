@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ObservationResult } from './observation.js';
 import type { ProbeRecord } from './probeResult.js';
 import type { I20Comparison } from './i20.js';
-import type { PreflightGate, Stage1Gate, Stage2Gate } from './preflight.js';
+import type { PreflightGate, ProviderEvidenceMode, Stage1Gate, Stage2Gate } from './preflight.js';
 import type { VisibilityBoundKind } from './visibilityBound.js';
 import { KILL_POINT_CONCLUSION_LIMITS } from './killPoints.js';
 
@@ -195,8 +195,48 @@ export interface KillPointEvidence {
   readonly note: string;
 }
 
+/** A requirement the selected evidence mode does not have. Stated, never filled with a value. */
+export const NOT_APPLICABLE = 'NOT_APPLICABLE' as const;
+
+/**
+ * v1.3.8 — WHAT THE RUN'S PROVIDER-EVIDENCE MODE MADE APPLICABLE, DISCRIMINATED BY THE MODE.
+ *
+ * The mode is the VERIFIED class-28 record's, read in stage 1. Under `SIGNED_PROVIDER_PUSH`
+ * every SendGrid audit-read item is the literal `NOT_APPLICABLE` — there is no audit credential
+ * identity, audit principal, audit send refusal, Email Activity entitlement, Email Activity read
+ * or provider-read inverse sweep to report, and the bundle does not manufacture one. `UNDECLARED`
+ * is a run whose verified record named no channel; the preflight refused it.
+ */
+export type ProviderEvidenceSection =
+  | {
+      readonly mode: 'PROVIDER_READ';
+      readonly evidenceSource: 'PROVIDER_EMAIL_ACTIVITY_READ';
+      readonly auditReadCredential: 'REQUIRED';
+      readonly emailActivityEntitlement: 'OPERATOR_CONFIRMED' | 'NOT_CONFIRMED';
+      readonly inverseSweep: 'PROVIDER_READ_SWEEP';
+    }
+  | {
+      readonly mode: 'SIGNED_PROVIDER_PUSH';
+      readonly evidenceSource: 'AUDIT_STORE_AUTHENTICATED_PUSH';
+      readonly auditReadCredential: typeof NOT_APPLICABLE;
+      readonly auditPrincipal: typeof NOT_APPLICABLE;
+      readonly auditKeySendRefusal: typeof NOT_APPLICABLE;
+      readonly emailActivityEntitlement: typeof NOT_APPLICABLE;
+      readonly emailActivityRead: typeof NOT_APPLICABLE;
+      readonly providerReadInverseSweep: typeof NOT_APPLICABLE;
+      readonly inverseObservation: 'AUDIT_STORE_PUSH_INVERSE_OBSERVATION';
+      /** ADR-027 decision 6: authentication is not completeness. */
+      readonly completenessBasis: 'UNESTABLISHED';
+      /** Obligations no automated or offline step can discharge. Each is stated, none assumed. */
+      readonly openEmpiricalObligations: readonly string[];
+    }
+  | {
+      readonly mode: 'UNDECLARED';
+      readonly statement: string;
+    };
+
 export interface EvidenceBundle {
-  readonly schema: 'acos.s1p.sendgrid-validation-evidence.v1';
+  readonly schema: 'acos.s1p.sendgrid-validation-evidence.v2';
   /** `§16`: architecture/package version. */
   readonly operatingSpine: string;
   readonly packageIssue: string;
@@ -209,12 +249,26 @@ export interface EvidenceBundle {
   readonly environmentLabel: string | null;
   readonly providerId: string;
 
-  /** `§16`: the two stable non-secret credential identities. NEVER the material. */
+  /**
+   * v1.3.8 — THE PROVIDER-EVIDENCE MODE, FROM THE VERIFIED CLASS-28 RECORD, or `null` when no
+   * verified record named one. Never from a flag, an environment variable or a default.
+   */
+  readonly providerEvidenceMode: ProviderEvidenceMode | null;
+  /** What that mode made applicable, with every inapplicable item stated as such. */
+  readonly providerEvidence: ProviderEvidenceSection;
+
+  /**
+   * `§16`: the stable non-secret credential identities. NEVER the material. The audit identity
+   * is `null` under `SIGNED_PROVIDER_PUSH`, where `providerEvidence` states it NOT_APPLICABLE.
+   */
   readonly integrationCredentialIdentity: string | null;
   readonly auditCredentialIdentity: string | null;
-  /** `§16`: proof the identities matched signed class-5 expectations. */
+  /**
+   * `§16`: proof the identities matched signed class-5 expectations. The audit member is `null`
+   * — not `false`, not `true` — under `SIGNED_PROVIDER_PUSH`: there is no audit record to match.
+   */
   readonly integrationIdentityMatchedSignedRecord: boolean;
-  readonly auditIdentityMatchedSignedRecord: boolean;
+  readonly auditIdentityMatchedSignedRecord: boolean | null;
 
   /** `§16`: the sink, represented safely. */
   readonly senderRedacted: string | null;

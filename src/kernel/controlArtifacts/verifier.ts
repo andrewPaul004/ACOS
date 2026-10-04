@@ -16,6 +16,7 @@ import {
 import { artifactSignatureMessage, manifestSignatureMessage } from './casSig.js';
 import { hexOf, sha256, verifyControlSignature } from './ed25519.js';
 import { integrityFailure, quoted } from './errors.js';
+import { parseClass28ProviderEvidenceTrust } from './providerEvidenceTrust.js';
 import { parseManifestDocument, type ManifestEntry } from './manifestCore.js';
 import {
   REQUIRED_PRE_LIVE_ARTIFACTS,
@@ -337,6 +338,7 @@ export function verifyControlArtifactBundle(
     }),
     auditSigningKey: parseClass24AuditSigningKey(verifiedBytes.get(24)!),
     degradedModeConfiguration: parseClass27DegradedModeConfiguration(verifiedBytes.get(27)!),
+    providerEvidenceTrust: parseClass28ProviderEvidenceTrust(verifiedBytes.get(28)!),
   };
 
   // The artifact's own declared version against the version the manifest bound. Both are
@@ -349,6 +351,7 @@ export function verifyControlArtifactBundle(
   assertDeclaredVersion(byClass, 19, contents.constructorSet.artifactVersion);
   assertDeclaredVersion(byClass, 24, contents.auditSigningKey.artifactVersion);
   assertDeclaredVersion(byClass, 27, contents.degradedModeConfiguration.artifactVersion);
+  assertDeclaredVersion(byClass, 28, contents.providerEvidenceTrust.artifactVersion);
 
   return sealVerifiedBundle(contents);
 }

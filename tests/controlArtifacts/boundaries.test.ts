@@ -168,8 +168,15 @@ describe('`50 §3f` — THE PRE-LIVE EXTERNAL-EFFECT GATE', () => {
   });
 
   it('S1K adds no network or credential surface to `src/` at all', () => {
+    // v1.3.8, `48 §8` row I1 — the ONE declared inbound listener, and only its exact inbound
+    // import line. It is not an S1K surface and it carries no outbound member; every needle
+    // below — `node:https`, `node:net`, `node:tls`, any HTTP client — stays forbidden in it too.
+    const INGRESS = join('audit', 'providerEvidence', 'ingressMain.ts');
+    const INBOUND_IMPORT =
+      "import { createServer, type IncomingMessage, type Server } from 'node:http';";
     for (const path of PRODUCTION_SOURCES) {
-      const code = codeOf(path);
+      const raw = codeOf(path);
+      const code = path.endsWith(INGRESS) ? raw.replace(INBOUND_IMPORT, '') : raw;
       for (const needle of ['node:http', 'node:https', 'axios', 'undici', 'node:net', 'node:tls']) {
         expect(code, `${path} carries ${needle}`).not.toContain(needle);
       }

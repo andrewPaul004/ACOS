@@ -335,8 +335,9 @@ describe('`50 §6`, `§2g` — the classification is SIGNED authority', () => {
     expect(class5).toBeDefined();
     expect(class5!.artifactId).toBe('acos.control.credential_scopes');
     expect(class5!.boundary).toBe('50 §2g');
-    // SEVEN members after v1.3.7, and the count is asserted so a silent removal fails here.
-    expect(REQUIRED_PRE_LIVE_ARTIFACTS).toHaveLength(7);
+    // SEVEN members after v1.3.7 and EIGHT after v1.3.8 adds class 28 (`50 §2h`); the count is
+    // asserted so a silent removal — or a silent addition — fails here.
+    expect(REQUIRED_PRE_LIVE_ARTIFACTS).toHaveLength(8);
   });
 
   it('the deployed artifact is what the ACTIVE VERIFIED BUNDLE carries', () => {

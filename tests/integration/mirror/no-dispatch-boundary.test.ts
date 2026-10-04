@@ -138,7 +138,14 @@ describe('NO EXTERNAL CALL SURFACE EXISTS ANYWHERE IN `src/`', () => {
   it('no HTTP client, no fetch, no socket', async () => {
     const files = await sourceOf();
     const offenders: string[] = [];
-    for (const { path, code } of files) {
+    // v1.3.8, `48 §8` row I1 — the ONE declared INBOUND listener's exact import line is the only
+    // thing admitted, and only in its own module. Every other pattern, including `node:https`,
+    // `node:net` and any client, stays forbidden there as everywhere else in `src/`.
+    const INGRESS = join('audit', 'providerEvidence', 'ingressMain.ts');
+    const INBOUND_IMPORT =
+      "import { createServer, type IncomingMessage, type Server } from 'node:http';";
+    for (const { path, code: raw } of files) {
+      const code = path.endsWith(INGRESS) ? raw.replace(INBOUND_IMPORT, '') : raw;
       // The patterns name TRANSPORT, not any identifier containing the word. `26 §7`'s
       // precondition and pre-reservation modules both have local `fetch*` helpers that read
       // PostgreSQL, and matching a bare `fetch(` would flag them and prove nothing.

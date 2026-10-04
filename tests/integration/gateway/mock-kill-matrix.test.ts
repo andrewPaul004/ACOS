@@ -395,12 +395,28 @@ describe('`§22`, `§30` — WHAT THE MATRIX DOES NOT CLOSE', () => {
     const auditTables = await h.auditOwner.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
     );
-    const names = auditTables.rows.map((r) => r.table_name);
+    // v1.3.8 (`A0009`, ADR-027) adds the authenticated provider-PUSH evidence store, which CAN
+    // hold a provider-reported accepted message. Its three tables are excluded BY NAME and
+    // nothing else is; the property that remains is that the MOCK matrix produces NO provider
+    // evidence — no signed event reaches the store from a mock adapter — so they stay EMPTY and
+    // `I20` stays OPEN.
+    const PUSH_EVIDENCE_TABLES = [
+      'provider_evidence_event',
+      'provider_evidence_inconsistency',
+      'provider_evidence_observation',
+    ];
+    const names = auditTables.rows
+      .map((r) => r.table_name)
+      .filter((n) => !PUSH_EVIDENCE_TABLES.includes(n));
     for (const forbidden of ['provider', 'vendor', 'esp', 'delivery', 'accepted']) {
       expect(
         names.filter((n) => n.includes(forbidden)),
         `audit table matching ${forbidden}`,
       ).toEqual([]);
+    }
+    for (const table of PUSH_EVIDENCE_TABLES) {
+      const rows = await h.auditOwner.query<{ n: string }>(`SELECT COUNT(*)::TEXT AS n FROM ${table}`);
+      expect(rows.rows[0]!.n, `${table} holds evidence after a MOCK dispatch`).toBe('0');
     }
 
     // 2. THE CONTROL PLANE HOLDS NO PROVIDER-REPORTED COUNT EITHER, so nothing in the

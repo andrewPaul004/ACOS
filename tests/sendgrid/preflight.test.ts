@@ -80,6 +80,11 @@ const FULLY_ESTABLISHED: Stage1Facts = Object.freeze({
   duplicateControlRequested: false,
   duplicateControlOptedIn: false,
   controlPlaneCompositionAvailable: true,
+  // v1.3.8 — the VERIFIED class-28 record selects PROVIDER_READ for this established set.
+  providerEvidenceMode: 'PROVIDER_READ',
+  auditEvidenceStoreConfigured: false,
+  auditPlaneEvidenceChannelAgrees: null,
+  auditReadCredentialReferenceSupplied: true,
 });
 
 /** Every stage-2 fact established, with a MATERIAL-BOUND provenance. */
@@ -103,6 +108,140 @@ const CREDENTIALS_BOUND: Stage2Facts = Object.freeze({
   auditSourcePrincipal: '99999999-8888-7777-6666-555555555555',
   configuredIntegrationCredentialId: 'twilio_sendgrid.validation_send',
   configuredAuditCredentialId: 'twilio_sendgrid.audit_read',
+  providerEvidenceMode: 'PROVIDER_READ',
+});
+
+/**
+ * v1.3.8 — EVERY STAGE-1 FACT A `SIGNED_PROVIDER_PUSH` RUN NEEDS, AND NOTHING OF THE AUDIT READ.
+ *
+ * No audit credential identity, no audit class-5 record, no audit risk class, no Email Activity
+ * entitlement and no audit locator — each is ABSENT, not filled with a placeholder. What push
+ * requires instead: the audit evidence store, and the audit plane's own agreement on class 28.
+ */
+const PUSH_ESTABLISHED: Stage1Facts = Object.freeze({
+  ...FULLY_ESTABLISHED,
+  providerEvidenceMode: 'SIGNED_PROVIDER_PUSH',
+  configuredAuditCredentialId: null,
+  auditSignedRecordFound: false,
+  auditSignedRecordAdapter: null,
+  auditSignedRecordProvider: null,
+  auditRiskClass: null,
+  emailActivityEntitlementConfirmed: false,
+  auditReadCredentialReferenceSupplied: false,
+  auditEvidenceStoreConfigured: true,
+  auditPlaneEvidenceChannelAgrees: true,
+});
+
+/** The integration credential, resolved and material-bound. No audit process was launched. */
+const PUSH_CREDENTIAL_BOUND: Stage2Facts = Object.freeze({
+  ...NO_CREDENTIAL_FACTS,
+  integrationProbeAnswered: true,
+  integrationCredentialResolved: true,
+  integrationResolvedIdentity: 'twilio_sendgrid.validation_send',
+  integrationIdentityProvenance: 'PROVIDER_KEY_ID',
+  integrationSourcePrincipal: '11111111-2222-3333-4444-555555555555',
+  configuredIntegrationCredentialId: 'twilio_sendgrid.validation_send',
+  configuredAuditCredentialId: null,
+  providerEvidenceMode: 'SIGNED_PROVIDER_PUSH',
+});
+
+describe('v1.3.8 — THE VERIFIED CLASS-28 MODE SELECTS WHICH PROVIDER-EVIDENCE GATES APPLY', () => {
+  it('SIGNED_PROVIDER_PUSH passes stage 1 with NO audit credential, record, entitlement or locator', () => {
+    expect(evaluateStage1(PUSH_ESTABLISHED)).toEqual([]);
+    expect(stage1PermitsCredentialResolution(PUSH_ESTABLISHED)).toBe(true);
+  });
+
+  it('push still requires every INTEGRATION and safety gate', () => {
+    const cases: readonly (readonly [Partial<Stage1Facts>, string])[] = [
+      [{ configuredIntegrationCredentialId: null }, 'INTEGRATION_CREDENTIAL_ID_NOT_CONFIGURED'],
+      [{ integrationSignedRecordFound: false }, 'INTEGRATION_CLASS_5_RECORD_ABSENT'],
+      [{ integrationSignedRecordAdapter: 'mock_ads' }, 'INTEGRATION_CLASS_5_RECORD_ADAPTER_MISMATCH'],
+      [{ integrationRiskClass: null }, 'INTEGRATION_CREDENTIAL_NOT_OPTION_A_LEGAL'],
+      [{ integrationRiskClass: 'MONEY_MOVING' }, 'INTEGRATION_CREDENTIAL_NOT_OPTION_A_LEGAL'],
+      [{ nonProductionAcknowledged: false }, 'NON_PRODUCTION_NOT_ACKNOWLEDGED'],
+      [{ liveRunOptedIn: false }, 'LIVE_RUN_NOT_OPTED_IN'],
+      [{ sinkAddress: 'customer@example.com' }, 'SINK_ABSENT_OR_NOT_OWNER_CONTROLLED'],
+      [{ controlPlaneCompositionAvailable: false }, 'CONTROL_PLANE_COMPOSITION_UNAVAILABLE'],
+    ];
+    for (const [override, gate] of cases) {
+      expect(evaluateStage1({ ...PUSH_ESTABLISHED, ...override }), gate).toContain(gate);
+    }
+  });
+
+  it('push REFUSES a supplied audit-read identity or locator rather than ignoring it', () => {
+    expect(
+      evaluateStage1({ ...PUSH_ESTABLISHED, configuredAuditCredentialId: 'twilio_sendgrid.audit_read' }),
+    ).toEqual(['AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH']);
+    expect(
+      evaluateStage1({ ...PUSH_ESTABLISHED, auditReadCredentialReferenceSupplied: true }),
+    ).toEqual(['AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH']);
+  });
+
+  it('push without the audit evidence store, or without audit-plane agreement, refuses', () => {
+    expect(evaluateStage1({ ...PUSH_ESTABLISHED, auditEvidenceStoreConfigured: false })).toEqual([
+      'AUDIT_EVIDENCE_STORE_NOT_CONFIGURED',
+    ]);
+    expect(evaluateStage1({ ...PUSH_ESTABLISHED, auditPlaneEvidenceChannelAgrees: false })).toEqual([
+      'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES',
+    ]);
+  });
+
+  it('PROVIDER_READ with the PUSH fact set refuses on every audit-read prerequisite', () => {
+    const failures = evaluateStage1({ ...PUSH_ESTABLISHED, providerEvidenceMode: 'PROVIDER_READ' });
+    for (const gate of [
+      'AUDIT_CREDENTIAL_ID_NOT_CONFIGURED',
+      'AUDIT_CLASS_5_RECORD_ABSENT',
+      'EMAIL_ACTIVITY_ENTITLEMENT_UNCONFIRMED',
+    ]) {
+      expect(failures, gate).toContain(gate);
+    }
+  });
+
+  it('an UNDECLARED mode relaxes nothing: the push fact set refuses on every read gate too', () => {
+    const failures = evaluateStage1({ ...PUSH_ESTABLISHED, providerEvidenceMode: null });
+    for (const gate of [
+      'PROVIDER_EVIDENCE_MODE_UNDECLARED',
+      'AUDIT_CREDENTIAL_ID_NOT_CONFIGURED',
+      'AUDIT_CLASS_5_RECORD_ABSENT',
+      'EMAIL_ACTIVITY_ENTITLEMENT_UNCONFIRMED',
+    ]) {
+      expect(failures, gate).toContain(gate);
+    }
+  });
+
+  it('PROVIDER_READ is unchanged: the fully established read set still passes', () => {
+    expect(evaluateStage1(FULLY_ESTABLISHED)).toEqual([]);
+  });
+
+  it('push stage 2 needs the INTEGRATION credential only, and every integration gate still fires', () => {
+    expect(evaluateStage2(PUSH_CREDENTIAL_BOUND)).toEqual([]);
+    expect(stage2PermitsLiveRun(PUSH_CREDENTIAL_BOUND)).toBe(true);
+    const missing = evaluateStage2({
+      ...NO_CREDENTIAL_FACTS,
+      providerEvidenceMode: 'SIGNED_PROVIDER_PUSH',
+    });
+    for (const gate of [
+      'CREDENTIAL_PROBE_PROCESS_FAILED',
+      'INTEGRATION_CREDENTIAL_UNAVAILABLE',
+      'INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE',
+      'INTEGRATION_CREDENTIAL_IDENTITY_MISMATCH',
+      'INTEGRATION_IDENTITY_NOT_MATERIAL_BOUND',
+    ]) {
+      expect(missing, gate).toContain(gate);
+    }
+    // No audit gate is evaluated under push.
+    expect(missing.filter((gate) => gate.startsWith('AUDIT'))).toEqual([]);
+    expect(
+      evaluateStage2({ ...PUSH_CREDENTIAL_BOUND, integrationIdentityProvenance: 'SYNTHETIC_TEST_IDENTITY' }),
+    ).toEqual(['INTEGRATION_IDENTITY_NOT_MATERIAL_BOUND']);
+  });
+
+  it('the SAME integration-only facts under PROVIDER_READ (or no mode) fail every audit gate', () => {
+    for (const providerEvidenceMode of ['PROVIDER_READ', null] as const) {
+      const failures = evaluateStage2({ ...PUSH_CREDENTIAL_BOUND, providerEvidenceMode });
+      expect(failures.filter((gate) => gate.startsWith('AUDIT')).length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('THE AZURE PRINCIPAL GATES — A SECOND, INDEPENDENT SEPARATION CONTROL', () => {
@@ -206,6 +345,14 @@ describe('`§4` — STAGE 1 REFUSES FROM FACTS NO CREDENTIAL CONTRIBUTED TO', ()
       'INTEGRATION_CREDENTIAL_NOT_OPTION_A_LEGAL',
       'AUDIT_CREDENTIAL_NOT_READ_ONLY',
       'OPTION_A_RUNTIME_COUNT_EXCEEDED',
+      /*
+       * v1.3.8 — the three SIGNED_PROVIDER_PUSH-only gates. With no verified mode, NOTHING
+       * selects push, so every READ-mode gate fires instead (asserted above by the loop) and
+       * `PROVIDER_EVIDENCE_MODE_UNDECLARED` fires beside them. An undeclared mode relaxes nothing.
+       */
+      'AUDIT_EVIDENCE_STORE_NOT_CONFIGURED',
+      'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES',
+      'AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH',
     ];
     for (const gate of STAGE_1_GATES) {
       if (unreachableFromNothing.includes(gate)) continue;
@@ -257,15 +404,34 @@ describe('`§4` — STAGE 1 REFUSES FROM FACTS NO CREDENTIAL CONTRIBUTED TO', ()
       [{ emailActivityEntitlementConfirmed: false }, 'EMAIL_ACTIVITY_ENTITLEMENT_UNCONFIRMED'],
       [{ liveRunOptedIn: false }, 'LIVE_RUN_NOT_OPTED_IN'],
       [{ controlPlaneCompositionAvailable: false }, 'CONTROL_PLANE_COMPOSITION_UNAVAILABLE'],
+      [{ providerEvidenceMode: null }, 'PROVIDER_EVIDENCE_MODE_UNDECLARED'],
     ];
     for (const [override, gate] of cases) {
       const failures = evaluateStage1({ ...FULLY_ESTABLISHED, ...override });
       expect(failures, `${gate}: ${JSON.stringify(override)}`).toContain(gate);
     }
-    // NON-VACUOUS: the table covers every stage-1 gate that a single flip can reach.
-    expect(new Set(cases.map(([, gate]) => gate)).size).toBeGreaterThanOrEqual(
-      STAGE_1_GATES.length - 2,
-    );
+    // The push-only gates, flipped from the fully established PUSH set.
+    const pushCases: readonly (readonly [Partial<Stage1Facts>, string])[] = [
+      [{ auditEvidenceStoreConfigured: false }, 'AUDIT_EVIDENCE_STORE_NOT_CONFIGURED'],
+      [{ auditPlaneEvidenceChannelAgrees: false }, 'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES'],
+      [{ auditPlaneEvidenceChannelAgrees: null }, 'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES'],
+      [
+        { configuredAuditCredentialId: 'twilio_sendgrid.audit_read' },
+        'AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH',
+      ],
+      [
+        { auditReadCredentialReferenceSupplied: true },
+        'AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH',
+      ],
+    ];
+    for (const [override, gate] of pushCases) {
+      const failures = evaluateStage1({ ...PUSH_ESTABLISHED, ...override });
+      expect(failures, `${gate}: ${JSON.stringify(override)}`).toContain(gate);
+    }
+    // NON-VACUOUS: the tables cover every stage-1 gate that a single flip can reach.
+    expect(
+      new Set([...cases, ...pushCases].map(([, gate]) => gate)).size,
+    ).toBeGreaterThanOrEqual(STAGE_1_GATES.length - 2);
   });
 
   it('`§6` — two planes naming ONE credential identity is refused', () => {

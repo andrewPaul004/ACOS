@@ -17,9 +17,13 @@ import {
   derivePointSixRow,
   hooksFor,
   integrationDescriptorFor,
+  observationSettlesAbsence,
+  redispatchFinding,
   runAllScenarios,
   runScenario,
+  type ScenarioResult,
 } from '../../validation/sendgrid/harness/scenarioDriver.js';
+import type { ObservationResult } from '../../validation/sendgrid/harness/observation.js';
 import { compareI20 } from '../../validation/sendgrid/harness/i20.js';
 import { readAccount } from '../sendgrid-doubles/simulatedAccount.js';
 import { FIXTURE_VISIBILITY_BOUND } from '../../validation/sendgrid/harness/visibilityBound.js';
@@ -217,7 +221,8 @@ describe('`§19` item 13 — ALL SIX POINTS IN ONE RUN, AND THE DERIVED RE-ENTRY
     const six = results[5]!.row;
     expect(six.recovery).toBe('CLAIM_REFUSED:ALREADY_CLAIMED');
     expect(six.redispatchOccurred).toBe(false);
-    expect(six.note).toContain('the provider-side accepted count was unchanged');
+    // PASS only because the deterministic fixture bound SETTLES absence.
+    expect(six.note).toContain('SETTLES absence');
 
     // AND `I20`'s COMPARISON OVER THE WHOLE RUN.
     const comparison = compareI20(results.map((result) => result.i20Operand));
@@ -316,6 +321,24 @@ describe('`§19` item 9, in the COMPOSITION — a refused read cannot pass a row
   }, 180_000);
 });
 
+describe('FINAL CORRECTION F — `runScenario` copies the OBSERVED provider message ids into its I20 operand', () => {
+  it('the operand carries exactly the ids of the observation the row was judged on', async () => {
+    scenario = createS1PScenario(h, { maxObservationAttempts: 8 });
+    const row = KILL_POINT_ROWS.find((entry) => entry.point === 5)!;
+    const result = await runScenario(scenario.runtime, scenario.ports, row);
+    const observed = result.row.observation?.providerMessageIds;
+    expect(observed).toHaveLength(1);
+    expect(result.i20Operand.observedProviderMessageIds).toEqual(observed);
+    // Fixture-deterministic: exact, and the count is the size of the SAME set.
+    expect(result.i20Operand.providerAcceptedCount).toBe(1);
+    // A real provider message identity, not a correlation tag or a synthetic placeholder.
+    expect(result.i20Operand.observedProviderMessageIds?.[0]).not.toBe(result.row.correlationTag);
+    expect(readAccount(scenario.accountPath).messages.map((message) => message.msg_id)).toContain(
+      result.i20Operand.observedProviderMessageIds?.[0],
+    );
+  }, 120_000);
+});
+
 describe('THE DERIVED POINT-6 ROW IS UNRESOLVED WHEN ANY RE-ENTRY IS UNMEASURED', () => {
   it('one unmeasured row among points 2 to 5 makes the property unevaluable', () => {
     const measured = {
@@ -336,15 +359,16 @@ describe('THE DERIVED POINT-6 ROW IS UNRESOLVED WHEN ANY RE-ENTRY IS UNMEASURED'
       note: '',
     };
     const derived = derivePointSixRow([
-      { row: measured, i20Operand: { scenarioLabel: 'a', providerAcceptedCount: 1, historicalReservationUnits: 1n }, providerOperationCount: 1 },
+      { row: measured, i20Operand: { scenarioLabel: 'a', providerAcceptedCount: 1, observedProviderMessageIds: ['m-a'], historicalReservationUnits: 1n }, providerOperationCount: 1 },
       {
         row: { ...measured, point: 5 as const, providerAcceptedCount: null, redispatchOccurred: null },
-        i20Operand: { scenarioLabel: 'b', providerAcceptedCount: null, historicalReservationUnits: 1n },
+        i20Operand: { scenarioLabel: 'b', providerAcceptedCount: null, observedProviderMessageIds: null, historicalReservationUnits: 1n },
         providerOperationCount: 0,
       },
     ]);
     expect(derived.row.verdict).toBe('UNRESOLVED');
-    expect(derived.row.note).toContain('no trustworthy provider count');
+    expect(derived.row.redispatchOccurred).toBeNull();
+    expect(derived.row.note).toContain('cannot settle absence');
   });
 });
 
@@ -363,4 +387,136 @@ describe('EVERY ACCEPTED MESSAGE WENT TO THE OWNER-CONTROLLED SINK', () => {
     expect(scenario.ports.sinkAddress).toBe(S1P_SINK);
     expect(readAccount(scenario.accountPath).messages).toHaveLength(1);
   }, 120_000);
+});
+
+// =====================================================================================
+// v1.3.8 CORRECTION — KILL POINT 6 NEVER PASSES FROM AN UNBOUNDED ABSENCE.
+// =====================================================================================
+
+function observed(
+  ids: readonly string[],
+  bound: ObservationResult['visibilityBoundKind'],
+  options: { readonly count?: number | null; readonly settled?: boolean } = {},
+): ObservationResult {
+  return Object.freeze({
+    outcome: ids.length > 0 ? ('PROVIDER_ACTIVITY_OBSERVED' as const) : ('NOT_OBSERVED_WITHIN_BOUND' as const),
+    correlationTag: 'acos-corr-p6',
+    attempts: Object.freeze([]),
+    providerAcceptedCount: options.count === undefined ? ids.length : options.count,
+    providerMessageIds: Object.freeze([...ids]),
+    stabilisationObservationsOutstanding: 0,
+    settlingIntervalCompleted: options.settled ?? false,
+    visibilityBoundKind: bound,
+  });
+}
+
+function reEntry(point: 2 | 3 | 4 | 5, redispatchOccurred: boolean | null): ScenarioResult {
+  return {
+    row: {
+      point,
+      killPointName: `point ${String(point)}`,
+      correlationTag: `acos-corr-${String(point)}`,
+      expectedSemantics: '',
+      localOutboxStatus: 'CLAIMED',
+      localOutcomeRows: 0,
+      mayHaveCrossedProviderBoundary: true,
+      providerResponseMessageId: null,
+      observation: null,
+      providerAcceptedCount: 1,
+      recovery: 'CLAIM_REFUSED:ALREADY_CLAIMED',
+      redispatchOccurred,
+      finalEffectState: null,
+      verdict: 'UNRESOLVED',
+      note: '',
+    },
+    i20Operand: { scenarioLabel: `p${String(point)}`, providerAcceptedCount: null, observedProviderMessageIds: null, historicalReservationUnits: 1n },
+    // A LOCAL adapter-call counter. It must have NO bearing on the point-6 verdict.
+    providerOperationCount: 0,
+  };
+}
+
+describe('v1.3.8 — `redispatchOccurred` is true on SEEN evidence, false only when absence is SETTLED', () => {
+  const row5 = KILL_POINT_ROWS.find((entry) => entry.point === 5)!;
+
+  it('a NEW distinct provider message id is POSITIVE evidence — true under ANY bound', () => {
+    for (const bound of ['FIXTURE_DETERMINISTIC', 'MEASURED_INTERVAL', 'UNESTABLISHED'] as const) {
+      expect(
+        redispatchFinding(row5, observed(['m1'], bound), observed(['m1', 'm2'], bound, { count: null })),
+        bound,
+      ).toBe(true);
+    }
+  });
+
+  it('EQUAL counts under the live UNESTABLISHED bound are null, never false', () => {
+    expect(
+      redispatchFinding(row5, observed(['m1'], 'UNESTABLISHED'), observed(['m1'], 'UNESTABLISHED')),
+    ).toBeNull();
+    // Equal ZERO counts too: a provider that recorded nothing proves nothing.
+    expect(
+      redispatchFinding(row5, observed([], 'UNESTABLISHED'), observed([], 'UNESTABLISHED')),
+    ).toBeNull();
+  });
+
+  it('a MEASURED_INTERVAL bound proves false only once its settling interval has COMPLETED', () => {
+    expect(
+      redispatchFinding(row5, observed(['m1'], 'MEASURED_INTERVAL'), observed(['m1'], 'MEASURED_INTERVAL')),
+    ).toBeNull();
+    expect(
+      redispatchFinding(
+        row5,
+        observed(['m1'], 'MEASURED_INTERVAL', { settled: true }),
+        observed(['m1'], 'MEASURED_INTERVAL', { settled: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it('INCOMPLETE evidence (no trustworthy count) is null, never false, even under the fixture', () => {
+    expect(
+      redispatchFinding(row5, observed(['m1'], 'FIXTURE_DETERMINISTIC'), observed(['m1'], 'FIXTURE_DETERMINISTIC', { count: null })),
+    ).toBeNull();
+  });
+
+  it('the deterministic fixture with equal counts proves false', () => {
+    expect(
+      redispatchFinding(row5, observed(['m1'], 'FIXTURE_DETERMINISTIC'), observed(['m1'], 'FIXTURE_DETERMINISTIC')),
+    ).toBe(false);
+    expect(observationSettlesAbsence(observed(['m1'], 'FIXTURE_DETERMINISTIC'))).toBe(true);
+    expect(observationSettlesAbsence(observed(['m1'], 'UNESTABLISHED'))).toBe(false);
+  });
+});
+
+describe('v1.3.8 — the derived POINT-6 verdict', () => {
+  it('ANY positive redispatch FAILS, whatever the other rows say', () => {
+    const derived = derivePointSixRow([reEntry(2, false), reEntry(3, null), reEntry(4, true), reEntry(5, false)]);
+    expect(derived.row.verdict).toBe('FAIL');
+    expect(derived.row.redispatchOccurred).toBe(true);
+  });
+
+  it('EVERY row proved under a settling bound PASSES', () => {
+    const derived = derivePointSixRow([reEntry(2, false), reEntry(3, false), reEntry(4, false), reEntry(5, false)]);
+    expect(derived.row.verdict).toBe('PASS');
+    expect(derived.row.redispatchOccurred).toBe(false);
+  });
+
+  it('LIVE equal counts (null findings) are UNRESOLVED — never PASS', () => {
+    const derived = derivePointSixRow([reEntry(2, null), reEntry(3, null), reEntry(4, null), reEntry(5, null)]);
+    expect(derived.row.verdict).toBe('UNRESOLVED');
+    expect(derived.row.redispatchOccurred).toBeNull();
+  });
+
+  it('one unproved row among proved ones is UNRESOLVED', () => {
+    const derived = derivePointSixRow([reEntry(2, false), reEntry(3, false), reEntry(4, false), reEntry(5, null)]);
+    expect(derived.row.verdict).toBe('UNRESOLVED');
+  });
+
+  it('a local adapter-call counter cannot satisfy point 6', () => {
+    const counted = [reEntry(2, null), reEntry(3, null), reEntry(4, null), reEntry(5, null)].map(
+      (result) => ({ ...result, providerOperationCount: 1 }),
+    );
+    expect(derivePointSixRow(counted).row.verdict).toBe('UNRESOLVED');
+  });
+
+  it('no re-entry rows at all is UNRESOLVED, not a vacuous PASS', () => {
+    expect(derivePointSixRow([]).row.verdict).toBe('UNRESOLVED');
+  });
 });

@@ -18,6 +18,7 @@ import * as recoveryModule from '../../../src/kernel/outbox/recovery.js';
 import * as stateModule from '../../../src/kernel/outbox/outboxState.js';
 import * as tagModule from '../../../src/kernel/outbox/correlationTag.js';
 import { OUTBOX_STATUSES } from '../../../src/kernel/outbox/outboxState.js';
+import { withoutProviderEvidenceSurface } from '../../support/providerEvidenceSurface.js';
 
 /**
  * `§30`, `§40`, `§41`, `§47` — WHERE S1I STOPS, HELD AS ASSERTIONS RATHER THAN AS A CLAIM.
@@ -560,7 +561,11 @@ describe('`§47` — THE LIMITS OF THE CLAIM, STATED AS ASSERTIONS', () => {
      */
     const files = await sourceOf();
     const offenders: string[] = [];
-    for (const { path, code } of files) {
+    for (const { path, code: raw } of files) {
+      // v1.3.8 — the declared provider-evidence surface's exact tokens are removed first, and
+      // only from its declared files (`tests/support/providerEvidenceSurface.ts`). Every pattern
+      // below still applies to every file, those included.
+      const code = withoutProviderEvidenceSurface(path, raw);
       for (const pattern of [
         /acceptedCount/i,
         /providerAccepted/i,

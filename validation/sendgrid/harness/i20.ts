@@ -7,8 +7,11 @@
  * `§14`: "compare provider-reported accepted IRRECOVERABLE effects against the immutable
  * historical legitimate reservation basis for the S1P validation window/scenario set."
  *
- * THE NUMERATOR IS THE PROVIDER'S. It is the number of DISTINCT provider message ids the
- * independent audit read observed, summed over the scenarios in the window. `§14`: "Do not
+ * THE NUMERATOR IS THE PROVIDER'S. It is the number of DISTINCT provider message IDENTITIES
+ * observed over the WHOLE scenario set — the size of the UNION of every scenario's message-id
+ * set, never a sum of per-scenario counts: one message seen under two correlations is ONE
+ * accepted effect. This is the audit store's `i20ProviderOperand` definition (a `Set` of
+ * `sg_message_id` across the correlation set), so the two cannot differ. `§14`: "Do not
  * use local invocation count as the numerator." A local count is ACOS's own account of how
  * many times it called a function, and `35 §12.3` is the whole reason that is not the same
  * number: "a mock with a naive idempotency implementation passes while the vendor would not."
@@ -62,22 +65,42 @@
  * =================================================================================
  */
 
-/** One scenario's contribution to the comparison. */
-export interface I20ScenarioOperand {
+/**
+ * One scenario's contribution to the comparison.
+ *
+ * STRUCTURALLY, AN EXACT COUNT CARRIES ITS IDENTITIES. A non-null `providerAcceptedCount` is
+ * only representable together with the message-id set it counts, so the numerator is always
+ * computable as a union; the count is retained for legibility and is CHECKED against the set
+ * (a disagreement makes the comparison UNRESOLVED — neither is chosen silently).
+ */
+export type I20ScenarioOperand = {
   /** The scenario label, so an UNRESOLVED verdict can name which one is missing. */
   readonly scenarioLabel: string;
-  /**
-   * The PROVIDER's distinct accepted-message count for this scenario's correlation, or
-   * `null` when the observation did not establish one.
-   */
-  readonly providerAcceptedCount: number | null;
   /**
    * The units this scenario's authorisation RESERVED, read from the committed
    * `reservation_window_instance` rows. A `bigint` because the column is `BIGINT` and
    * `51 §2.3`'s counts are exact.
    */
   readonly historicalReservationUnits: bigint;
-}
+} & (
+  | {
+      /** EXACT: the observation settled absence. Must equal the size of the id set below. */
+      readonly providerAcceptedCount: number;
+      /** The provider message identities this exact count counts. */
+      readonly observedProviderMessageIds: readonly string[];
+    }
+  | {
+      /** No exact count: the observation could not settle absence, or none was made. */
+      readonly providerAcceptedCount: null;
+      /**
+       * v1.3.8 — the provider message identities OBSERVED for this correlation (positive
+       * evidence: each was seen accepted), copied from `ObservationResult.providerMessageIds`.
+       * A LOWER BOUND that can only PROVE an excess. `null` when no trustworthy observation
+       * exists — a scenario that never observed, or evidence the oracle refused to read.
+       */
+      readonly observedProviderMessageIds: readonly string[] | null;
+    }
+);
 
 export const I20_VERDICTS = [
   /** Every scenario measured, and the bound holds. */
@@ -98,6 +121,17 @@ export interface I20Comparison {
   readonly historicalReservationBasisUnits: bigint;
   /** Which scenarios contributed no trustworthy count. Empty on a measured comparison. */
   readonly unmeasuredScenarios: readonly string[];
+  /**
+   * Scenarios whose exact count disagrees with — or lacks — the message-id set it claims to
+   * count. Any member makes the comparison UNRESOLVED.
+   */
+  readonly inconsistentScenarios: readonly string[];
+  /**
+   * v1.3.8 — the size of the UNION of every scenario's OBSERVED provider message identities: a
+   * LOWER BOUND on the distinct accepted messages, `null` when any scenario carried no
+   * trustworthy identity set. Never the exact numerator above, and never a per-scenario sum.
+   */
+  readonly observedDistinctAcceptedMessagesLowerBound: number | null;
   /** One sentence a reviewer can check the verdict against. */
   readonly statement: string;
 }
@@ -118,13 +152,72 @@ export function compareI20(operands: readonly I20ScenarioOperand[]): I20Comparis
       providerAcceptedIrrecoverableEffects: null,
       historicalReservationBasisUnits: 0n,
       unmeasuredScenarios: Object.freeze([]),
+      inconsistentScenarios: Object.freeze([]),
+      observedDistinctAcceptedMessagesLowerBound: null,
       statement:
         'no scenario operands were supplied, so there is nothing to compare; an empty ' +
         'comparison is not a passing comparison',
     });
   }
 
+  /*
+   * AN EXACT COUNT MUST BE THE SIZE OF ITS OWN IDENTITY SET. A count with no set, or a count
+   * the set disagrees with, is not chosen between: the comparison is UNRESOLVED.
+   */
+  const inconsistent = operands
+    .filter(
+      (operand) =>
+        operand.providerAcceptedCount !== null &&
+        (!Array.isArray(operand.observedProviderMessageIds) ||
+          new Set(operand.observedProviderMessageIds).size !== operand.providerAcceptedCount),
+    )
+    .map((operand) => operand.scenarioLabel);
+  if (inconsistent.length > 0) {
+    return Object.freeze({
+      verdict: 'UNRESOLVED' as const,
+      providerAcceptedIrrecoverableEffects: null,
+      historicalReservationBasisUnits: basis,
+      unmeasuredScenarios: Object.freeze([...unmeasured]),
+      inconsistentScenarios: Object.freeze([...inconsistent]),
+      observedDistinctAcceptedMessagesLowerBound: null,
+      statement:
+        `I20 is UNRESOLVED: ${String(inconsistent.length)} scenario(s) carry an exact provider ` +
+        'count that is not the size of the message-identity set it claims to count; neither ' +
+        'figure is chosen',
+    });
+  }
+
+  /*
+   * THE GLOBAL UNION. One provider message identity counts ONCE however many scenario
+   * correlations it was seen under — the audit store's `i20ProviderOperand` definition.
+   */
+  const identitySets = operands.map((operand) => operand.observedProviderMessageIds);
+  const complete = identitySets.every((set): set is readonly string[] => Array.isArray(set));
+  const lowerBound = complete ? distinctIdentities(identitySets as readonly (readonly string[])[]) : null;
+
   if (unmeasured.length > 0) {
+    /*
+     * v1.3.8 — A LOWER BOUND CAN PROVE AN EXCESS, AND ONLY AN EXCESS.
+     *
+     * Messages SEEN were accepted. If the observed messages alone already exceed the immutable
+     * basis, an accepted effect has no reservation behind it, and that needs no completeness
+     * guarantee (ADR-027 decision 6). A lower bound at or under the basis proves nothing.
+     */
+    if (lowerBound !== null && BigInt(lowerBound) > basis) {
+      return Object.freeze({
+        verdict: 'EXCEEDS_BASIS' as const,
+        providerAcceptedIrrecoverableEffects: null,
+        historicalReservationBasisUnits: basis,
+        unmeasuredScenarios: Object.freeze([...unmeasured]),
+        inconsistentScenarios: Object.freeze([]),
+        observedDistinctAcceptedMessagesLowerBound: lowerBound,
+        statement:
+          `THE PROVIDER IS OBSERVED TO HAVE ACCEPTED AT LEAST ${String(lowerBound)} ` +
+          `irrecoverable effect(s) against a basis of only ${String(basis)} unit(s). Observed ` +
+          'messages are positive evidence, so this excess stands although the exact numerator ' +
+          'is unestablished',
+      });
+    }
     return Object.freeze({
       verdict: 'UNRESOLVED' as const,
       /*
@@ -137,23 +230,32 @@ export function compareI20(operands: readonly I20ScenarioOperand[]): I20Comparis
       providerAcceptedIrrecoverableEffects: null,
       historicalReservationBasisUnits: basis,
       unmeasuredScenarios: Object.freeze([...unmeasured]),
+      inconsistentScenarios: Object.freeze([]),
+      observedDistinctAcceptedMessagesLowerBound: lowerBound,
       statement:
         `I20 is UNRESOLVED: ${String(unmeasured.length)} of ${String(operands.length)} ` +
-        'scenarios produced no trustworthy provider accepted count, and an unmeasured ' +
-        'scenario is not a zero',
+        'scenarios produced no exact provider accepted count — an observation under a bound ' +
+        'that cannot settle absence is a LOWER BOUND' +
+        (lowerBound === null ? '' : ` (observed at least ${String(lowerBound)})`) +
+        ', and an unmeasured scenario is not a zero',
     });
   }
 
-  const accepted = operands.reduce(
-    (total, operand) => total + (operand.providerAcceptedCount ?? 0),
-    0,
-  );
+  /*
+   * EVERY OPERAND EXACT AND CONSISTENT: the numerator is the size of the GLOBAL UNION of their
+   * identity sets — NOT the sum of their counts, which would count one message seen under two
+   * correlations twice. Every set is present here: an exact count structurally carries one, and
+   * the consistency check above refused any that did not.
+   */
+  const accepted = distinctIdentities(identitySets as readonly (readonly string[])[]);
   const withinBasis = BigInt(accepted) <= basis;
   return Object.freeze({
     verdict: withinBasis ? ('WITHIN_BASIS' as const) : ('EXCEEDS_BASIS' as const),
     providerAcceptedIrrecoverableEffects: accepted,
     historicalReservationBasisUnits: basis,
     unmeasuredScenarios: Object.freeze([]),
+    inconsistentScenarios: Object.freeze([]),
+    observedDistinctAcceptedMessagesLowerBound: lowerBound,
     statement: withinBasis
       ? `the provider accepted ${String(accepted)} irrecoverable effect(s) against an ` +
         `immutable historical reservation basis of ${String(basis)} unit(s); every accepted ` +
@@ -162,4 +264,11 @@ export function compareI20(operands: readonly I20ScenarioOperand[]): I20Comparis
         `of only ${String(basis)} unit(s); at least one provider-side effect has no ` +
         'committed authorisation behind it',
   });
+}
+
+/** The number of DISTINCT provider message identities across every set: a union, never a sum. */
+function distinctIdentities(sets: readonly (readonly string[])[]): number {
+  const all = new Set<string>();
+  for (const set of sets) for (const id of set) all.add(id);
+  return all.size;
 }

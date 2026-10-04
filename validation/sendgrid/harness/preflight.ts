@@ -198,6 +198,30 @@ export const STAGE_1_GATES = [
    * composition no deployment uses.
    */
   'CONTROL_PLANE_COMPOSITION_UNAVAILABLE',
+  /**
+   * v1.3.8, `50 §2h` — the VERIFIED class-28 record declares no evidence channel for SendGrid,
+   * so there is no signed answer to which provider-evidence requirements are active. Every
+   * read-mode gate is ALSO evaluated in this case: an undeclared mode never relaxes anything.
+   */
+  'PROVIDER_EVIDENCE_MODE_UNDECLARED',
+  /**
+   * ADR-027, `SIGNED_PROVIDER_PUSH` — no audit evidence store (`ACOS_AUDIT_PG_URL`) is
+   * configured, so the push oracle has nowhere to read authenticated evidence from.
+   */
+  'AUDIT_EVIDENCE_STORE_NOT_CONFIGURED',
+  /**
+   * `SIGNED_PROVIDER_PUSH` — the AUDIT plane's OWN verification of class 28 did not bind the SAME
+   * class-28 artifact as the control bundle (their exact-byte content hashes differ), did not name
+   * the same push channel, or could not run. `50 §3` property 2: the audit plane recomputes
+   * independently, and the two copies must be one artifact, not merely share a key.
+   */
+  'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES',
+  /**
+   * `SIGNED_PROVIDER_PUSH` — a SendGrid audit READ credential identity or locator was supplied.
+   * Under push mode no SendGrid audit credential is required, resolved or used (ADR-027 decision
+   * 3); one supplied anyway is a misconfiguration and is refused rather than silently ignored.
+   */
+  'AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH',
 ] as const;
 
 export type Stage1Gate = (typeof STAGE_1_GATES)[number];
@@ -323,7 +347,26 @@ export interface Stage1Facts {
 
   /** Whether a deployment supplied the control-plane composition the driver traverses. */
   readonly controlPlaneCompositionAvailable: boolean;
+
+  /**
+   * v1.3.8 — THE PROVIDER-EVIDENCE MODE, READ FROM THE VERIFIED CLASS-28 RECORD AND NOTHING
+   * ELSE. Not a flag, not an environment variable, not inferred from which credentials are
+   * present. `null` when no bundle is available or the record names no SendGrid channel.
+   */
+  readonly providerEvidenceMode: ProviderEvidenceMode | null;
+  /** `SIGNED_PROVIDER_PUSH`: whether the audit evidence store is configured. */
+  readonly auditEvidenceStoreConfigured: boolean;
+  /**
+   * `SIGNED_PROVIDER_PUSH`: whether the audit plane's OWN class-28 verification names the same
+   * push channel. `null` when not evaluated (any other mode).
+   */
+  readonly auditPlaneEvidenceChannelAgrees: boolean | null;
+  /** Whether an audit SendGrid READ locator was supplied in the environment. */
+  readonly auditReadCredentialReferenceSupplied: boolean;
 }
+
+/** `50 §2h` field 2. The two modes the verified class-28 record may select. */
+export type ProviderEvidenceMode = 'PROVIDER_READ' | 'SIGNED_PROVIDER_PUSH';
 
 /** The facts only a ONE-SHOT CREDENTIAL PROCESS can establish. Still no material. */
 export interface Stage2Facts {
@@ -354,6 +397,13 @@ export interface Stage2Facts {
   /** Echoed from stage 1 so the comparison is made here rather than trusted from the child. */
   readonly configuredIntegrationCredentialId: string | null;
   readonly configuredAuditCredentialId: string | null;
+
+  /**
+   * The VERIFIED mode, echoed from stage 1. Under `SIGNED_PROVIDER_PUSH` no audit credential
+   * process is launched and no audit gate is evaluated; under any other value (including
+   * `null`) every read-mode gate applies.
+   */
+  readonly providerEvidenceMode: ProviderEvidenceMode | null;
 }
 
 /** The provider this harness serves, and the only one it will run against. */
@@ -401,17 +451,37 @@ export function evaluateStage1(facts: Stage1Facts): readonly Stage1Gate[] {
   }
   if (facts.sandboxModeRequested) failures.push('SANDBOX_MODE_ENABLED');
 
+  /*
+   * v1.3.8 — WHICH PROVIDER-EVIDENCE REQUIREMENTS ARE ACTIVE IS DECIDED BY THE SIGNED CLASS-28
+   * MODE. `SIGNED_PROVIDER_PUSH` replaces the read-side gates with the push-side ones; ANY OTHER
+   * VALUE — `PROVIDER_READ`, or no declared mode at all — evaluates every read-side gate exactly
+   * as before. An undeclared mode is its own refusal and never relaxes anything.
+   */
+  const push = facts.providerEvidenceMode === 'SIGNED_PROVIDER_PUSH';
+  if (facts.providerEvidenceMode === null) failures.push('PROVIDER_EVIDENCE_MODE_UNDECLARED');
+
   // CORRECTION 6 — the exact identities, declared.
   const integrationId = facts.configuredIntegrationCredentialId;
   const auditId = facts.configuredAuditCredentialId;
   if (integrationId === null || integrationId.length === 0) {
     failures.push('INTEGRATION_CREDENTIAL_ID_NOT_CONFIGURED');
   }
-  if (auditId === null || auditId.length === 0) {
-    failures.push('AUDIT_CREDENTIAL_ID_NOT_CONFIGURED');
-  }
-  if (integrationId !== null && auditId !== null && integrationId === auditId) {
-    failures.push('CONFIGURED_CREDENTIAL_IDS_NOT_DISTINCT');
+  if (push) {
+    // NO SendGrid audit credential exists under push. One supplied is refused, not ignored.
+    if ((auditId !== null && auditId.length > 0) || facts.auditReadCredentialReferenceSupplied) {
+      failures.push('AUDIT_READ_CREDENTIAL_SUPPLIED_UNDER_SIGNED_PUSH');
+    }
+    if (!facts.auditEvidenceStoreConfigured) failures.push('AUDIT_EVIDENCE_STORE_NOT_CONFIGURED');
+    if (facts.auditPlaneEvidenceChannelAgrees !== true) {
+      failures.push('AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES');
+    }
+  } else {
+    if (auditId === null || auditId.length === 0) {
+      failures.push('AUDIT_CREDENTIAL_ID_NOT_CONFIGURED');
+    }
+    if (integrationId !== null && auditId !== null && integrationId === auditId) {
+      failures.push('CONFIGURED_CREDENTIAL_IDS_NOT_DISTINCT');
+    }
   }
 
   if (!facts.integrationSignedRecordFound) {
@@ -428,7 +498,9 @@ export function evaluateStage1(facts: Stage1Facts): readonly Stage1Gate[] {
     }
   }
 
-  if (!facts.auditSignedRecordFound) {
+  if (push) {
+    // UNDER PUSH THERE IS NO AUDIT CLASS-5 RECORD TO REQUIRE: ADR-027 decision 3.
+  } else if (!facts.auditSignedRecordFound) {
     failures.push('AUDIT_CLASS_5_RECORD_ABSENT');
   } else {
     if (
@@ -467,7 +539,8 @@ export function evaluateStage1(facts: Stage1Facts): readonly Stage1Gate[] {
     failures.push('SINK_ABSENT_OR_NOT_OWNER_CONTROLLED');
   }
   if (facts.recipientReachableFromProductionState) failures.push('PRODUCTION_TARGET_REACHABLE');
-  if (!facts.emailActivityEntitlementConfirmed) {
+  // The paid Email Activity entitlement is a PROVIDER_READ prerequisite only (ADR-027).
+  if (!push && !facts.emailActivityEntitlementConfirmed) {
     failures.push('EMAIL_ACTIVITY_ENTITLEMENT_UNCONFIRMED');
   }
 
@@ -499,6 +572,15 @@ export function stage1PermitsCredentialResolution(facts: Stage1Facts): boolean {
 
 /** Evaluate every STAGE-2 gate. Only reachable when stage 1 returned no failures. */
 export function evaluateStage2(facts: Stage2Facts): readonly Stage2Gate[] {
+  /*
+   * v1.3.8 — UNDER `SIGNED_PROVIDER_PUSH` ONLY THE INTEGRATION CREDENTIAL EXISTS.
+   *
+   * No audit credential process was launched, so there is no audit identity, provenance or
+   * principal to require and no cross-plane distinctness to compare. Every INTEGRATION gate is
+   * evaluated exactly as in read mode. Any other mode value evaluates the full read-mode set.
+   */
+  if (facts.providerEvidenceMode === 'SIGNED_PROVIDER_PUSH') return evaluatePushStage2(facts);
+
   const failures: Stage2Gate[] = [];
 
   if (!facts.integrationProbeAnswered || !facts.auditProbeAnswered) {
@@ -583,6 +665,29 @@ export function evaluateStage2(facts: Stage2Facts): readonly Stage2Gate[] {
   return Object.freeze(failures);
 }
 
+/** `SIGNED_PROVIDER_PUSH` stage 2: the integration credential's gates, and only those. */
+function evaluatePushStage2(facts: Stage2Facts): readonly Stage2Gate[] {
+  const failures: Stage2Gate[] = [];
+  if (!facts.integrationProbeAnswered) failures.push('CREDENTIAL_PROBE_PROCESS_FAILED');
+  if (!facts.integrationCredentialResolved || facts.integrationResolvedIdentity === null) {
+    failures.push('INTEGRATION_CREDENTIAL_UNAVAILABLE');
+  }
+  if (facts.integrationSourcePrincipal === null) {
+    failures.push('INTEGRATION_SOURCE_PRINCIPAL_UNAVAILABLE');
+  }
+  if (
+    facts.configuredIntegrationCredentialId === null ||
+    facts.integrationResolvedIdentity === null ||
+    facts.configuredIntegrationCredentialId !== facts.integrationResolvedIdentity
+  ) {
+    failures.push('INTEGRATION_CREDENTIAL_IDENTITY_MISMATCH');
+  }
+  if (!isLiveIdentityProvenance(facts.integrationIdentityProvenance)) {
+    failures.push('INTEGRATION_IDENTITY_NOT_MATERIAL_BOUND');
+  }
+  return Object.freeze(failures);
+}
+
 /** THE ONLY STAGE-2 PASS: an empty failure list. */
 export function stage2PermitsLiveRun(facts: Stage2Facts): boolean {
   return evaluateStage2(facts).length === 0;
@@ -623,6 +728,10 @@ export const NOTHING_ESTABLISHED: Stage1Facts = Object.freeze({
   duplicateControlRequested: false,
   duplicateControlOptedIn: false,
   controlPlaneCompositionAvailable: false,
+  providerEvidenceMode: null,
+  auditEvidenceStoreConfigured: false,
+  auditPlaneEvidenceChannelAgrees: null,
+  auditReadCredentialReferenceSupplied: false,
 });
 
 /** The stage-2 facts a run that resolved NOTHING starts from. Refuses on every gate. */
@@ -640,4 +749,5 @@ export const NO_CREDENTIAL_FACTS: Stage2Facts = Object.freeze({
   auditIdentityProvenance: null,
   configuredIntegrationCredentialId: null,
   configuredAuditCredentialId: null,
+  providerEvidenceMode: null,
 });

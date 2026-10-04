@@ -84,6 +84,16 @@ export const CALL_SITE_KINDS = [
    * inherit a send site's `PERIMETER_AUTHORISED`.
    */
   'SECRET_MANAGER_CLIENT',
+  /**
+   * `INGRESS_LISTENER` is the v1.3.8 addition (`48 §8`, ADR-027).
+   *
+   * `48 §8`: "**An unenumerated ingress is an unreviewed one**". An inbound listener is not an
+   * outbound site — it initiates nothing and carries no `authorisation_ref` — so it is reported
+   * as its own kind and is satisfied ONLY by `PERIMETER_INGRESS(channel, trust_class)` naming a
+   * channel `48 §8` enumerates: "**Neither [outbound annotation] applies here**, and a future
+   * enforcement tool must not reuse either for this path."
+   */
+  'INGRESS_LISTENER',
 ] as const;
 
 export type CallSiteKind = (typeof CALL_SITE_KINDS)[number];
@@ -164,6 +174,44 @@ export const BANNED_EXEMPTION_REASONS: readonly string[] = [
 const AUTHORISED_ANNOTATION = /PERIMETER_AUTHORISED\(\s*authorisation_ref\s*\)/;
 const EXEMPT_ANNOTATION = /PERIMETER_EXEMPT\(\s*([A-Za-z0-9_\-. ]+?)\s*,\s*([A-Za-z0-9_\-#]+?)\s*\)/;
 
+/**
+ * `48 §8` — THE INGRESS ANNOTATION, AND THE CLOSED SET OF CHANNELS IT MAY NAME.
+ *
+ * FILE-SCOPED, and deliberately so: it declares that THIS MODULE is the ingress for one
+ * enumerated channel. It covers exactly two kinds of site in that file — an `INGRESS_LISTENER`
+ * and the `node:http` import that provides it — and NOTHING ELSE. It never covers a `fetch`, an
+ * outbound `http.request`, a provider client or a secret-manager client, so an ingress module
+ * cannot use its declaration to launder an outbound call.
+ */
+const INGRESS_ANNOTATION = /PERIMETER_INGRESS\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*\)/g;
+
+/** `48 §8`'s enumeration. ONE row, I1, because one such channel exists. */
+export const DECLARED_INGRESS_CHANNELS: readonly {
+  readonly channel: string;
+  readonly trustClass: string;
+}[] = Object.freeze([Object.freeze({ channel: 'provider_evidence', trustClass: 'class_28' })]);
+
+/** An inbound listener being constructed. */
+const INGRESS_LISTENER_PATTERN = /\bcreateServer\s*\(/;
+
+/** The outbound half of `node:http`. Importing any of these is not an ingress. */
+const OUTBOUND_HTTP_MEMBERS: readonly string[] = ['request', 'get', 'Agent', 'globalAgent'];
+
+/**
+ * The ONE network-primitive line an ingress declaration may cover: a NAMED import from
+ * `node:http` that brings in no outbound member. A namespace or default import is refused too,
+ * because it brings in the whole module, `request` included.
+ */
+function isInboundHttpImport(line: string): boolean {
+  const match = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'node:http'/.exec(line);
+  if (match === null) return false;
+  const members = (match[1] ?? '')
+    .split(',')
+    .map((member) => (member.replace(/\btype\b/, '').trim().split(/\s+as\s+/)[0] ?? '').trim())
+    .filter((member) => member.length > 0);
+  return members.every((member) => !OUTBOUND_HTTP_MEMBERS.includes(member));
+}
+
 /** How many lines above a call site an annotation may sit and still cover it. */
 const ANNOTATION_WINDOW_LINES = 12;
 
@@ -171,6 +219,7 @@ export type SiteScope = 'PRODUCTION' | 'TEST_ONLY';
 
 export type SiteAnnotation =
   | { readonly kind: 'AUTHORISED' }
+  | { readonly kind: 'INGRESS'; readonly channel: string; readonly trustClass: string }
   | { readonly kind: 'EXEMPT'; readonly reason: string; readonly ticket: string }
   | { readonly kind: 'NONE' }
   | { readonly kind: 'INVALID_EXEMPTION'; readonly reason: string };
@@ -195,6 +244,13 @@ export interface PerimeterReport {
   /** `48 §2` row 13. Read sites, counted separately from write sites. */
   readonly providerReadTotal: number;
   readonly providerReadUnannotated: number;
+  /** `48 §8`. Inbound listener sites, each covered by a declared `PERIMETER_INGRESS`. */
+  readonly ingressTotal: number;
+  /**
+   * `48 §8` G1 / I1 violations: an undeclared channel, a second listener in one ingress module,
+   * a second module declaring one channel, or one module declaring two channels.
+   */
+  readonly ingressViolations: readonly string[];
   /** The gate. `48 §4` item 2: an unannotated site fails the build. */
   readonly pass: boolean;
 }
@@ -360,6 +416,9 @@ export async function scanPerimeter(
    * declaration, which is the half that matters least — the call sites are where an
    * `authorisation_ref` either is or is not carried.
    */
+  const ingressViolations: string[] = [];
+  /** Declared channel -> the modules declaring it. More than one module is a second route. */
+  const ingressModules = new Map<string, Set<string>>();
   const declaredClients = new Set<string>();
   const declaredReadClients = new Set<string>();
   const discovered: { readonly file: string; readonly root: string }[] = [];
@@ -386,6 +445,42 @@ export async function scanPerimeter(
       const lines = stripCommentsKeepingAnnotations(source);
       const relativeFile = relative(cwd, file);
 
+      // `48 §8` — this module's ingress declarations, read from the RAW source, because they are
+      // comments by construction.
+      INGRESS_ANNOTATION.lastIndex = 0;
+      // The SAME declaration repeated (a header and its own documentation) is one declaration;
+      // two DIFFERENT ones in one module are a violation below.
+      const ingressDeclarations = [
+        ...new Set([...source.matchAll(INGRESS_ANNOTATION)].map((m) => `${m[1] ?? ''}\u0000${m[2] ?? ''}`)),
+      ].map((key) => {
+        const [channel, trustClass] = key.split('\u0000');
+        return { channel: channel ?? '', trustClass: trustClass ?? '' };
+      });
+      const isDeclared = (declaration: { channel: string; trustClass: string }): boolean =>
+        DECLARED_INGRESS_CHANNELS.some(
+          (row) => row.channel === declaration.channel && row.trustClass === declaration.trustClass,
+        );
+      for (const declaration of ingressDeclarations) {
+        if (!isDeclared(declaration)) {
+          ingressViolations.push(
+            `${relativeFile}: PERIMETER_INGRESS(${declaration.channel}, ` +
+              `${declaration.trustClass}) names no channel 48 §8 enumerates`,
+          );
+          continue;
+        }
+        const owners = ingressModules.get(declaration.channel) ?? new Set<string>();
+        owners.add(relativeFile);
+        ingressModules.set(declaration.channel, owners);
+      }
+      if (ingressDeclarations.length > 1) {
+        ingressViolations.push(`${relativeFile}: one module may declare at most one ingress channel`);
+      }
+      const ingressDeclaration =
+        ingressDeclarations.length === 1 && isDeclared(ingressDeclarations[0]!)
+          ? ingressDeclarations[0]!
+          : null;
+      let listenersInFile = 0;
+
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? '';
         const kinds: CallSiteKind[] = [];
@@ -395,6 +490,10 @@ export async function scanPerimeter(
         if (HTTP_LIBRARIES.some((pattern) => pattern.test(line))) kinds.push('HTTP_LIBRARY');
         if (SECRET_MANAGER_CLIENTS.some((pattern) => pattern.test(line))) {
           kinds.push('SECRET_MANAGER_CLIENT');
+        }
+        if (INGRESS_LISTENER_PATTERN.test(line)) {
+          kinds.push('INGRESS_LISTENER');
+          listenersInFile += 1;
         }
         for (const client of declaredClients) {
           // A call, not the declaration: the declaration is the client, the calls are the
@@ -417,8 +516,50 @@ export async function scanPerimeter(
         if (kinds.length === 0) continue;
         const annotation = annotationNear(lines, index);
         for (const kind of kinds) {
+          /*
+           * `48 §8` — AN INGRESS DECLARATION COVERS ONLY ITS LISTENER AND ITS INBOUND IMPORT.
+           *
+           * A listener with no declaration is UNANNOTATED, whatever outbound annotation sits
+           * near it: `PERIMETER_AUTHORISED` and `PERIMETER_EXEMPT` must not be reused here.
+           */
+          if (kind === 'INGRESS_LISTENER') {
+            sites.push({
+              file: relativeFile,
+              line: index + 1,
+              kind,
+              scope,
+              annotation:
+                ingressDeclaration === null
+                  ? { kind: 'NONE' }
+                  : { kind: 'INGRESS', ...ingressDeclaration },
+            });
+            continue;
+          }
+          if (
+            kind === 'NETWORK_PRIMITIVE' &&
+            ingressDeclaration !== null &&
+            annotation.kind === 'NONE' &&
+            isInboundHttpImport(line)
+          ) {
+            sites.push({
+              file: relativeFile,
+              line: index + 1,
+              kind,
+              scope,
+              annotation: { kind: 'INGRESS', ...ingressDeclaration },
+            });
+            continue;
+          }
           sites.push({ file: relativeFile, line: index + 1, kind, scope, annotation });
         }
+      }
+
+      // G1 — ONE listener per ingress module. A second `createServer` is a second route.
+      if (ingressDeclaration !== null && listenersInFile > 1) {
+        ingressViolations.push(
+          `${relativeFile}: an ingress module constructs ${String(listenersInFile)} listeners; ` +
+            '48 §8 G1 admits exactly one fixed route',
+        );
       }
 
       // The DECLARATION of a provider client is itself a perimeter entry: it is the place a
@@ -460,6 +601,16 @@ export async function scanPerimeter(
 
   sites.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.kind.localeCompare(b.kind));
 
+  for (const [channel, modules] of ingressModules) {
+    if (modules.size > 1) {
+      ingressViolations.push(
+        `PERIMETER_INGRESS(${channel}) is declared by ${String(modules.size)} modules ` +
+          `[${[...modules].sort().join(', ')}]; 48 §8 I1 enumerates ONE`,
+      );
+    }
+  }
+  ingressViolations.sort();
+
   const production = sites.filter((site) => site.scope === 'PRODUCTION');
   const testOnly = sites.filter((site) => site.scope === 'TEST_ONLY');
   const unannotated = (site: PerimeterCallSite): boolean =>
@@ -490,10 +641,14 @@ export async function scanPerimeter(
     testOnlyUnannotated,
     providerReadTotal: providerRead.length,
     providerReadUnannotated,
+    ingressTotal: sites.filter((site) => site.kind === 'INGRESS_LISTENER').length,
+    ingressViolations: Object.freeze([...ingressViolations]),
     // BOTH SCOPES GATE. A test-only site still has to be annotated — `§18` says a test
     // fixture "remains TEST-ONLY and is not a production perimeter entry", which is about
-    // which LIST it lands on, not about whether it may be unannotated.
-    pass: productionUnannotated === 0 && testOnlyUnannotated === 0,
+    // which LIST it lands on, not about whether it may be unannotated. And `48 §8`'s ingress
+    // enumeration gates with them.
+    pass:
+      productionUnannotated === 0 && testOnlyUnannotated === 0 && ingressViolations.length === 0,
   });
 }
 
@@ -511,12 +666,17 @@ export function renderPerimeterReport(report: PerimeterReport): string {
   lines.push(`  UNANNOTATED:                ${report.productionUnannotated}`);
   lines.push(`test-only call sites:         ${report.testOnlyTotal}`);
   lines.push(`  UNANNOTATED:                ${report.testOnlyUnannotated}`);
+  lines.push(`ingress listeners (48 §8):    ${report.ingressTotal}`);
+  lines.push(`  ingress violations:         ${report.ingressViolations.length}`);
+  for (const violation of report.ingressViolations) lines.push(`    ${violation}`);
   lines.push('');
   for (const site of report.sites) {
     const annotation =
       site.annotation.kind === 'EXEMPT'
         ? `EXEMPT(${site.annotation.reason}, ${site.annotation.ticket})`
-        : site.annotation.kind === 'INVALID_EXEMPTION'
+        : site.annotation.kind === 'INGRESS'
+          ? `INGRESS(${site.annotation.channel}, ${site.annotation.trustClass})`
+          : site.annotation.kind === 'INVALID_EXEMPTION'
           ? `INVALID_EXEMPTION — ${site.annotation.reason}`
           : site.annotation.kind;
     lines.push(`${site.scope.padEnd(10)} ${site.kind.padEnd(18)} ${annotation.padEnd(34)} ${site.file}:${site.line}`);

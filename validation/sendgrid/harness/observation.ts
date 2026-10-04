@@ -116,7 +116,11 @@ export const MAX_STABILISATION_OBSERVATIONS = 6;
 export interface ObservationAttempt {
   readonly attempt: number;
   readonly startedAtMs: number;
-  readonly operation: ProviderReadOperation;
+  /**
+   * The closed read operation, or — under `SIGNED_PROVIDER_PUSH` (ADR-027, `pushEvidence.ts`) —
+   * the local audit-store query. Push evidence makes NO provider read, and the attempt says so.
+   */
+  readonly operation: ProviderReadOperation | 'AUDIT_STORE_PUSH_EVIDENCE_QUERY';
   /** How the audit read ended. The provider's own answer, unmapped. */
   readonly result: 'EVIDENCE' | 'PROVIDER_UNAVAILABLE';
   /** Which phase this attempt belonged to. Evidence a reviewer can check the window against. */

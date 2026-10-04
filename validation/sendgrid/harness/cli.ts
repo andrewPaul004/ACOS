@@ -24,20 +24,26 @@ import {
   SENDGRID_PROVIDER_ID,
   evaluateStage1,
   evaluateStage2,
+  type ProviderEvidenceMode,
   type Stage1Facts,
   type Stage2Facts,
 } from './preflight.js';
 import {
   I17B_STATUS,
+  NOT_APPLICABLE,
   bundleDigest,
   productionStatementFor,
   redactAddress,
   renderEvidenceBundle,
   type EvidenceBundle,
+  type ProviderEvidenceSection,
 } from './evidence.js';
 import { KILL_POINT_CONCLUSION_LIMITS } from './killPoints.js';
 import { runCredentialProbe } from './probeClient.js';
-import { orchestrateCapabilityProbes } from './capabilityProbes.js';
+import {
+  SIGNED_PUSH_OPEN_EMPIRICAL_OBLIGATIONS,
+  orchestrateCapabilityProbes,
+} from './capabilityProbes.js';
 import type { ProbeBlock } from './capabilityProbes.js';
 import type { CredentialIdentityFacts, ProbeRecord } from './probeResult.js';
 import { mintCorrelationTag } from '../../../src/kernel/outbox/correlationTag.js';
@@ -47,12 +53,20 @@ import {
   type ScenarioResult,
 } from './scenarioDriver.js';
 import {
+  auditPlaneAgreesOnPushChannel,
   createLiveScenarioComposition,
+  ENV_AUDIT_PG_URL,
   LIVE_ACTIVITY_PAGE_RECORDS,
   LIVE_VISIBILITY_BOUND,
+  verifiedEvidenceModeFor,
   type CompositionAvailability,
   type ScenarioCompositionProvider,
 } from './liveComposition.js';
+import {
+  observePushCorrelation,
+  runPushInverseObservation,
+  type SignedPushEvidencePort,
+} from './pushEvidence.js';
 import { compareI20, type I20Comparison } from './i20.js';
 import {
   MAX_SWEEP_PAGES,
@@ -278,6 +292,17 @@ export function establishStage1Facts(
   let signedActionClassAdapter: string | null = null;
   let signedActionClassMethod: string | null = null;
 
+  /*
+   * v1.3.8 — THE PROVIDER-EVIDENCE MODE, FROM THE VERIFIED CLASS-28 RECORD AND NOTHING ELSE.
+   *
+   * No flag, no environment variable, no configuration preference, no credential's presence
+   * and no default selects it. `null` — no bundle, or no SendGrid channel in the record — is
+   * its own stage-1 refusal, and every read-mode gate is still evaluated beside it.
+   */
+  const providerEvidenceMode: ProviderEvidenceMode | null =
+    bundle === null ? null : verifiedEvidenceModeFor(bundle);
+  const push = providerEvidenceMode === 'SIGNED_PROVIDER_PUSH';
+
   if (bundle !== null) {
     /*
      * CORRECTION 6 — THE RECORD IS **SELECTED BY IDENTITY**, NEVER FOUND BY SCANNING.
@@ -296,12 +321,19 @@ export function establishStage1Facts(
         integrationSignedRecordAdapter = integration.adapter;
         integrationRiskClass = integration.credentialRiskClass;
       }
-      const audit = declaration.credentials[config.auditCredentialId];
-      if (audit !== undefined) {
-        auditSignedRecordFound = true;
-        auditSignedRecordAdapter = audit.adapter;
-        auditSignedRecordProvider = audit.provider;
-        auditRiskClass = audit.credentialRiskClass;
+      /*
+       * THE AUDIT-READ CLASS-5 RECORD IS LOOKED UP UNDER `PROVIDER_READ` ONLY. Under push no
+       * SendGrid audit credential exists, so there is no record to select — and an identity
+       * supplied anyway is refused by the preflight, not resolved here.
+       */
+      if (!push && config.auditCredentialId !== null) {
+        const audit = declaration.credentials[config.auditCredentialId];
+        if (audit !== undefined) {
+          auditSignedRecordFound = true;
+          auditSignedRecordAdapter = audit.adapter;
+          auditSignedRecordProvider = audit.provider;
+          auditRiskClass = audit.credentialRiskClass;
+        }
       }
     }
 
@@ -344,7 +376,7 @@ export function establishStage1Facts(
           config,
           bundle,
           integrationLocator: environment[ENV_INTEGRATION_LOCATOR] ?? '',
-          auditLocator: environment[ENV_AUDIT_LOCATOR] ?? '',
+          auditLocator: auditLocatorFor(environment, providerEvidenceMode),
           visibilityBound,
         });
 
@@ -411,23 +443,50 @@ export function establishStage1Facts(
        */
       controlPlaneCompositionAvailable:
         options.controlPlaneCompositionAvailable ?? availability.available,
+      providerEvidenceMode,
+      auditEvidenceStoreConfigured: (environment[ENV_AUDIT_PG_URL] ?? '').length > 0,
+      /*
+       * `50 §3` property 2 — THE AUDIT PLANE RECOMPUTES. Evaluated under push only, from the
+       * audit plane's OWN trust configuration; it reads signed bytes and no credential.
+       */
+      auditPlaneEvidenceChannelAgrees:
+        push && bundle !== null ? auditPlaneAgreesOnPushChannel(environment, bundle) : null,
+      auditReadCredentialReferenceSupplied: (environment[ENV_AUDIT_LOCATOR] ?? '').length > 0,
     }),
     config,
   };
 }
 
 /**
- * ESTABLISH STAGE-2 FACTS, THROUGH TWO **SEPARATE ONE-SHOT PROCESSES**.
+ * The audit-READ locator a composition is given: the operator's under `PROVIDER_READ`, and
+ * `null` — never an empty-string placeholder — under `SIGNED_PROVIDER_PUSH` or when absent.
+ */
+function auditLocatorFor(
+  environment: Readonly<Record<string, string | undefined>>,
+  mode: ProviderEvidenceMode | null,
+): string | null {
+  if (mode === 'SIGNED_PROVIDER_PUSH') return null;
+  const locator = environment[ENV_AUDIT_LOCATOR] ?? '';
+  return locator.length > 0 ? locator : null;
+}
+
+/**
+ * ESTABLISH STAGE-2 FACTS, THROUGH **SEPARATE ONE-SHOT PROCESSES**.
  *
- * Two launches, two environments, one locator each. There is no arrangement of this function's
- * arguments that puts both locators in one process, because `runCredentialProbe` takes ONE
- * locator and `buildProbeEnvironment` has ONE slot for it.
+ * Two launches under `PROVIDER_READ`, two environments, one locator each. There is no
+ * arrangement of this function's arguments that puts both locators in one process, because
+ * `runCredentialProbe` takes ONE locator and `buildProbeEnvironment` has ONE slot for it.
+ *
+ * ONE launch under `SIGNED_PROVIDER_PUSH`: the integration credential's. No audit credential
+ * process is started, because no SendGrid audit credential exists to resolve.
  */
 export async function establishStage2Facts(
   environment: Readonly<Record<string, string | undefined>>,
   config: S1PDeploymentConfig,
   /** The launcher. `runCredentialProbe` FORKS; `§1.4`'s offline test substitutes it. */
   launch: typeof runCredentialProbe = runCredentialProbe,
+  /** The VERIFIED mode from stage 1. Anything but push launches the full read-mode pair. */
+  providerEvidenceMode: ProviderEvidenceMode | null = null,
 ): Promise<{
   readonly facts: Stage2Facts;
   readonly integration: CredentialIdentityFacts | null;
@@ -440,20 +499,32 @@ export async function establishStage2Facts(
     locator: environment[ENV_INTEGRATION_LOCATOR] ?? '',
     expectedCredentialId: config.integrationCredentialId,
   });
-  const auditReply = await launch({
-    role: 'IDENTITY',
-    plane: 'AUDIT',
-    sourceModule: AUDIT_SECRET_SOURCE_MODULE,
-    locator: environment[ENV_AUDIT_LOCATOR] ?? '',
-    expectedCredentialId: config.auditCredentialId,
-  });
+  /*
+   * THE AUDIT IDENTITY PROCESS — `PROVIDER_READ` ONLY, AND ONLY WITH A CONFIGURED IDENTITY.
+   *
+   * Under push it is not launched at all. Under read mode a missing identity was already a
+   * stage-1 refusal; were it reached anyway, no process is launched and the stage-2 gates read
+   * the absent audit facts as the refusal they are.
+   */
+  const auditReply =
+    providerEvidenceMode === 'SIGNED_PROVIDER_PUSH' || config.auditCredentialId === null
+      ? null
+      : await launch({
+          role: 'IDENTITY',
+          plane: 'AUDIT',
+          sourceModule: AUDIT_SECRET_SOURCE_MODULE,
+          locator: environment[ENV_AUDIT_LOCATOR] ?? '',
+          expectedCredentialId: config.auditCredentialId,
+        });
 
   const integration =
     integrationReply.kind === 'REPLY' && integrationReply.reply.kind === 'IDENTITY_FACTS'
       ? integrationReply.reply.facts
       : null;
   const audit =
-    auditReply.kind === 'REPLY' && auditReply.reply.kind === 'IDENTITY_FACTS'
+    auditReply !== null &&
+    auditReply.kind === 'REPLY' &&
+    auditReply.reply.kind === 'IDENTITY_FACTS'
       ? auditReply.reply.facts
       : null;
 
@@ -479,6 +550,7 @@ export async function establishStage2Facts(
       auditSourcePrincipal: audit?.sourcePrincipalIdentity ?? null,
       configuredIntegrationCredentialId: config.integrationCredentialId,
       configuredAuditCredentialId: config.auditCredentialId,
+      providerEvidenceMode,
     }),
     integration,
     audit,
@@ -517,6 +589,8 @@ async function runDuplicateControl(input: {
   readonly ports: OpenedPorts;
   readonly runtime: OpenedRuntime;
   readonly visibilityBound: VisibilityBound;
+  /** Present under `SIGNED_PROVIDER_PUSH`: the oracle is the audit store, not a reader. */
+  readonly signedPushEvidence: SignedPushEvidencePort | null;
 }): Promise<{
   readonly observedAcceptedCount: number | null;
   readonly oracleDiscriminatedDuplicate: boolean | null;
@@ -548,8 +622,28 @@ async function runDuplicateControl(input: {
    * AND NOW THE **SAME** ORACLE, unchanged, over the dedicated tag.
    *
    * `observeCorrelation` is the function every scenario row's count comes from. Running a
-   * different counter here would prove nothing about the one that judges the matrix.
+   * different counter here would prove nothing about the one that judges the matrix. Under
+   * `SIGNED_PROVIDER_PUSH` that oracle is `observePushCorrelation` over the audit store, which
+   * the scenario rows use, and no audit reader is launched.
    */
+  if (input.signedPushEvidence !== null) {
+    const window = input.ports.observationWindow();
+    const observation = await observePushCorrelation(
+      { port: input.signedPushEvidence, delay: input.ports.delay, now: input.ports.nowMs },
+      {
+        correlationTag,
+        periodStartMs: window.periodStartMs,
+        periodEndMs: window.periodEndMs,
+        maxAttempts: input.ports.observationBound.maxAttempts,
+        intervalMs: input.ports.observationBound.intervalMs,
+        maxDurationMs: input.ports.observationBound.maxDurationMs,
+        stabilisationObservations: input.ports.observationBound.stabilisationObservations,
+        visibilityBound: input.visibilityBound,
+        lastPossibleWriteAtMs: input.ports.nowMs(),
+      },
+    );
+    return duplicateControlFinding(observation.providerAcceptedCount, observation.outcome);
+  }
   const reader = await input.ports.launchAuditReader(auditDescriptorFor(input.runtime));
   try {
     const deps: ObservationDeps = {
@@ -567,25 +661,35 @@ async function runDuplicateControl(input: {
       // The last possible write is the pair that has just been sent.
       lastPossibleWriteAtMs: input.ports.nowMs(),
     });
-    const count = observation.providerAcceptedCount;
-    return {
-      observedAcceptedCount: count,
-      /*
-       * `null`, NOT `false`, WHEN THE COUNT WAS NEVER ESTABLISHED.
-       *
-       * An oracle that could not finish its window has not FAILED to discriminate; it has
-       * not been asked. Reporting `false` there would be the same conflation correction 9
-       * removed from the read path.
-       */
-      oracleDiscriminatedDuplicate: count === null ? null : count >= 2,
-      reason:
-        count === null
-          ? `the pair was sent, and the oracle did not establish a count (${observation.outcome})`
-          : `the pair was sent and the oracle reported ${String(count)} accepted message(s)`,
-    };
+    return duplicateControlFinding(observation.providerAcceptedCount, observation.outcome);
   } finally {
     await reader.close();
   }
+}
+
+function duplicateControlFinding(
+  count: number | null,
+  outcome: string,
+): {
+  readonly observedAcceptedCount: number | null;
+  readonly oracleDiscriminatedDuplicate: boolean | null;
+  readonly reason: string;
+} {
+  return {
+    observedAcceptedCount: count,
+    /*
+     * `null`, NOT `false`, WHEN THE COUNT WAS NEVER ESTABLISHED.
+     *
+     * An oracle that could not finish its window has not FAILED to discriminate; it has
+     * not been asked. Reporting `false` there would be the same conflation correction 9
+     * removed from the read path.
+     */
+    oracleDiscriminatedDuplicate: count === null ? null : count >= 2,
+    reason:
+      count === null
+        ? `the pair was sent, and the oracle did not establish a count (${outcome})`
+        : `the pair was sent and the oracle reported ${String(count)} accepted message(s)`,
+  };
 }
 
 /*
@@ -599,7 +703,24 @@ async function runDuplicateControl(input: {
  * =====================================================================================
  */
 
-function i8Conclusion(sweep: InverseSweepResult | null, block: string | null): string {
+/** Exported for the evidence-text regression test; `main` is its only production caller. */
+export function i8Conclusion(
+  sweep: InverseSweepResult | null,
+  block: string | null,
+  mode: ProviderEvidenceMode | null = null,
+): string {
+  if (sweep !== null && mode === 'SIGNED_PROVIDER_PUSH') {
+    /*
+     * PUSH: the inverse observation is the audit store's, over the receipt interval. A positive
+     * finding stands; nothing else is ever a clean period (ADR-027 decision 6). Each sentence is
+     * ONE template literal, so the statement is interpolated by construction.
+     */
+    if (sweep.outcome === 'UNACCOUNTED_PROVIDER_RECORDS') {
+      const count = String(sweep.unaccounted.length);
+      return `**VIOLATED.** ${count} authenticated accepted event(s) in the receipt interval are not accounted for by any ACOS correlation. ${sweep.statement}`;
+    }
+    return `NOT DISCHARGED. Signed push evidence carries no completeness signal, so a period in which nothing unaccounted was seen is INCOMPLETE, not clean. ${sweep.statement}`;
+  }
   if (sweep === null) {
     return (
       'NO CHANGE. No vendor-side sweep was performed and no provider read occurred' +
@@ -701,6 +822,54 @@ function i36Conclusion(
   );
 }
 
+/** Whether the VERIFIED class-28 mode stage 1 read is `SIGNED_PROVIDER_PUSH`. */
+function pushMode(stage1: Stage1Facts): boolean {
+  return stage1.providerEvidenceMode === 'SIGNED_PROVIDER_PUSH';
+}
+
+/**
+ * v1.3.8 — THE BUNDLE'S MODE-DISCRIMINATED PROVIDER-EVIDENCE SECTION.
+ *
+ * Under push every SendGrid audit-read item is the literal `NOT_APPLICABLE`. Nothing is
+ * manufactured: no audit identity, principal, send refusal, entitlement, Email Activity read
+ * or provider-read sweep is reported for a mode in which none exists.
+ */
+function providerEvidenceSectionFor(stage1: Stage1Facts): ProviderEvidenceSection {
+  switch (stage1.providerEvidenceMode) {
+    case 'SIGNED_PROVIDER_PUSH':
+      return Object.freeze({
+        mode: 'SIGNED_PROVIDER_PUSH' as const,
+        evidenceSource: 'AUDIT_STORE_AUTHENTICATED_PUSH' as const,
+        auditReadCredential: NOT_APPLICABLE,
+        auditPrincipal: NOT_APPLICABLE,
+        auditKeySendRefusal: NOT_APPLICABLE,
+        emailActivityEntitlement: NOT_APPLICABLE,
+        emailActivityRead: NOT_APPLICABLE,
+        providerReadInverseSweep: NOT_APPLICABLE,
+        inverseObservation: 'AUDIT_STORE_PUSH_INVERSE_OBSERVATION' as const,
+        completenessBasis: 'UNESTABLISHED' as const,
+        openEmpiricalObligations: SIGNED_PUSH_OPEN_EMPIRICAL_OBLIGATIONS,
+      });
+    case 'PROVIDER_READ':
+      return Object.freeze({
+        mode: 'PROVIDER_READ' as const,
+        evidenceSource: 'PROVIDER_EMAIL_ACTIVITY_READ' as const,
+        auditReadCredential: 'REQUIRED' as const,
+        emailActivityEntitlement: stage1.emailActivityEntitlementConfirmed
+          ? ('OPERATOR_CONFIRMED' as const)
+          : ('NOT_CONFIRMED' as const),
+        inverseSweep: 'PROVIDER_READ_SWEEP' as const,
+      });
+    case null:
+      return Object.freeze({
+        mode: 'UNDECLARED' as const,
+        statement:
+          'no verified class-28 record named an evidence channel for the provider, so no ' +
+          'provider-evidence requirement was selected and the preflight refused',
+      });
+  }
+}
+
 /** Where a run's evidence lands. Under `artifacts/`, beside the deployment's own bytes. */
 export const EVIDENCE_DIRECTORY = join(REPO_ROOT, 'artifacts', 's1p-validation');
 
@@ -770,7 +939,7 @@ export async function main(
   let integrationIdentity: string | null = null;
   let auditIdentity: string | null = null;
   let integrationMatched = false;
-  let auditMatched = false;
+  let auditMatched: boolean | null = pushMode(stage1) ? null : false;
 
   if (stage1Failures.length === 0 && config !== null) {
     /*
@@ -778,12 +947,18 @@ export async function main(
      * IT IS UNREACHABLE UNTIL EVERY CHEAP GATE HAS PASSED.
      */
     credentialsTouched = true;
-    const stage2 = await establishStage2Facts(environment, config, probe);
+    const stage2 = await establishStage2Facts(
+      environment,
+      config,
+      probe,
+      stage1.providerEvidenceMode,
+    );
     stage2Failures = evaluateStage2(stage2.facts);
     integrationIdentity = stage2.facts.integrationResolvedIdentity;
     auditIdentity = stage2.facts.auditResolvedIdentity;
     integrationMatched = stage2.integration?.identityMatchedExpectation ?? false;
-    auditMatched = stage2.audit?.identityMatchedExpectation ?? false;
+    // `null` under push: there is no audit record to have matched, and `false` would say there was.
+    auditMatched = pushMode(stage1) ? null : (stage2.audit?.identityMatchedExpectation ?? false);
   }
 
   /*
@@ -832,24 +1007,38 @@ export async function main(
      * declaration, or when a probe could not ask the provider. Either BLOCKS the scenario
      * matrix: `§12`, "A provider-unreachable/inconclusive probe does NOT pass."
      */
-    const measured = await orchestrateCapabilityProbes(probe, {
-      integrationSourceModule: INTEGRATION_SECRET_SOURCE_MODULE,
-      integrationLocator: environment[ENV_INTEGRATION_LOCATOR] ?? '',
-      integrationCredentialId: config.integrationCredentialId,
-      auditSourceModule: AUDIT_SECRET_SOURCE_MODULE,
-      auditLocator: environment[ENV_AUDIT_LOCATOR] ?? '',
-      auditCredentialId: config.auditCredentialId,
-      senderAddress: config.senderAddress,
-      sinkAddress: config.sinkAddress,
-      // A DEDICATED correlation, so the `36 §13` attempted write cannot contaminate a
-      // scenario's provider-side count even in the failure case where it is accepted.
-      probeCorrelationTag: mintCorrelationTag(),
-      periodStartMs: Date.now() - 60 * 60 * 1000,
-      periodEndMs: Date.now(),
-    });
-    probes = measured.probes;
-    auditKeySendRefusal = measured.auditKeySendRefusal;
-    probeBlocks = measured.blocks;
+    /*
+     * v1.3.8 — UNDER `SIGNED_PROVIDER_PUSH` NO CAPABILITY PROBE IS LAUNCHED.
+     *
+     * Two of the three are audit-credential probes and there is no audit credential; the
+     * third reads `/v3/messages` and would be confounded by the absent entitlement.
+     * `SIGNED_PUSH_OPEN_EMPIRICAL_OBLIGATIONS` states what that leaves open, in the bundle.
+     */
+    if (!pushMode(stage1)) {
+      if (config.auditCredentialId === null) {
+        // Unreachable: stage 1 refuses a read-mode run with no audit identity. Fail closed.
+        probeBlocks = Object.freeze(['PROBE_PROCESS_FAILED' as const]);
+      } else {
+        const measured = await orchestrateCapabilityProbes(probe, {
+          integrationSourceModule: INTEGRATION_SECRET_SOURCE_MODULE,
+          integrationLocator: environment[ENV_INTEGRATION_LOCATOR] ?? '',
+          integrationCredentialId: config.integrationCredentialId,
+          auditSourceModule: AUDIT_SECRET_SOURCE_MODULE,
+          auditLocator: environment[ENV_AUDIT_LOCATOR] ?? '',
+          auditCredentialId: config.auditCredentialId,
+          senderAddress: config.senderAddress,
+          sinkAddress: config.sinkAddress,
+          // A DEDICATED correlation, so the `36 §13` attempted write cannot contaminate a
+          // scenario's provider-side count even in the failure case where it is accepted.
+          probeCorrelationTag: mintCorrelationTag(),
+          periodStartMs: Date.now() - 60 * 60 * 1000,
+          periodEndMs: Date.now(),
+        });
+        probes = measured.probes;
+        auditKeySendRefusal = measured.auditKeySendRefusal;
+        probeBlocks = measured.blocks;
+      }
+    }
 
     /*
      * =============================================================================
@@ -886,10 +1075,25 @@ export async function main(
         config,
         bundle: verifiedBundle,
         integrationLocator: environment[ENV_INTEGRATION_LOCATOR] ?? '',
-        auditLocator: environment[ENV_AUDIT_LOCATOR] ?? '',
+        auditLocator: auditLocatorFor(environment, stage1.providerEvidenceMode),
         visibilityBound,
       });
       try {
+        /*
+         * THE OPENED COMPOSITION MUST AGREE WITH THE VERIFIED MODE, BEFORE ANY ROW RUNS.
+         *
+         * A push run whose composition supplied no audit-store port has no oracle, and does NOT
+         * fall back to a provider read; a read run whose composition supplied one would have its
+         * oracle chosen by a port's presence rather than by class 28. Either refuses.
+         */
+        const pushEvidence = opened.ports.signedPushEvidence ?? null;
+        if (pushMode(stage1) !== (pushEvidence !== null)) {
+          throw new Error(
+            'the opened composition evidence port disagrees with the verified class-28 mode ' +
+              `(${stage1.providerEvidenceMode ?? 'UNDECLARED'}); no scenario was run`,
+          );
+        }
+
         // 3 — THE SIX CANONICAL KILL POINTS.
         const results: readonly ScenarioResult[] = await runAllScenarios(
           opened.runtime,
@@ -911,51 +1115,63 @@ export async function main(
             .map((result) => result.row.correlationTag)
             .filter((tag): tag is string => tag.length > 0),
         );
-        const sweepReader = await opened.ports.launchAuditReader(auditDescriptorFor(opened.runtime));
-        try {
-          sweep = await runInverseSweep(
-            async (page): Promise<ActivityPage | { readonly kind: 'PROVIDER_UNAVAILABLE' }> => {
-              /*
-               * ONE PERIOD-BOUNDED READ, AND AN HONEST COMPLETENESS SIGNAL.
-               *
-               * `correlationTag: null` is the INVERSE direction — everything the account
-               * accepted in the period, not just what ACOS asked about. The audit IPC carries
-               * NO cursor, so `nextCursor` is `null` and the completeness signal is the
-               * recorded `SENDGRID_ACTIVITY_COMPLETENESS`, which is `UNESTABLISHED`.
-               *
-               * `§3.2`, and this is the whole of defect 3: a truncated result cannot be
-               * reported as a complete sweep, so `runInverseSweep` will conclude
-               * `SWEEP_INCOMPLETE` rather than `ALL_PROVIDER_RECORDS_ACCOUNTED`.
-               */
-              const outcome = await sweepReader.read({
-                operation: 'MESSAGE_ACTIVITY_SEARCH',
-                correlationTag: null,
-                periodStartMs: page.periodStartMs,
-                periodEndMs: page.periodEndMs,
-                maxRecords: page.maxRecords,
-              });
-              if (outcome.kind === 'PROVIDER_UNAVAILABLE') {
-                return { kind: 'PROVIDER_UNAVAILABLE' as const };
-              }
-              return {
-                records: outcome.records,
-                completeness: SENDGRID_ACTIVITY_COMPLETENESS,
-                nextCursor: null,
-              };
-            },
-            {
-              periodStartMs: window.periodStartMs,
-              periodEndMs: window.periodEndMs,
-              // THE DECLARED CEILINGS, for the reason the observation bound uses its own:
-              // a second set of figures here would be a second, unreviewed policy.
-              maxRecordsPerPage: LIVE_ACTIVITY_PAGE_RECORDS,
-              maxPages: MAX_SWEEP_PAGES,
-              maxTotalRecords: MAX_SWEEP_RECORDS,
-              accountedCorrelationTags: accounted,
-            },
-          );
-        } finally {
-          await sweepReader.close();
+        if (pushEvidence !== null) {
+          /*
+           * `I8` UNDER PUSH — the audit store's bounded inverse observation. No reader is
+           * launched and `/v3/messages` is not read. A quiet interval is `SWEEP_INCOMPLETE`.
+           */
+          sweep = await runPushInverseObservation(pushEvidence, {
+            periodStartMs: window.periodStartMs,
+            periodEndMs: window.periodEndMs,
+            accountedCorrelationTags: accounted,
+          });
+        } else {
+          const sweepReader = await opened.ports.launchAuditReader(auditDescriptorFor(opened.runtime));
+          try {
+            sweep = await runInverseSweep(
+              async (page): Promise<ActivityPage | { readonly kind: 'PROVIDER_UNAVAILABLE' }> => {
+                /*
+                 * ONE PERIOD-BOUNDED READ, AND AN HONEST COMPLETENESS SIGNAL.
+                 *
+                 * `correlationTag: null` is the INVERSE direction — everything the account
+                 * accepted in the period, not just what ACOS asked about. The audit IPC carries
+                 * NO cursor, so `nextCursor` is `null` and the completeness signal is the
+                 * recorded `SENDGRID_ACTIVITY_COMPLETENESS`, which is `UNESTABLISHED`.
+                 *
+                 * `§3.2`, and this is the whole of defect 3: a truncated result cannot be
+                 * reported as a complete sweep, so `runInverseSweep` will conclude
+                 * `SWEEP_INCOMPLETE` rather than `ALL_PROVIDER_RECORDS_ACCOUNTED`.
+                 */
+                const outcome = await sweepReader.read({
+                  operation: 'MESSAGE_ACTIVITY_SEARCH',
+                  correlationTag: null,
+                  periodStartMs: page.periodStartMs,
+                  periodEndMs: page.periodEndMs,
+                  maxRecords: page.maxRecords,
+                });
+                if (outcome.kind === 'PROVIDER_UNAVAILABLE') {
+                  return { kind: 'PROVIDER_UNAVAILABLE' as const };
+                }
+                return {
+                  records: outcome.records,
+                  completeness: SENDGRID_ACTIVITY_COMPLETENESS,
+                  nextCursor: null,
+                };
+              },
+              {
+                periodStartMs: window.periodStartMs,
+                periodEndMs: window.periodEndMs,
+                // THE DECLARED CEILINGS, for the reason the observation bound uses its own:
+                // a second set of figures here would be a second, unreviewed policy.
+                maxRecordsPerPage: LIVE_ACTIVITY_PAGE_RECORDS,
+                maxPages: MAX_SWEEP_PAGES,
+                maxTotalRecords: MAX_SWEEP_RECORDS,
+                accountedCorrelationTags: accounted,
+              },
+            );
+          } finally {
+            await sweepReader.close();
+          }
         }
 
         // 6 — `§11`'s DUPLICATE NEGATIVE CONTROL, behind its OWN acknowledgement.
@@ -966,7 +1182,9 @@ export async function main(
             environment,
             ports: opened.ports,
             runtime: opened.runtime,
-            visibilityBound,
+            // The composition's own bound: under push it is the UNESTABLISHED push bound.
+            visibilityBound: opened.ports.visibilityBound,
+            signedPushEvidence: pushEvidence,
           });
         }
       } finally {
@@ -987,15 +1205,17 @@ export async function main(
   const failures = [...stage1Failures, ...stage2Failures];
 
   const bundle: EvidenceBundle = {
-    schema: 'acos.s1p.sendgrid-validation-evidence.v1',
+    schema: 'acos.s1p.sendgrid-validation-evidence.v2',
     operatingSpine: 'Operating Spine v1.3',
-    packageIssue: 'v1.3.7',
+    packageIssue: 'v1.3.8',
     gitCommit: gitCommit(),
     validationRunId: runId,
     startedAtUtc: startedAt,
     finishedAtUtc: new Date().toISOString(),
     environmentLabel: stage1.environmentLabel,
     providerId: stage1.providerId,
+    providerEvidenceMode: stage1.providerEvidenceMode,
+    providerEvidence: providerEvidenceSectionFor(stage1),
     integrationCredentialIdentity: integrationIdentity,
     auditCredentialIdentity: auditIdentity,
     integrationIdentityMatchedSignedRecord: integrationMatched,
@@ -1052,7 +1272,7 @@ export async function main(
      * measuring run would have to overwrite.
      */
     invariantConclusions: Object.freeze({
-      i8: i8Conclusion(sweep, scenarioBlock),
+      i8: i8Conclusion(sweep, scenarioBlock, stage1.providerEvidenceMode),
       i20: i20Conclusion(i20, scenarioBlock),
       i36: i36Conclusion(killPoints, duplicateControlRun, visibilityBound, scenarioBlock),
     }),
@@ -1110,6 +1330,9 @@ export async function main(
     `provider operations performed by this run: ${String(providerOperationCount)}\n`,
   );
   process.stdout.write(`observation mode: ${observationModeLabel(visibilityBound)}\n`);
+  process.stdout.write(
+    `provider evidence mode: ${stage1.providerEvidenceMode ?? 'UNDECLARED (refused)'}\n`,
+  );
 
   if (failures.length === 0) {
     /*
@@ -1136,7 +1359,7 @@ export async function main(
     }
     const failedRows = killPoints.filter((row) => row.verdict === 'FAIL').length;
     const unresolvedRows = killPoints.filter((row) => row.verdict === 'UNRESOLVED').length;
-    process.stdout.write(`I8:  ${i8Conclusion(sweep, scenarioBlock)}\n`);
+    process.stdout.write(`I8:  ${i8Conclusion(sweep, scenarioBlock, stage1.providerEvidenceMode)}\n`);
     process.stdout.write(`I20: ${i20Conclusion(i20, scenarioBlock)}\n`);
     process.stdout.write(
       `I36: ${i36Conclusion(killPoints, duplicateControlRun, visibilityBound, scenarioBlock)}\n`,

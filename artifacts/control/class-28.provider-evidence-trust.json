@@ -1,0 +1,11 @@
+{
+  "artifact_id": "acos.control.provider_evidence_trust",
+  "artifact_version": "acos.provider_evidence_trust.2026-10-03",
+  "channels": [
+    {
+      "provider": "synthetic_esp",
+      "evidence_mode": "PROVIDER_READ",
+      "accepted_count_operand": "provider_message_id"
+    }
+  ]
+}

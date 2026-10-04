@@ -200,3 +200,31 @@ export async function orchestrateCapabilityProbes(
     blocks: Object.freeze([...new Set(blocks)]),
   });
 }
+
+/**
+ * v1.3.8 — UNDER `SIGNED_PROVIDER_PUSH`, NONE OF THE THREE PROBES ABOVE IS LAUNCHED.
+ *
+ *   probe 2  the audit Email Activity read — NOT APPLICABLE: no SendGrid audit credential
+ *            exists under push (ADR-027 decision 3), and Email Activity is not the oracle.
+ *   probe 3  the audit-key attempted send — NOT APPLICABLE, for the same reason: there is no
+ *            audit key whose read-only exemption `36 §13` would have to earn.
+ *   probe 4  the integration-key Email Activity read — NOT RUN. Under push the paid Email
+ *            Activity entitlement is not required, so a provider refusal could not distinguish
+ *            "this key is `mail.send`-only" from "this account has no entitlement", and the
+ *            probe would call `/v3/messages`, which push mode does not touch.
+ *
+ * Probe 1, the integration key's permitted send, is the scenario driver's kill point 1, as in
+ * read mode. What the skipped probe 4 would have partly covered — whether the integration
+ * key's provider-side permissions have drifted beyond `mail.send` — is therefore an OPEN
+ * EMPIRICAL OBLIGATION, stated in the evidence bundle. It is not discharged by buying the
+ * entitlement, by adding a broad management credential, or by any call in this slice.
+ */
+export const SIGNED_PUSH_OPEN_EMPIRICAL_OBLIGATIONS: readonly string[] = Object.freeze([
+  'PROVIDER_PERMISSION_DRIFT: the integration credential\'s provider-side permissions are not ' +
+    'observed beyond mail.send under SIGNED_PROVIDER_PUSH. The read-direction capability probe ' +
+    'is not run (it would be confounded by the absent Email Activity entitlement and would ' +
+    'touch /v3/messages), and no management credential is provisioned to read the scopes.',
+  'PUSH_DELIVERY_COMPLETENESS: no empirical characterisation of the provider event stream\'s ' +
+    'completeness exists, so no absence-based conclusion (I36 PASS, I8 clean, exact I20 ' +
+    'numerator) is available on push evidence.',
+]);

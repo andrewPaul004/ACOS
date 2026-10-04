@@ -257,6 +257,21 @@ describe('no audit-plane module can read the control database', () => {
   it('and the audit plane holds no vendor credential and makes no outbound call — I8 is OPEN', async () => {
     // `37` S3 provisions the audit plane's own read-only vendor credentials. `37` S1 says
     // `I8` "proves nothing" until then. Asserted as an absence.
+    //
+    // v1.3.8 (`48 §8` row I1, ADR-027) DECLARES ONE INBOUND AUDIT-PLANE LISTENER — the
+    // provider-evidence ingress — and this test admits EXACTLY that and nothing wider:
+    //
+    //   `node:http`  only in `providerEvidence/ingressMain.ts`, only as a NAMED import carrying
+    //                no outbound member (`request`, `get`, `Agent`, `globalAgent`), and only in a
+    //                module that declares `PERIMETER_INGRESS(provider_evidence, class_28)`;
+    //   `https://`   only in `providerEvidence/ingressIdentity.ts`, where it is the scheme
+    //                prefix of the signed `ingress_identity` grammar — a string compared against,
+    //                never dialled — and only in a module with no network import at all.
+    //
+    // `fetch(` and `axios` remain forbidden EVERYWHERE under `src/audit/`, the ingress included:
+    // the audit plane still makes no outbound call, and `I8` is still not discharged.
+    const INGRESS_MODULE = join('src', 'audit', 'providerEvidence', 'ingressMain.ts');
+    const GRAMMAR_MODULE = join('src', 'audit', 'providerEvidence', 'ingressIdentity.ts');
     const offenders: string[] = [];
     const walk = async (dir: string): Promise<void> => {
       for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -266,8 +281,27 @@ describe('no audit-plane module can read the control database', () => {
           continue;
         }
         const source = await readFile(path, 'utf8');
+        const relativePath = path.slice(process.cwd().length + 1);
         for (const forbidden of ['https://', 'fetch(', 'axios', 'node:http']) {
-          if (source.includes(forbidden)) offenders.push(`${path}: ${forbidden}`);
+          if (!source.includes(forbidden)) continue;
+          if (forbidden === 'node:http' && relativePath === INGRESS_MODULE) {
+            const imports = [...source.matchAll(/from\s+'(node:https?)'/g)].map((m) => m[1]);
+            const named = /import\s+\{([^}]*)\}\s+from\s+'node:http'/.exec(source);
+            const members = (named?.[1] ?? '')
+              .split(',')
+              .map((member) => member.replace(/\btype\b/, '').trim());
+            const inboundOnly =
+              imports.length === 1 &&
+              imports[0] === 'node:http' &&
+              named !== null &&
+              !members.some((member) => ['request', 'get', 'Agent', 'globalAgent'].includes(member)) &&
+              source.includes('PERIMETER_INGRESS(provider_evidence, class_28)');
+            if (inboundOnly) continue;
+          }
+          if (forbidden === 'https://' && relativePath === GRAMMAR_MODULE) {
+            if (!/from\s+'node:(https?|net|tls)'/.test(source)) continue;
+          }
+          offenders.push(`${path}: ${forbidden}`);
         }
       }
     };

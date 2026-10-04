@@ -152,6 +152,12 @@ describe('`§10` — THE CONTROL PLANE IS CREDENTIAL-BLIND, BY SCAN', () => {
     expect(readers).toEqual(
       [
         join('src', 'audit', 'controlArtifacts', 'auditPlaneVerifier.ts'),
+        // v1.3.8, `48 §8` row I1: the provider-evidence ingress is its OWN process, and its entry
+        // point reads its own launch environment — the audit plane's trust roots and pin, the
+        // audit store URL, the channel selector, the non-authoritative launch echo and its listen
+        // address. Not one of them is a vendor credential: the trust root is a PUBLIC key in a
+        // signed class-28 record, and the ingress holds no SendGrid or Azure secret.
+        join('src', 'audit', 'providerEvidence', 'ingressMain.ts'),
         join('src', 'db', 'pool.ts'),
         join('src', 'kernel', 'controlArtifacts', 'trustConfig.ts'),
       ].sort(),
@@ -332,7 +338,45 @@ describe('`§4`, `§47` — NO REAL PROVIDER, AND NO POSTMARK VARIABLE IS CONSUM
   it('neither `src/` nor the synthetic integration plane names a real provider', async () => {
     const files = [...(await filesUnder('src')), ...(await filesUnder('tests', 'integration-plane'))];
     const offenders: string[] = [];
-    for (const { path, code } of files) {
+    /*
+     * v1.3.8 — THE ONE VENDOR-NAMED THING `src/` NOW CARRIES, AND EXACTLY WHERE.
+     *
+     * `50 §2h` field 5 is a CLOSED profile identifier whose only defined value is
+     * `SENDGRID_EVENT_WEBHOOK_V1`, and `48 §8` row I1 places the provider-evidence ingress that
+     * verifies it in the AUDIT plane. So the class-28 parsers of both planes and the audit-plane
+     * ingress necessarily name the PROFILE, and the profile names the provider's two signature
+     * HEADERS. None of that is an adapter, a client, a credential or a transport to the
+     * provider: the ingress is inbound-only and holds no send or read capability (`48 §8`,
+     * computed by the packaging manifest).
+     *
+     * The carve-out is TOKEN-EXACT and FILE-EXACT: the profile identifier, the profile module's
+     * own name, the two header literals, the ingress grammar's `https://` scheme prefix and the
+     * ingress listener's inbound `node:http` import — each only in the named files. Every other
+     * match, including `api.sendgrid.com` or any SendGrid client anywhere, is still an offender.
+     */
+    const PROFILE_FILES = new Set(
+      [
+        ['src', 'audit', 'providerEvidence', 'class28.ts'],
+        ['src', 'audit', 'providerEvidence', 'receiver.ts'],
+        ['src', 'audit', 'providerEvidence', 'sendgridEventWebhookV1.ts'],
+        ['src', 'kernel', 'controlArtifacts', 'bundle.ts'],
+        ['src', 'kernel', 'controlArtifacts', 'providerEvidenceTrust.ts'],
+      ].map((parts) => join(...parts)),
+    );
+    const PERMITTED_IN: Readonly<Record<string, RegExp>> = {
+      [join('src', 'audit', 'providerEvidence', 'sendgridEventWebhookV1.ts')]:
+        /'x-twilio-email-event-webhook-(?:signature|timestamp)'/g,
+      [join('src', 'audit', 'providerEvidence', 'ingressIdentity.ts')]: /const SCHEME_PREFIX = 'https:\/\/';/g,
+      [join('src', 'audit', 'providerEvidence', 'ingressMain.ts')]:
+        /import \{ createServer, type IncomingMessage, type Server \} from 'node:http';/g,
+    };
+    const PROFILE_TOKENS = /SENDGRID_EVENT_WEBHOOK_V1|sendgridEventWebhookV1|SendGridEventWebhookV1/g;
+    for (const { path, code: rawCode } of files) {
+      let code = rawCode;
+      const relativePath = rel(path);
+      if (PROFILE_FILES.has(relativePath)) code = code.replace(PROFILE_TOKENS, '<PROFILE>');
+      const permitted = PERMITTED_IN[relativePath];
+      if (permitted !== undefined) code = code.replace(permitted, '<PERMITTED>');
       for (const pattern of [
         /postmark/i,
         /sendgrid/i,

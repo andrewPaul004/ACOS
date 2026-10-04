@@ -27,6 +27,7 @@ import * as outcomeModule from '../../../src/kernel/gateway/outcomeTransaction.j
 import * as leaseModule from '../../../src/kernel/gateway/dispatchLease.js';
 import * as revalidationModule from '../../../src/kernel/gateway/dispatchRevalidation.js';
 import { EMPTY_ADAPTER_REGISTRY } from '../../../src/kernel/gateway/adapterRegistry.js';
+import { withoutProviderEvidenceSurface } from '../../support/providerEvidenceSurface.js';
 
 /**
  * `§7`, `§9`, `§29`, `§31`, `§34`, `§39` — WHERE S1J STOPS, HELD AS ASSERTIONS.
@@ -164,7 +165,11 @@ describe('`§39` — NO NETWORK, NO VENDOR, NO CREDENTIAL, SCOPED TO THE DISPATC
     // over the tree S1J grew. A new directory must not be where a vendor client appears.
     const files = await sourceOf();
     const offenders: string[] = [];
-    for (const { path, code } of files) {
+    for (const { path, code: raw } of files) {
+      // v1.3.8 — the declared provider-evidence surface's exact tokens are removed first, and
+      // only from its declared files (`tests/support/providerEvidenceSurface.ts`). Every pattern
+      // below still applies to every file, those included.
+      const code = withoutProviderEvidenceSurface(path, raw);
       for (const pattern of [
         /from\s+['"]axios['"]/,
         /from\s+['"]node-fetch['"]/,
@@ -774,8 +779,11 @@ describe('`§29`, `§31` — NO PROVIDER, NO RECONCILIATION, NOTHING FAKED', () 
      */
     const files = await sourceOf();
     const offenders: string[] = [];
-    for (const { path, code } of files) {
-      const withoutTagName = code
+    for (const { path, code: raw } of files) {
+      // v1.3.8 — the declared provider-evidence surface's exact tokens are removed first, and
+      // only from its declared files (`tests/support/providerEvidenceSurface.ts`). Every pattern
+      // below still applies to every file, those included.
+      const withoutTagName = withoutProviderEvidenceSurface(path, raw)
         .replace(/DISPATCHED_UNMIRRORED/g, '')
         // `PRESUMED_EXECUTED` IS NO LONGER A PROVIDER-EVIDENCE LITERAL, and removing it from
         // this sweep is a consequence of MIE-01 rather than a relaxation.

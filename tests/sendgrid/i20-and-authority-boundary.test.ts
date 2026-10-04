@@ -39,12 +39,23 @@ import { OWNER_SINK_MARKER } from '../../validation/sendgrid/integration/validat
 const SINK = `owner+${OWNER_SINK_MARKER}@example.test`;
 const SENDER = 'validation@nonprod.example.test';
 
+/**
+ * An operand with `providerAcceptedCount` DISTINCT message identities of its own (named after the
+ * scenario, so no two scenarios share one), or none when unmeasured.
+ */
 function operand(
   label: string,
   providerAcceptedCount: number | null,
   units: bigint,
 ): I20ScenarioOperand {
-  return { scenarioLabel: label, providerAcceptedCount, historicalReservationUnits: units };
+  return providerAcceptedCount === null
+    ? { scenarioLabel: label, providerAcceptedCount: null, observedProviderMessageIds: null, historicalReservationUnits: units }
+    : {
+        scenarioLabel: label,
+        providerAcceptedCount,
+        observedProviderMessageIds: Array.from({ length: providerAcceptedCount }, (_, i) => `${label}.msg-${String(i)}`),
+        historicalReservationUnits: units,
+      };
 }
 
 describe('`§14` — `I20` COMPARES THE PROVIDER AGAINST THE IMMUTABLE RESERVATION BASIS', () => {
@@ -114,6 +125,173 @@ describe('`§14` — `I20` COMPARES THE PROVIDER AGAINST THE IMMUTABLE RESERVATI
     expect(source).toContain('reservation_window_instance');
     expect(source).not.toMatch(/\bSELECT\b/);
     expect(source).not.toContain('fetch(');
+  });
+});
+
+describe('v1.3.8 — AN OBSERVED PUSH COUNT IS A LOWER BOUND, NEVER THE EXACT NUMERATOR', () => {
+  /** A live push operand: no exact count (completeness UNESTABLISHED), the identities observed. */
+  const live = (label: string, ids: readonly string[], units = 1n): I20ScenarioOperand => ({
+    scenarioLabel: label,
+    providerAcceptedCount: null,
+    observedProviderMessageIds: ids,
+    historicalReservationUnits: units,
+  });
+  /** An exact (absence-settled, fixture) operand: the count travels with the identities it counts. */
+  const exact = (label: string, ids: readonly string[], units = 1n): I20ScenarioOperand => ({
+    scenarioLabel: label,
+    providerAcceptedCount: ids.length,
+    observedProviderMessageIds: ids,
+    historicalReservationUnits: units,
+  });
+  const pointSix: I20ScenarioOperand = {
+    scenarioLabel: 'kill-point-6',
+    providerAcceptedCount: 0,
+    observedProviderMessageIds: [],
+    historicalReservationUnits: 0n,
+  };
+  /** The live push matrix: one distinct id per observed message, point 2 none, point 6 derived. */
+  const liveMatrix = (observed: readonly [number, number, number, number, number]) => [
+    ...observed.map((count, index) =>
+      live(
+        `kill-point-${String(index + 1)}`,
+        Array.from({ length: count }, (_, i) => `p${String(index + 1)}.msg-${String(i)}`),
+      ),
+    ),
+    pointSix,
+  ];
+
+  it('live push with 4 observed messages is UNRESOLVED, not WITHIN_BASIS', () => {
+    const comparison = compareI20(liveMatrix([1, 0, 1, 1, 1]));
+    expect(comparison.verdict).toBe('UNRESOLVED');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(4);
+    expect(comparison.historicalReservationBasisUnits).toBe(5n);
+    expect(comparison.statement).toContain('LOWER BOUND');
+  });
+
+  it('live push with 0 observed messages is UNRESOLVED — silence is not a zero', () => {
+    const comparison = compareI20(liveMatrix([0, 0, 0, 0, 0]));
+    expect(comparison.verdict).toBe('UNRESOLVED');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(0);
+  });
+
+  it('a scenario with NO trustworthy identity set carries no lower bound and is UNRESOLVED', () => {
+    const unread: I20ScenarioOperand = {
+      scenarioLabel: 'unread',
+      providerAcceptedCount: null,
+      observedProviderMessageIds: null,
+      historicalReservationUnits: 1n,
+    };
+    const comparison = compareI20([live('kill-point-1', ['M1']), unread]);
+    expect(comparison.verdict).toBe('UNRESOLVED');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBeNull();
+  });
+
+  it('an OBSERVED excess of DISTINCT identities over the basis is EXCEEDS_BASIS, numerator still null', () => {
+    const comparison = compareI20(liveMatrix([2, 1, 1, 1, 1]));
+    expect(comparison.verdict).toBe('EXCEEDS_BASIS');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(6);
+  });
+
+  it('a lower bound EQUAL to the basis proves nothing', () => {
+    expect(compareI20(liveMatrix([1, 1, 1, 1, 1])).verdict).toBe('UNRESOLVED');
+  });
+
+  it('the FIXTURE arithmetic is unchanged for distinct identities', () => {
+    const comparison = compareI20([exact('kill-point-1', ['M1']), exact('kill-point-2', []), pointSix]);
+    expect(comparison.verdict).toBe('WITHIN_BASIS');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBe(1);
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(1);
+  });
+});
+
+describe('FINAL CORRECTION — I20 IS THE GLOBAL UNION OF PROVIDER MESSAGE IDENTITIES, NEVER A SUM', () => {
+  const live = (label: string, ids: readonly string[]): I20ScenarioOperand => ({
+    scenarioLabel: label,
+    providerAcceptedCount: null,
+    observedProviderMessageIds: ids,
+    historicalReservationUnits: 0n,
+  });
+  const exact = (label: string, ids: readonly string[]): I20ScenarioOperand => ({
+    scenarioLabel: label,
+    providerAcceptedCount: ids.length,
+    observedProviderMessageIds: ids,
+    historicalReservationUnits: 0n,
+  });
+  /** The basis: ONE reserved unit for the whole set, carried by a scenario that observed nothing. */
+  const oneUnit: I20ScenarioOperand = {
+    scenarioLabel: 'basis',
+    providerAcceptedCount: 0,
+    observedProviderMessageIds: [],
+    historicalReservationUnits: 1n,
+  };
+
+  it('A — the SAME message under two correlations counts ONCE: no excess, and UNRESOLVED under live push', () => {
+    const comparison = compareI20([live('A', ['M1']), live('B', ['M1']), oneUnit]);
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(1);
+    expect(comparison.verdict).not.toBe('EXCEEDS_BASIS');
+    expect(comparison.verdict).toBe('UNRESOLVED');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+  });
+
+  it('B — two DISTINCT messages against a basis of one is EXCEEDS_BASIS without completeness', () => {
+    const comparison = compareI20([live('A', ['M1']), live('B', ['M2']), oneUnit]);
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBe(2);
+    expect(comparison.verdict).toBe('EXCEEDS_BASIS');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+  });
+
+  it('C — EXACT fixture operands sharing one identity: the numerator is 1, not 2', () => {
+    const comparison = compareI20([exact('A', ['M1']), exact('B', ['M1']), oneUnit]);
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBe(1);
+    expect(comparison.verdict).toBe('WITHIN_BASIS');
+  });
+
+  it('D — EXACT fixture operands with distinct identities: the numerator is 2', () => {
+    const comparison = compareI20([exact('A', ['M1']), exact('B', ['M2']), oneUnit]);
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBe(2);
+    expect(comparison.verdict).toBe('EXCEEDS_BASIS');
+  });
+
+  it('E — a count that disagrees with its identity set is UNRESOLVED; neither figure is chosen', () => {
+    const disagreeing: I20ScenarioOperand = {
+      scenarioLabel: 'disagreeing',
+      providerAcceptedCount: 2,
+      observedProviderMessageIds: ['M1'],
+      historicalReservationUnits: 1n,
+    };
+    const comparison = compareI20([disagreeing]);
+    expect(comparison.verdict).toBe('UNRESOLVED');
+    expect(comparison.providerAcceptedIrrecoverableEffects).toBeNull();
+    expect(comparison.observedDistinctAcceptedMessagesLowerBound).toBeNull();
+    expect([...comparison.inconsistentScenarios]).toEqual(['disagreeing']);
+    // A count WITHOUT identities is refused the same way. The type forbids it; a cast cannot
+    // smuggle it past the runtime check.
+    const countOnly = {
+      scenarioLabel: 'count-only',
+      providerAcceptedCount: 1,
+      observedProviderMessageIds: null,
+      historicalReservationUnits: 1n,
+    } as unknown as I20ScenarioOperand;
+    expect(compareI20([countOnly]).verdict).toBe('UNRESOLVED');
+    expect([...compareI20([countOnly]).inconsistentScenarios]).toEqual(['count-only']);
+    // And a duplicated id inside one set is a set of one, so `count 2` against it disagrees too.
+    const duplicated: I20ScenarioOperand = {
+      scenarioLabel: 'duplicated',
+      providerAcceptedCount: 2,
+      observedProviderMessageIds: ['M1', 'M1'],
+      historicalReservationUnits: 1n,
+    };
+    expect(compareI20([duplicated]).verdict).toBe('UNRESOLVED');
+  });
+
+  it('the module no longer sums per-scenario counts anywhere', () => {
+    const source = readFileSync(join('validation', 'sendgrid', 'harness', 'i20.ts'), 'utf8');
+    expect(source).not.toMatch(/total \+ \(?operand\.providerAcceptedCount/);
+    expect(source).not.toContain('observedDistinctAcceptedMessages ??');
   });
 });
 

@@ -133,15 +133,23 @@ describe('`§9` — THE SIX POINTS ARE THE EXISTING SIX, BY THEIR EXISTING NAMES
 
 describe('`§16` — THE EVIDENCE BUNDLE CANNOT CARRY A SECRET', () => {
   const bundle: EvidenceBundle = {
-    schema: 'acos.s1p.sendgrid-validation-evidence.v1',
+    schema: 'acos.s1p.sendgrid-validation-evidence.v2',
     operatingSpine: 'Operating Spine v1.3',
-    packageIssue: 'v1.3.7',
+    packageIssue: 'v1.3.8',
     gitCommit: 'd897833b14253030f75fe113534df34a9827d464',
     validationRunId: 's1p-test',
     startedAtUtc: '2026-09-27T00:00:00.000Z',
     finishedAtUtc: '2026-09-27T00:00:01.000Z',
     environmentLabel: 'acos-nonprod',
     providerId: 'twilio_sendgrid',
+    providerEvidenceMode: 'PROVIDER_READ',
+    providerEvidence: {
+      mode: 'PROVIDER_READ',
+      evidenceSource: 'PROVIDER_EMAIL_ACTIVITY_READ',
+      auditReadCredential: 'REQUIRED',
+      emailActivityEntitlement: 'OPERATOR_CONFIRMED',
+      inverseSweep: 'PROVIDER_READ_SWEEP',
+    },
     integrationCredentialIdentity: 'sg-key-id-integration',
     auditCredentialIdentity: 'sg-key-id-audit',
     integrationIdentityMatchedSignedRecord: true,
@@ -184,7 +192,7 @@ describe('`§16` — THE EVIDENCE BUNDLE CANNOT CARRY A SECRET', () => {
   it('a clean bundle renders, and its digest is stable', () => {
     const rendered = renderEvidenceBundle(bundle);
     expect(bundleDigest(rendered)).toBe(bundleDigest(renderEvidenceBundle(bundle)));
-    expect(rendered).toContain('acos.s1p.sendgrid-validation-evidence.v1');
+    expect(rendered).toContain('acos.s1p.sendgrid-validation-evidence.v2');
   });
 
   it('rendering THROWS rather than redacting when a secret shape reaches it', () => {

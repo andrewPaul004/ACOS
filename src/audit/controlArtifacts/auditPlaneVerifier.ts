@@ -2,6 +2,11 @@ import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import {
+  parseProviderEvidenceTrust,
+  type ProviderEvidenceTrust,
+} from '../providerEvidence/class28.js';
+
 /**
  * THE AUDIT PLANE'S OWN CONTROL-ARTIFACT VERIFICATION — `50 §3` property 2.
  *
@@ -23,9 +28,10 @@ import { join } from 'node:path';
  *
  *   * imports NOTHING from `src/kernel/` — not the framing, not the verifier, not the
  *     parsers, not the bundle, not the trust-configuration reader. `node:crypto`, `node:fs`
- *     and `node:path` are its whole import list, and `30 §5.2`'s cross-implementation rule
- *     permits a shared standard cryptographic primitive while forbidding a shared authority
- *     computation;
+ *     and `node:path` are its whole platform import list, and `30 §5.2`'s cross-implementation
+ *     rule permits a shared standard cryptographic primitive while forbidding a shared authority
+ *     computation. The one first-party import is this plane's OWN class-28 parser
+ *     (`../providerEvidence/class28.ts`, v1.3.8), which is itself audit-plane code;
  *   * reads ITS OWN copy of the artifact bytes, from a directory named by ITS OWN
  *     deployment variables;
  *   * re-derives `50 §3b`'s framing and `50 §3d`'s core from the specification, in its own
@@ -110,6 +116,15 @@ const AUDIT_REQUIRED_ARTIFACTS: readonly {
     artifactId: 'acos.control.degraded_mode_config',
     fileName: 'class-27.degraded-mode-config.json',
   },
+  {
+    // v1.3.8, `50 §2h` (`S1P-W1` — `S1P-W5`). The provider-evidence trust record. THIS plane
+    // is its consumer: the provider-evidence ingress verifies every inbound signed payload
+    // against a class-28 `verification_key`, so the audit plane verifies the record itself
+    // and parses it with its own closed-union parser.
+    artifactClass: 28,
+    artifactId: 'acos.control.provider_evidence_trust',
+    fileName: 'class-28.provider-evidence-trust.json',
+  },
 ]);
 
 /** `50 §2d`: retired, reserved, deprecated, never a manifest member. */
@@ -159,6 +174,18 @@ export type AuditVerificationOutcome =
        * re-reads the subset the AUDIT plane acts on, from bytes this plane verified.
        */
       readonly auditReadCredentials: Readonly<Record<string, AuditVerifiedCredentialScope>>;
+      /**
+       * `50 §2h`, v1.3.8 — the audit plane's OWN parse of class 28: the closed discriminated
+       * union, every push record's key parsed under the one canonical representation, its
+       * `key_identity` RECOMPUTED, its ingress identity recognised under the grammar.
+       *
+       * A record that fails any of those never reaches this field — the whole verification
+       * refuses, because a class-28 record the audit plane cannot trust is the one condition
+       * under which an attacker's evidence and the provider's are indistinguishable.
+       */
+      readonly providerEvidenceTrust: ProviderEvidenceTrust;
+      /** The class-28 content hash this plane computed. The evidence channel's artifact identity. */
+      readonly providerEvidenceTrustDigest: string;
     }
   | { readonly verified: false; readonly reason: string; readonly detail: string };
 
@@ -448,6 +475,7 @@ export function verifyAuditPlaneControlArtifacts(
   let corroborationSignalMaxAgeMs: number | null = null;
   const auditReadCredentials: Record<string, AuditVerifiedCredentialScope> = {};
   let auditSigningKeyId: string | null = null;
+  let providerEvidenceTrust: ProviderEvidenceTrust | null = null;
 
   for (const required of AUDIT_REQUIRED_ARTIFACTS) {
     const entry = byClass.get(required.artifactClass);
@@ -601,9 +629,30 @@ export function verifyAuditPlaneControlArtifacts(
       }
       auditSigningKeyId = digest(publicKey).toString('hex');
     }
+
+    if (required.artifactClass === 28) {
+      const parsed = parseProviderEvidenceTrust(bytes);
+      if (!parsed.ok) {
+        return refuse(
+          'AUDIT_ARTIFACT_CONTENT_INVALID',
+          `the audit plane refuses its class-28 copy: ${parsed.refusal}`,
+        );
+      }
+      if (parsed.trust.artifactVersion !== entry.artifactVersion) {
+        return refuse(
+          'AUDIT_ARTIFACT_IDENTITY_UNEXPECTED',
+          'class 28 declares an artifact_version the signed manifest entry does not',
+        );
+      }
+      providerEvidenceTrust = parsed.trust;
+    }
   }
 
-  if (corroborationSignalMaxAgeMs === null || auditSigningKeyId === null) {
+  if (
+    corroborationSignalMaxAgeMs === null ||
+    auditSigningKeyId === null ||
+    providerEvidenceTrust === null
+  ) {
     return refuse('AUDIT_REQUIRED_ARTIFACT_MISSING', 'the audit plane set is incomplete');
   }
 
@@ -616,5 +665,7 @@ export function verifyAuditPlaneControlArtifacts(
     jcs1SpecificationContentHash: artifactDigests[20]!,
     auditSigningKeyId,
     auditReadCredentials: Object.freeze(auditReadCredentials),
+    providerEvidenceTrust,
+    providerEvidenceTrustDigest: artifactDigests[28]!,
   };
 }

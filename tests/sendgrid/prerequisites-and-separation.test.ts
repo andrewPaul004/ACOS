@@ -14,6 +14,7 @@ import { verifiedCredentialScopes } from '../../src/kernel/controlArtifacts/bund
 import { computeClosure } from '../../tools/integration-packaging/packagingManifest.js';
 import { SENDGRID_ADAPTER_ID } from '../../validation/sendgrid/harness/preflight.js';
 import { SENDGRID_PROVIDER_ID } from '../../validation/sendgrid/harness/preflight.js';
+import { withoutProviderEvidenceSurface } from '../support/providerEvidenceSurface.js';
 
 /**
  * `§8`, `§14`, `§19` — THE PREREQUISITES THAT ARE NOT REPOSITORY WORK, AND THE PLANE
@@ -148,7 +149,12 @@ describe('`§14` — THE CLASS-3 RECORD NOW EXISTS; THE CLASS-5 RECORDS STILL DO
      * re-asserted here, over `validation/`'s vendor name rather than S1M's, so a reviewer
      * reading THIS slice's tests sees the answer to `48 §7` question 4 without leaving it.
      */
-    const offenders = SRC_FILES.filter((path) => /sendgrid/i.test(readFileSync(path, 'utf8')));
+    // v1.3.8 — the declared provider-evidence surface's exact tokens are removed first, and only
+    // from its declared files (`tests/support/providerEvidenceSurface.ts`). Any other vendor
+    // mention anywhere in `src/` is still an offender.
+    const offenders = SRC_FILES.filter((path) =>
+      /sendgrid/i.test(withoutProviderEvidenceSurface(path, readFileSync(path, 'utf8'))),
+    );
     expect(offenders, `a vendor surface in src/:\n  ${offenders.join('\n  ')}`).toEqual([]);
 
     for (const path of SRC_FILES) {

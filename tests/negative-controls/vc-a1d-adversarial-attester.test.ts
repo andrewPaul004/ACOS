@@ -286,6 +286,15 @@ describe('VC-A1d — the residual is recorded where it is owned', () => {
       // records that a row the control plane SENT could not be stored; it says nothing
       // whatever about a row the control plane WITHHELD, which is the attack this suite
       // builds.
+      //
+      // v1.3.8 (`A0009`, ADR-027) adds the THREE `provider_evidence_*` tables: authenticated
+      // provider-push evidence, written only by the provider-evidence ingress after a signature
+      // verifies under a SIGNED class-28 trust root. They are the first VENDOR-SOURCED holdings
+      // in this store, and they are stated rather than hidden: under a configured push channel
+      // they are `I8`'s push-mode input — and that input is POSITIVE-ONLY (an unaccounted event
+      // is a finding; a quiet channel is INCOMPLETE, never clean), so it can never certify the
+      // ABSENCE of a withheld row. In THIS suite no push channel is declared, no ingress runs and
+      // the tables are EMPTY — asserted below — so the residual is exactly as unsettled as it was.
       expect(tables.rows.map((r) => r.table_name)).toEqual([
         'audit_incident',
         'audit_insert_quota',
@@ -293,7 +302,18 @@ describe('VC-A1d — the residual is recorded where it is owned', () => {
         'audit_mirror_input_stall_signal',
         'audit_mirror_stall_interval',
         'audit_store_write_failure',
+        'provider_evidence_event',
+        'provider_evidence_inconsistency',
+        'provider_evidence_observation',
       ]);
+      for (const table of [
+        'provider_evidence_event',
+        'provider_evidence_inconsistency',
+        'provider_evidence_observation',
+      ]) {
+        const rows = await client.query<{ n: string }>(`SELECT COUNT(*)::TEXT AS n FROM ${table}`);
+        expect(rows.rows[0]!.n, table).toBe('0');
+      }
     } finally {
       client.release();
     }

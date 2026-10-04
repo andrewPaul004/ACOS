@@ -54,6 +54,17 @@ const REPLICATION_PASSWORD = 'acos_audit_repl_dev';
 const EVALUATOR_ROLE = 'acos_audit_evaluator';
 const EVALUATOR_PASSWORD = 'acos_audit_eval_dev';
 const SIGNAL_READER_ROLE = 'acos_audit_signal_reader';
+/**
+ * v1.3.8, `48 §8` — the PROVIDER-EVIDENCE INGRESS's credential into the audit store.
+ *
+ * INSERT and SELECT on the three `A0009` provider-evidence tables, and nothing else in this
+ * store: no `audit_journal`, no incident, no quota ledger, no signal table. SELECT exists so a
+ * redelivered provider event is acknowledged only after its ORIGINAL durable row is confirmed
+ * present (ADR-027 decision 4a). Distinct from the evaluator: the process that WRITES provider
+ * evidence is not the one that certifies anything over it.
+ */
+const EVIDENCE_INGRESS_ROLE = 'acos_audit_evidence_ingress';
+const EVIDENCE_INGRESS_PASSWORD = 'acos_audit_ingress_dev';
 const SIGNAL_READER_PASSWORD = 'acos_audit_signal_dev';
 
 function asRole(url: string, role: string, password: string): string {
@@ -102,5 +113,18 @@ export function createAuditSignalReaderPool(): Pool {
     connectionString: auditSignalReaderUrl(),
     max: 3,
     applicationName: 'acos-audit-signal-reader',
+  });
+}
+
+/** v1.3.8 — the provider-evidence ingress's own credential. `A0009`'s grants are the scope. */
+export function auditEvidenceIngressUrl(): string {
+  return asRole(auditUrl(), EVIDENCE_INGRESS_ROLE, EVIDENCE_INGRESS_PASSWORD);
+}
+
+export function createAuditEvidenceIngressPool(): Pool {
+  return createPool({
+    connectionString: auditEvidenceIngressUrl(),
+    max: 5,
+    applicationName: 'acos-audit-evidence-ingress',
   });
 }

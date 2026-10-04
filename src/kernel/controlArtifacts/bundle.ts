@@ -199,6 +199,39 @@ export interface VerifiedConstructorSet {
   readonly records: readonly VerifiedConstructorRecord[];
 }
 
+/**
+ * `50 §2h` (v1.3.8) — ONE provider-evidence channel. A CLOSED DISCRIMINATED UNION over
+ * `evidence_mode`: a read channel carries exactly three fields and a push channel exactly eight.
+ * There is no universal shape and no optional push field.
+ */
+export type VerifiedProviderEvidenceChannel =
+  | {
+      readonly evidenceMode: 'PROVIDER_READ';
+      readonly provider: string;
+      readonly acceptedCountOperand: string;
+    }
+  | {
+      readonly evidenceMode: 'SIGNED_PROVIDER_PUSH';
+      readonly provider: string;
+      readonly acceptedCountOperand: string;
+      /** The exact provider-returned `public_key` string, as signed. */
+      readonly verificationKey: string;
+      readonly verificationProfile: 'SENDGRID_EVENT_WEBHOOK_V1';
+      /** Recomputed from `verificationKey` at verification; equal, or the bundle was refused. */
+      readonly keyIdentity: string;
+      readonly acceptedEventClasses: readonly string[];
+      /** Canonical `https://<host><fixed-path>`. */
+      readonly ingressIdentity: string;
+    };
+
+/** `50 §2h` — the verified class-28 artifact: one record per configured evidence channel. */
+export interface VerifiedProviderEvidenceTrust {
+  readonly artifactVersion: string;
+  /** Strictly ascending; exactly one mode per provider. */
+  readonly providers: readonly string[];
+  readonly channels: Readonly<Record<string, VerifiedProviderEvidenceChannel>>;
+}
+
 /** Everything a sealed bundle carries. Deep-frozen; never handed out whole. */
 export interface VerifiedBundleContents {
   /** `50 §3e`: `SHA-256(CORE)`, lowercase hex. The deployment-pinned active identity. */
@@ -214,6 +247,8 @@ export interface VerifiedBundleContents {
   readonly jcs1Specification: VerifiedJcs1Specification;
   readonly auditSigningKey: VerifiedAuditSigningKey;
   readonly degradedModeConfiguration: VerifiedDegradedModeConfiguration;
+  /** `50 §2h`, v1.3.8 — the class-28 provider-evidence trust record. */
+  readonly providerEvidenceTrust: VerifiedProviderEvidenceTrust;
 }
 
 /**
@@ -333,6 +368,41 @@ export function verifiedDegradedModeConfiguration(
   bundle: VerifiedControlArtifactBundle,
 ): VerifiedDegradedModeConfiguration {
   return contentsOf(bundle).degradedModeConfiguration;
+}
+
+/**
+ * `50 §2h`'s verified class-28 content (v1.3.8). THE provider-evidence MODE authority source on
+ * the control plane: which mode supplies each provider's accepted-message evidence.
+ *
+ * The control plane holds no ingress and verifies no provider signature. A consumer that needs
+ * the push trust root to AUTHENTICATE evidence is the audit plane, which verifies class 28
+ * itself (`src/audit/controlArtifacts/auditPlaneVerifier.ts`).
+ */
+export function verifiedProviderEvidenceTrust(
+  bundle: VerifiedControlArtifactBundle,
+): VerifiedProviderEvidenceTrust {
+  return contentsOf(bundle).providerEvidenceTrust;
+}
+
+/**
+ * `50 §3c` — the class-28 artifact's CONTENT HASH, exactly as this bundle's verification bound
+ * it: `SHA-256` over the EXACT artifact bytes, recomputed and compared with the manifest entry
+ * during verification. Read-only, and nothing is hashed here.
+ *
+ * It exists for ONE comparison: the audit plane verifies class 28 independently, and the two
+ * planes agree on the provider-evidence definition only when they verified the SAME artifact
+ * bytes. Comparing parsed fields instead would let two differently signed artifacts that share
+ * a key but differ elsewhere pass as one authority.
+ */
+export function verifiedProviderEvidenceTrustContentHash(
+  bundle: VerifiedControlArtifactBundle,
+): string {
+  const identity = contentsOf(bundle).identities.find((entry) => entry.artifactClass === 28);
+  if (identity === undefined) {
+    // Unreachable for a sealed bundle: class 28 is in the required pre-live set.
+    throw new Error('the verified bundle carries no class-28 artifact identity');
+  }
+  return identity.contentHash;
 }
 
 /** `50 §2e`'s verified class-2 bundle. Admitted to Cedar only through this. */

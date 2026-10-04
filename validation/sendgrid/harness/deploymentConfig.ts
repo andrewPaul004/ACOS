@@ -80,8 +80,15 @@ export interface S1PDeploymentConfig {
   readonly sinkAddress: string;
   /** `50 §2g` field 1 — the EXACT expected integration credential identity. */
   readonly integrationCredentialId: string;
-  /** `50 §2g` field 1 — the EXACT expected audit-read credential identity. */
-  readonly auditCredentialId: string;
+  /**
+   * `50 §2g` field 1 — the EXACT expected audit-READ credential identity, or `null`.
+   *
+   * v1.3.8: whether a SendGrid audit-read credential exists at all is decided by the VERIFIED
+   * class-28 mode, not by this document. Under `PROVIDER_READ` the preflight REQUIRES it; under
+   * `SIGNED_PROVIDER_PUSH` the preflight REFUSES one being supplied. So the document may omit it,
+   * and an omitted identity is `null` — never an empty string or a placeholder.
+   */
+  readonly auditCredentialId: string | null;
 }
 
 /** Why the configuration could not be read. A closed set. */
@@ -97,6 +104,10 @@ export const CONFIG_REFUSALS = [
   'ENVIRONMENT_LABEL_SUSPICIOUS',
   /** Correction 6: a run must name the exact credential it expects, for each plane. */
   'INTEGRATION_CREDENTIAL_ID_MISSING',
+  /**
+   * The audit-read identity is PRESENT but empty, non-string or key-shaped. Its ABSENCE is not
+   * this refusal: v1.3.8 makes it a mode-dependent preflight gate instead.
+   */
   'AUDIT_CREDENTIAL_ID_MISSING',
   /** Two planes naming ONE credential is the composition `§13` of S1O forbids. */
   'CREDENTIAL_IDS_NOT_DISTINCT',
@@ -159,15 +170,24 @@ export function parseDeploymentConfig(raw: unknown): ConfigResult {
   ) {
     return { kind: 'REFUSED', reason: 'INTEGRATION_CREDENTIAL_ID_MISSING' };
   }
-  const auditCredentialId = document.auditCredentialId;
-  if (
-    typeof auditCredentialId !== 'string' ||
-    auditCredentialId.length === 0 ||
-    suspiciousLabel(auditCredentialId, MAX_CREDENTIAL_ID_LENGTH)
-  ) {
-    return { kind: 'REFUSED', reason: 'AUDIT_CREDENTIAL_ID_MISSING' };
+  /*
+   * OPTIONAL, AND STILL STRICT WHEN PRESENT. Absent (the member not in the document) is `null`.
+   * Present but empty, not a string, or key-shaped is refused exactly as before — `null` is the
+   * only representation of "no audit-read credential", so no placeholder can stand in for one.
+   */
+  const rawAuditCredentialId = document.auditCredentialId;
+  let auditCredentialId: string | null = null;
+  if (rawAuditCredentialId !== undefined) {
+    if (
+      typeof rawAuditCredentialId !== 'string' ||
+      rawAuditCredentialId.length === 0 ||
+      suspiciousLabel(rawAuditCredentialId, MAX_CREDENTIAL_ID_LENGTH)
+    ) {
+      return { kind: 'REFUSED', reason: 'AUDIT_CREDENTIAL_ID_MISSING' };
+    }
+    auditCredentialId = rawAuditCredentialId;
   }
-  if (integrationCredentialId === auditCredentialId) {
+  if (auditCredentialId !== null && integrationCredentialId === auditCredentialId) {
     return { kind: 'REFUSED', reason: 'CREDENTIAL_IDS_NOT_DISTINCT' };
   }
 

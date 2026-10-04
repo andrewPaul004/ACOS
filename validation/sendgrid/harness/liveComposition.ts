@@ -18,7 +18,17 @@ import { createAdapterRuntimeRegistry } from '../../../src/integration/control/a
 import { IntegrationClient } from '../../../src/integration/control/integrationClient.js';
 import { createAuditReaderRegistry } from '../../../src/audit/provider/plane/auditReaderRegistry.js';
 import { AuditReadClient } from '../../../src/audit/provider/plane/auditReadClient.js';
-import { verifiedActionCatalogue } from '../../../src/kernel/controlArtifacts/bundle.js';
+import {
+  verifiedActionCatalogue,
+  verifiedProviderEvidenceTrust,
+  verifiedProviderEvidenceTrustContentHash,
+} from '../../../src/kernel/controlArtifacts/bundle.js';
+import { createAuditEvaluatorPool } from '../../../src/audit/db/auditPool.js';
+import {
+  observeCorrelation as observeAuditPushCorrelation,
+  pushInverseObservation,
+} from '../../../src/audit/providerEvidence/evidenceReader.js';
+import { SIGNED_PUSH_LIVE_VISIBILITY_BOUND, type SignedPushEvidencePort } from './pushEvidence.js';
 import { PolicyEngine } from '../../../src/kernel/policy/policyEngine.js';
 import { verifyAuditPlaneControlArtifacts } from '../../../src/audit/controlArtifacts/auditPlaneVerifier.js';
 import type {
@@ -49,6 +59,7 @@ import {
   type VisibilityBound,
 } from './visibilityBound.js';
 import type {
+  AuditReaderRuntimeConfig,
   LaunchedAuditRuntime,
   LaunchedIntegrationRuntime,
   LocalScenarioState,
@@ -202,7 +213,96 @@ export const COMPOSITION_BLOCKS = [
   'AUDIT_RUNTIME_MODULE_MISSING',
   /** A live run was handed a bound that only an offline fixture may use. `§4.4`. */
   'VISIBILITY_BOUND_NOT_LIVE_USABLE',
+  /**
+   * v1.3.8, `50 §2h` — the VERIFIED class-28 record declares no evidence channel for the
+   * provider, so there is no signed answer to "where does its accepted-message evidence come
+   * from?". A signature prerequisite: a class-28 release naming the provider.
+   */
+  'PROVIDER_EVIDENCE_CHANNEL_NOT_DECLARED',
+  /**
+   * v1.3.8, ADR-027 — the provider's verified mode is `SIGNED_PROVIDER_PUSH` and no audit
+   * evidence store is configured (`ACOS_AUDIT_PG_URL`), so the push evidence the oracle reads has
+   * nowhere to be read from. A deployment prerequisite.
+   */
+  'AUDIT_EVIDENCE_STORE_NOT_CONFIGURED',
 ] as const;
+
+/** The audit store the push-evidence oracle reads, through the evaluator role. */
+export const ENV_AUDIT_PG_URL = 'ACOS_AUDIT_PG_URL';
+
+/**
+ * v1.3.8 — WHICH EVIDENCE MODE THE VERIFIED CLASS-28 RECORD SELECTS FOR THE PROVIDER, or `null`.
+ *
+ * Read from the VERIFIED control bundle and nothing else: no environment variable, no CLI flag
+ * and no default chooses the mode. The audit plane re-reads its OWN class-28 copy when the
+ * composition opens, and a disagreement refuses.
+ */
+export function verifiedEvidenceModeFor(
+  bundle: VerifiedControlArtifactBundle,
+): 'PROVIDER_READ' | 'SIGNED_PROVIDER_PUSH' | null {
+  return verifiedProviderEvidenceTrust(bundle).channels[SENDGRID_PROVIDER_ID]?.evidenceMode ?? null;
+}
+
+/**
+ * `SIGNED_PROVIDER_PUSH` — whether the AUDIT plane's OWN class-28 verification bound the SAME
+ * class-28 artifact (equal exact-byte content hash) as the control bundle, naming the same push
+ * channel. `50 §3` property 2. The rule is `planesAgreeOnClass28`, shared with the composition.
+ *
+ * Stage-1 safe: it reads the audit plane's trust configuration and signed artifacts, and no
+ * credential. A verification that cannot run is a disagreement, never an agreement.
+ */
+export function auditPlaneAgreesOnPushChannel(
+  environment: Readonly<Record<string, string | undefined>>,
+  bundle: VerifiedControlArtifactBundle,
+): boolean {
+  if (verifiedEvidenceModeFor(bundle) !== 'SIGNED_PROVIDER_PUSH') return false;
+  let verification: ReturnType<typeof verifyAuditPlaneControlArtifacts>;
+  try {
+    verification = verifyAuditPlaneControlArtifacts(environment);
+  } catch {
+    return false;
+  }
+  if (!verification.verified) return false;
+  return planesAgreeOnClass28(bundle, verification);
+}
+
+/** The audit plane's own verification, in its VERIFIED form. */
+export type AuditPlaneVerification = Extract<
+  ReturnType<typeof verifyAuditPlaneControlArtifacts>,
+  { readonly verified: true }
+>;
+
+/**
+ * THE ONE CROSS-PLANE CLASS-28 AGREEMENT RULE — used by the stage-1 preflight
+ * (`auditPlaneAgreesOnPushChannel`) and by `openLiveComposition`, so the two cannot differ.
+ *
+ * Class 28 is ONE signed control artifact. The planes agree only when each, verifying
+ * independently, bound the SAME exact artifact bytes: the control bundle's class-28 content
+ * hash (`50 §3c`, recomputed against the manifest during verification) must EQUAL the audit
+ * plane's own `providerEvidenceTrustDigest`. That equality is the authoritative split-brain
+ * check — two dual-signed artifacts that share a SendGrid key but differ in any other byte
+ * (accepted event classes, ingress identity, another channel, the version string) are two
+ * authorities, and refuse. Nothing is re-hashed or normalised here.
+ *
+ * The parsed SendGrid channel comparison below is DEFENCE IN DEPTH only: with equal digests it
+ * cannot differ unless one plane's parser disagrees with the other's.
+ */
+export function planesAgreeOnClass28(
+  bundle: VerifiedControlArtifactBundle,
+  audit: AuditPlaneVerification,
+): boolean {
+  if (verifiedProviderEvidenceTrustContentHash(bundle) !== audit.providerEvidenceTrustDigest) {
+    return false;
+  }
+  const control = verifiedProviderEvidenceTrust(bundle).channels[SENDGRID_PROVIDER_ID];
+  const plane = audit.providerEvidenceTrust.channels[SENDGRID_PROVIDER_ID];
+  if (control === undefined || plane === undefined) return false;
+  if (control.evidenceMode !== plane.evidenceMode) return false;
+  if (control.evidenceMode === 'SIGNED_PROVIDER_PUSH' && plane.evidenceMode === 'SIGNED_PROVIDER_PUSH') {
+    return control.keyIdentity === plane.keyIdentity;
+  }
+  return true;
+}
 
 export type CompositionBlock = (typeof COMPOSITION_BLOCKS)[number];
 
@@ -226,7 +326,11 @@ export interface CompositionInput {
   readonly config: S1PDeploymentConfig;
   readonly bundle: VerifiedControlArtifactBundle | null;
   readonly integrationLocator: string;
-  readonly auditLocator: string;
+  /**
+   * The audit-READ secret locator — `PROVIDER_READ` only. `null` under `SIGNED_PROVIDER_PUSH`,
+   * where no SendGrid audit credential exists to locate. Never an empty-string placeholder.
+   */
+  readonly auditLocator: string | null;
   readonly visibilityBound: VisibilityBound;
 }
 
@@ -280,9 +384,14 @@ export function describeLiveComposition(input: CompositionInput): CompositionAva
     blocks.push('CONTROL_DATABASE_NOT_CONFIGURED');
   }
 
+  // v1.3.8 — the provider's evidence mode, from the verified class-28 record. `null` when no
+  // bundle is available (that block is reported below) or when the record names no channel.
+  const mode = input.bundle === null ? null : verifiedEvidenceModeFor(input.bundle);
+
   if (input.bundle === null) {
     blocks.push('CONTROL_ARTIFACT_AUTHORITY_UNAVAILABLE');
   } else {
+    if (mode === null) blocks.push('PROVIDER_EVIDENCE_CHANNEL_NOT_DECLARED');
     /*
      * READ FROM THE VERIFIED BYTES, NOT FROM THE FILE ON DISK.
      *
@@ -326,7 +435,13 @@ export function describeLiveComposition(input: CompositionInput): CompositionAva
   ) {
     blocks.push('INTEGRATION_RUNTIME_MODULE_MISSING');
   }
-  if (
+  if (mode === 'SIGNED_PROVIDER_PUSH') {
+    // PUSH: no reader runtime is launched; the oracle reads the audit evidence store.
+    const auditUrl = input.environment[ENV_AUDIT_PG_URL];
+    if (auditUrl === undefined || auditUrl.length === 0) {
+      blocks.push('AUDIT_EVIDENCE_STORE_NOT_CONFIGURED');
+    }
+  } else if (
     !present(join(LIVE_AUDIT_ROOT, 'reader.ts')) ||
     !present(join(LIVE_AUDIT_ROOT, 'secretSource.ts'))
   ) {
@@ -544,7 +659,124 @@ export async function openLiveComposition(
       `the S1P audit plane could not verify its control artifacts: ${auditVerification.reason}`,
     );
   }
-  const auditReadCredentials = auditVerification.auditReadCredentials;
+
+  /*
+   * v1.3.8, ADR-027 — THE EVIDENCE MODE, AGREED BY BOTH PLANES' OWN VERIFICATIONS.
+   *
+   * The control bundle's class-28 reading selected the mode in `describeLiveComposition`; the
+   * audit plane's OWN verification must have bound the SAME class-28 artifact bytes (equal
+   * content hashes — `planesAgreeOnClass28`, the rule the stage-1 preflight also applies), or
+   * the composition refuses before any scenario, send or evidence read. Under `SIGNED_PROVIDER_PUSH` the
+   * oracle reads the audit store's authenticated evidence as the EVALUATOR role, and no reader
+   * runtime, no read credential and no provider read exist in this composition.
+   */
+  const auditChannel = auditVerification.providerEvidenceTrust.channels[SENDGRID_PROVIDER_ID];
+  if (auditChannel === undefined || !planesAgreeOnClass28(bundle, auditVerification)) {
+    await pool.end();
+    throw new Error(
+      'AUDIT_PLANE_EVIDENCE_CHANNEL_DISAGREES: the control and audit planes did not verify the ' +
+        'same class-28 artifact (content hash) and evidence channel for the provider',
+    );
+  }
+  let evidencePool: Pool | null = null;
+  let signedPushEvidence: SignedPushEvidencePort | undefined;
+  let liveBound = visibilityBound;
+  /*
+   * THE AUDIT READER, BY MODE. Under `PROVIDER_READ` it is the accepted reader runtime, scoped
+   * by the audit plane's VERIFIED read-credential map. Under `SIGNED_PROVIDER_PUSH` there is no
+   * reader: the read-credential map is never consulted, no `AuditReadClient` is constructed, and
+   * a launch request is refused rather than served with a placeholder.
+   */
+  let launchAuditReader: ScenarioPorts['launchAuditReader'];
+  let auditReader: AuditReaderRuntimeConfig | null;
+  if (auditChannel.evidenceMode === 'SIGNED_PROVIDER_PUSH') {
+    const evaluator = createAuditEvaluatorPool();
+    evidencePool = evaluator;
+    const acceptedEventClasses = auditChannel.acceptedEventClasses;
+    signedPushEvidence = Object.freeze({
+      observe: (query: {
+        readonly correlationTag: string;
+        readonly periodStartMs: number;
+        readonly periodEndMs: number;
+      }) =>
+        observeAuditPushCorrelation(evaluator, {
+          provider: SENDGRID_PROVIDER_ID,
+          correlationTag: query.correlationTag,
+          acceptedEventClasses,
+          receivedFrom: new Date(query.periodStartMs),
+          receivedTo: new Date(query.periodEndMs),
+        }),
+      inverse: (query: {
+        readonly periodStartMs: number;
+        readonly periodEndMs: number;
+        readonly accountedCorrelationTags: ReadonlySet<string>;
+      }) =>
+        pushInverseObservation(evaluator, {
+          provider: SENDGRID_PROVIDER_ID,
+          accountedCorrelationTags: query.accountedCorrelationTags,
+          acceptedEventClasses,
+          receivedFrom: new Date(query.periodStartMs),
+          receivedTo: new Date(query.periodEndMs),
+        }),
+    });
+    // AUTHENTICATION IS NOT COMPLETENESS: the live push bound is UNESTABLISHED.
+    liveBound = SIGNED_PUSH_LIVE_VISIBILITY_BOUND;
+    auditReader = null;
+    launchAuditReader = () =>
+      Promise.reject(
+        new Error(
+          'SIGNED_PROVIDER_PUSH: no SendGrid audit reader exists in this composition; the ' +
+            'oracle reads the audit evidence store',
+        ),
+      );
+  } else {
+    if (input.auditLocator === null || input.config.auditCredentialId === null) {
+      await pool.end();
+      throw new Error(
+        'PROVIDER_READ requires the audit-read credential identity and locator, and one is absent',
+      );
+    }
+    const auditReadCredentials = auditVerification.auditReadCredentials;
+    auditReader = Object.freeze({
+      runtimeRoot: LIVE_AUDIT_ROOT,
+      readerModule: join(LIVE_AUDIT_ROOT, 'reader.ts'),
+      secretSourceModule: join(LIVE_AUDIT_ROOT, 'secretSource.ts'),
+      secretLocator: input.auditLocator,
+      credentialId: input.config.auditCredentialId,
+    });
+    launchAuditReader = (descriptor): Promise<LaunchedAuditRuntime> => {
+      const client = new AuditReadClient(
+        createAuditReaderRegistry(
+          [descriptor],
+          auditReadCredentials,
+          new Set([input.integrationLocator]),
+        ),
+        { deadlineMs: 30_000 },
+      );
+      const launched: LaunchedAuditRuntime = {
+        read: async (query) => {
+          const outcome = await client.read({
+            providerId: descriptor.providerId,
+            operation: query.operation,
+            periodStartMs: query.periodStartMs,
+            periodEndMs: query.periodEndMs,
+            correlationTag: query.correlationTag,
+            maxRecords: query.maxRecords,
+          });
+          return outcome.kind === 'EVIDENCE'
+            ? {
+                kind: 'EVIDENCE' as const,
+                records: outcome.records,
+                recordCount: outcome.recordCount,
+              }
+            : { kind: 'PROVIDER_UNAVAILABLE' as const };
+        },
+        close: () => client.close(),
+      };
+      open.push(launched);
+      return Promise.resolve(launched);
+    };
+  }
 
   const runtime: ScenarioRuntimeConfig = Object.freeze({
     adapterId: SENDGRID_ADAPTER_ID,
@@ -555,11 +787,7 @@ export async function openLiveComposition(
     integrationSecretSourceModule: join(LIVE_INTEGRATION_ROOT, 'secretSource.ts'),
     integrationSecretLocator: input.integrationLocator,
     integrationCredentialId: input.config.integrationCredentialId,
-    auditRuntimeRoot: LIVE_AUDIT_ROOT,
-    auditReaderModule: join(LIVE_AUDIT_ROOT, 'reader.ts'),
-    auditSecretSourceModule: join(LIVE_AUDIT_ROOT, 'secretSource.ts'),
-    auditSecretLocator: input.auditLocator,
-    auditCredentialId: input.config.auditCredentialId,
+    auditReader,
   });
 
   const open: { close(): Promise<void> }[] = [];
@@ -749,38 +977,7 @@ export async function openLiveComposition(
       return Promise.resolve(launched);
     },
 
-    launchAuditReader: (descriptor): Promise<LaunchedAuditRuntime> => {
-      const client = new AuditReadClient(
-        createAuditReaderRegistry(
-          [descriptor],
-          auditReadCredentials,
-          new Set([input.integrationLocator]),
-        ),
-        { deadlineMs: 30_000 },
-      );
-      const launched: LaunchedAuditRuntime = {
-        read: async (query) => {
-          const outcome = await client.read({
-            providerId: descriptor.providerId,
-            operation: query.operation,
-            periodStartMs: query.periodStartMs,
-            periodEndMs: query.periodEndMs,
-            correlationTag: query.correlationTag,
-            maxRecords: query.maxRecords,
-          });
-          return outcome.kind === 'EVIDENCE'
-            ? {
-                kind: 'EVIDENCE' as const,
-                records: outcome.records,
-                recordCount: outcome.recordCount,
-              }
-            : { kind: 'PROVIDER_UNAVAILABLE' as const };
-        },
-        close: () => client.close(),
-      };
-      open.push(launched);
-      return Promise.resolve(launched);
-    },
+    launchAuditReader,
 
     localStateFor: async (idempotencyKey): Promise<LocalScenarioState> => {
       const client = await pool.connect();
@@ -884,7 +1081,8 @@ export async function openLiveComposition(
       maxRecords: LIVE_ACTIVITY_PAGE_RECORDS,
       stabilisationObservations: MIN_STABILISATION_OBSERVATIONS,
     },
-    visibilityBound,
+    visibilityBound: liveBound,
+    ...(signedPushEvidence === undefined ? {} : { signedPushEvidence }),
   };
 
   return {
@@ -893,6 +1091,7 @@ export async function openLiveComposition(
     close: async (): Promise<void> => {
       for (const handle of open) await handle.close();
       await pool.end();
+      if (evidencePool !== null) await evidencePool.end();
     },
   };
 }

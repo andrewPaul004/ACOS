@@ -151,15 +151,23 @@ describe('CONTROL 6 — the audit reader that cannot send', () => {
 
 describe('CONTROL 7 — the evidence renderer that refuses rather than scrubs', () => {
   const bundle: EvidenceBundle = {
-    schema: 'acos.s1p.sendgrid-validation-evidence.v1',
+    schema: 'acos.s1p.sendgrid-validation-evidence.v2',
     operatingSpine: 'Operating Spine v1.3',
-    packageIssue: 'v1.3.7',
+    packageIssue: 'v1.3.8',
     gitCommit: 'test',
     validationRunId: 'control-7',
     startedAtUtc: '2026-09-27T00:00:00.000Z',
     finishedAtUtc: '2026-09-27T00:00:00.000Z',
     environmentLabel: 'acos-nonprod',
     providerId: 'twilio_sendgrid',
+    providerEvidenceMode: 'PROVIDER_READ',
+    providerEvidence: {
+      mode: 'PROVIDER_READ',
+      evidenceSource: 'PROVIDER_EMAIL_ACTIVITY_READ',
+      auditReadCredential: 'REQUIRED',
+      emailActivityEntitlement: 'OPERATOR_CONFIRMED',
+      inverseSweep: 'PROVIDER_READ_SWEEP',
+    },
     integrationCredentialIdentity: 'sg-key-id-integration',
     auditCredentialIdentity: 'sg-key-id-audit',
     integrationIdentityMatchedSignedRecord: true,

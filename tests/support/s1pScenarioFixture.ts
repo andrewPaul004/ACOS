@@ -41,6 +41,7 @@ import type {
 import { MIN_STABILISATION_OBSERVATIONS } from '../../validation/sendgrid/harness/observation.js';
 import { FIXTURE_VISIBILITY_BOUND } from '../../validation/sendgrid/harness/visibilityBound.js';
 import { EMPTY_ACCOUNT, writeAccount, type SimulatedReadBehaviour } from '../sendgrid-doubles/simulatedAccount.js';
+import { pushRecord } from './providerEvidenceFixture.js';
 
 /**
  * THE OFFLINE COMPOSITION THE S1P SCENARIO DRIVER IS EXERCISED AGAINST — `§11`.
@@ -151,7 +152,28 @@ export function s1pValidationArtifacts(): {
     augmented = buildControlArtifactFixture({
       dir: join(tmpdir(), 'acos-s1p-validation-package'),
       mutate: (artifacts) =>
-        withArtifactBytes(artifacts, 5, (bytes) => {
+        withArtifactBytes(
+          // v1.3.8, `50 §2h`: the offline composition reads SIMULATED Email Activity, so the
+          // signed class-28 record declares SendGrid in `PROVIDER_READ` mode — exactly three
+          // fields. The push-mode offline composition builds its own package with a
+          // `SIGNED_PROVIDER_PUSH` record (`tests/sendgrid/signed-push-evidence.test.ts`).
+          withArtifactBytes(artifacts, 28, (bytes) => {
+            const document = JSON.parse(bytes.toString('utf8')) as {
+              channels: { provider: string }[];
+              [key: string]: unknown;
+            };
+            const channels = [
+              ...document.channels,
+              {
+                provider: S1P_PROVIDER_ID,
+                evidence_mode: 'PROVIDER_READ',
+                accepted_count_operand: 'msg_id',
+              },
+            ].sort((left, right) => (left.provider < right.provider ? -1 : 1));
+            return Buffer.from(`${JSON.stringify({ ...document, channels }, null, 2)}\n`, 'utf8');
+          }),
+          5,
+          (bytes) => {
           const document = JSON.parse(bytes.toString('utf8')) as {
             credentials: unknown[];
             [key: string]: unknown;
@@ -169,11 +191,86 @@ export function s1pValidationArtifacts(): {
             `${JSON.stringify({ ...document, credentials: merged }, null, 2)}\n`,
             'utf8',
           );
-        }),
+          },
+        ),
     });
     augmentedBundle = verifyFixtureBundle(augmented);
   }
   return { fixture: augmented, bundle: augmentedBundle };
+}
+
+/**
+ * v1.3.8 — THE SAME VALIDATION PACKAGE, IN `SIGNED_PROVIDER_PUSH` MODE.
+ *
+ * Class 28 declares SendGrid as a SIGNED PUSH channel (the test-only P-256 webhook key), and
+ * class 5 carries the INTEGRATION credential's record ONLY: under push no SendGrid audit-read
+ * credential exists, so no audit record is signed for one. `channels` replaces the SendGrid
+ * record when a case needs a different one — or none at all.
+ */
+const pushPackages = new Map<string, { fixture: ControlArtifactFixture; bundle: VerifiedControlArtifactBundle }>();
+
+export function s1pPushValidationArtifacts(
+  sendgridChannels: readonly Record<string, unknown>[] = [pushRecord()],
+  options: {
+    /** Distinguishes otherwise-identical packages: a separately built and signed twin. */
+    readonly label?: string;
+    /**
+     * The JSON indentation of the class-28 bytes (default 2). A different value yields the SAME
+     * parsed content in DIFFERENT exact bytes — which is a different artifact under `50 §3c`.
+     */
+    readonly indent?: number;
+    /** Replaces every NON-SendGrid channel of the class-28 artifact. */
+    readonly otherChannels?: readonly Record<string, unknown>[];
+  } = {},
+): {
+  readonly fixture: ControlArtifactFixture;
+  readonly bundle: VerifiedControlArtifactBundle;
+} {
+  const key = JSON.stringify({ sendgridChannels, options });
+  const cached = pushPackages.get(key);
+  if (cached !== undefined) return cached;
+  const fixture = buildControlArtifactFixture({
+    dir: mkdtempSync(join(tmpdir(), 'acos-s1p-push-package-')),
+    mutate: (artifacts) =>
+      withArtifactBytes(
+        withArtifactBytes(artifacts, 28, (bytes) => {
+          const document = JSON.parse(bytes.toString('utf8')) as {
+            channels: { provider: string }[];
+            [k: string]: unknown;
+          };
+          const others =
+            options.otherChannels === undefined
+              ? document.channels.filter((channel) => channel.provider !== S1P_PROVIDER_ID)
+              : (options.otherChannels as { provider: string }[]);
+          const channels = [...others, ...(sendgridChannels as { provider: string }[])].sort(
+            (left, right) => (left.provider < right.provider ? -1 : 1),
+          );
+          return Buffer.from(
+            `${JSON.stringify({ ...document, channels }, null, options.indent ?? 2)}
+`,
+            'utf8',
+          );
+        }),
+        5,
+        (bytes) => {
+          const document = JSON.parse(bytes.toString('utf8')) as {
+            credentials: { credential_id: string }[];
+            [k: string]: unknown;
+          };
+          const merged = [
+            ...document.credentials,
+            ...S1P_CREDENTIAL_RECORDS.filter(
+              (record) => record.credential_id === S1P_INTEGRATION_CREDENTIAL_ID,
+            ),
+          ].sort((left, right) => (left.credential_id < right.credential_id ? -1 : 1));
+          return Buffer.from(`${JSON.stringify({ ...document, credentials: merged }, null, 2)}
+`, 'utf8');
+        },
+      ),
+  });
+  const built = { fixture, bundle: verifyFixtureBundle(fixture) };
+  pushPackages.set(key, built);
+  return built;
 }
 
 export interface S1PScenarioOptions {
@@ -262,11 +359,13 @@ export function createS1PScenario(
     integrationSecretSourceModule: join(DOUBLE_INTEGRATION_ROOT, 'secretSource.ts'),
     integrationSecretLocator: integrationLocator,
     integrationCredentialId: S1P_INTEGRATION_CREDENTIAL_ID,
-    auditRuntimeRoot: DOUBLE_AUDIT_ROOT,
-    auditReaderModule: join(DOUBLE_AUDIT_ROOT, 'reader.ts'),
-    auditSecretSourceModule: join(DOUBLE_AUDIT_ROOT, 'secretSource.ts'),
-    auditSecretLocator: auditLocator,
-    auditCredentialId: S1P_AUDIT_CREDENTIAL_ID,
+    auditReader: {
+      runtimeRoot: DOUBLE_AUDIT_ROOT,
+      readerModule: join(DOUBLE_AUDIT_ROOT, 'reader.ts'),
+      secretSourceModule: join(DOUBLE_AUDIT_ROOT, 'secretSource.ts'),
+      secretLocator: auditLocator,
+      credentialId: S1P_AUDIT_CREDENTIAL_ID,
+    },
   };
 
   const { fixture, bundle } = s1pValidationArtifacts();
@@ -443,8 +542,15 @@ export function createS1PScenario(
     recoveryAt: () => new Date(S1I_NOW.getTime() + 6 * 60 * 60 * 1000),
     delay: () => Promise.resolve(),
     nowMs: () => Date.now(),
+    /*
+     * BOTH ENDS ON THE WALL CLOCK. The start was `S1I_NOW - 1 day` (the fixed 2026-09-05
+     * fixture instant) while the end tracked `Date.now()`, so the span grew by a day every day
+     * and crossed the reader's `MAX_READ_PERIOD_MS` (31 days) on 2026-10-04 — after which every
+     * read was refused `PERIOD_BOUND_INVALID`. The simulated account does not filter by period,
+     * and `nowMs` is the wall clock, so a two-day wall-clock window loses nothing.
+     */
     observationWindow: () => ({
-      periodStartMs: S1I_NOW.getTime() - 24 * 60 * 60 * 1000,
+      periodStartMs: Date.now() - 24 * 60 * 60 * 1000,
       periodEndMs: Date.now() + 24 * 60 * 60 * 1000,
     }),
     observationBound: {

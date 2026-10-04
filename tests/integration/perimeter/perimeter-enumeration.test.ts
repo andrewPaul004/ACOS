@@ -35,9 +35,20 @@ describe('`§17` — EVERY EXTERNAL-CLIENT CALL SITE IS ENUMERATED AND ANNOTATED
     const report = await scanPerimeter();
     expect(
       report.sites
-        .filter((site) => site.annotation.kind !== 'AUTHORISED' && site.annotation.kind !== 'EXEMPT')
+        .filter(
+          (site) =>
+            site.annotation.kind !== 'AUTHORISED' &&
+            site.annotation.kind !== 'EXEMPT' &&
+            // v1.3.8, `48 §8` — the ONE declared ingress, and only the two site kinds its
+            // declaration may cover. Anything else annotated INGRESS is still listed here.
+            !(
+              site.annotation.kind === 'INGRESS' &&
+              (site.kind === 'INGRESS_LISTENER' || site.kind === 'NETWORK_PRIMITIVE')
+            ),
+        )
         .map((site) => `${site.file}:${site.line} (${site.kind})`),
     ).toEqual([]);
+    expect(report.ingressViolations).toEqual([]);
     expect(report.productionUnannotated).toBe(0);
     expect(report.testOnlyUnannotated).toBe(0);
     expect(report.pass).toBe(true);

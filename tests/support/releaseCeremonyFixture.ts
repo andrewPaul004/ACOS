@@ -110,6 +110,14 @@ export const RELEASE_ARTIFACT_SPECS: readonly {
     artifactVersion: 'acos.degraded_mode_config.2026-09-24',
     fileName: 'class-27.degraded-mode-config.json',
   },
+  {
+    // v1.3.8, `50 §2h` (`S1P-W1`). The provider-evidence trust record, and the eighth member
+    // of `50 §6`'s pre-live inventory.
+    artifactClass: 28,
+    artifactId: 'acos.control.provider_evidence_trust',
+    artifactVersion: 'acos.provider_evidence_trust.2026-10-03',
+    fileName: 'class-28.provider-evidence-trust.json',
+  },
 ]);
 
 export const TEST_ONLY_PRIMARY = (): SignerIdentity =>

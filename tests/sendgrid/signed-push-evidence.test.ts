@@ -47,6 +47,7 @@ import {
   pushRecord,
   readRecord,
   signWebhook,
+  testIngressStore,
 } from '../support/providerEvidenceFixture.js';
 import { createS1PScenario, s1pValidationArtifacts, type S1PScenario } from '../support/s1pScenarioFixture.js';
 
@@ -365,6 +366,7 @@ async function pushScenario(liveBound = false): Promise<S1PScenario> {
     const started = await startProviderEvidenceIngress({
       environment: ingressEnvironment(providerEvidenceArtifactFixture()),
       log: () => undefined,
+      ...testIngressStore(),
     });
     if (!started.ready) throw new Error(started.refusal);
     return started;

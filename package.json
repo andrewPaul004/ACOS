@@ -28,6 +28,8 @@
     "report:provider-selection": "tsx tools/provider-selection/cli.ts",
     "validate:sendgrid": "tsx validation/sendgrid/harness/run.ts",
     "ingress:provider-evidence": "tsx src/audit/providerEvidence/ingressMain.ts",
+    "deploy:ingress-image": "tsx tools/deploy/ingressImageCli.ts",
+    "deploy:render-ingress": "tsx tools/deploy/containerAppCli.ts",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {

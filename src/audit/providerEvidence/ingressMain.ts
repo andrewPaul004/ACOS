@@ -2,9 +2,9 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import { verifyAuditPlaneControlArtifacts } from '../controlArtifacts/auditPlaneVerifier.js';
-import { createAuditEvidenceIngressPool } from '../db/auditPool.js';
 import type { Pool } from '../../db/pool.js';
 import type { SignedProviderPushChannel } from './class28.js';
+import { createEvidenceIngressPool, evidenceIngressUrl } from './evidenceIngressPool.js';
 import { poolPersister, type BatchPersister } from './evidenceStore.js';
 import { launchEchoMatches } from './ingressIdentity.js';
 import {
@@ -50,7 +50,8 @@ import {
  *   1  the audit plane verifies its OWN control-artifact package (`50 §3` property 2);
  *   2  the selected provider's class-28 record exists and is `SIGNED_PROVIDER_PUSH`;
  *   3  the launch echo equals the signed `ingress_identity` EXACTLY (`50 §2h` comparison 1);
- *   4  the listener is bound.
+ *   4  the audit-store URL names the ingress role itself (S1P-WD), used verbatim;
+ *   5  the listener is bound.
  *
  * Any failure: the process never listens and never becomes READY. The provider selector and the
  * launch echo are deployment configuration and are NOT authority — the selector only names which
@@ -79,6 +80,12 @@ export const INGRESS_STARTUP_REFUSALS = [
   'CHANNEL_NOT_SIGNED_PROVIDER_PUSH',
   'LAUNCH_ECHO_MISMATCH',
   'LISTEN_ADDRESS_INVALID',
+  /**
+   * S1P-WD — `ACOS_AUDIT_PG_URL` is missing, malformed, or names a role other than
+   * `acos_audit_evidence_ingress`. The ingress connects ONLY with its own role's credential,
+   * used verbatim; it never rewrites a URL and never holds the audit owner credential.
+   */
+  'AUDIT_STORE_CREDENTIAL_INVALID',
 ] as const;
 
 export type IngressStartupRefusal = (typeof INGRESS_STARTUP_REFUSALS)[number];
@@ -97,7 +104,10 @@ export type IngressStartup =
 
 export interface IngressStartOptions {
   readonly environment: Readonly<Record<string, string | undefined>>;
-  /** The store port. Defaults to the ingress role's own pool over `ACOS_AUDIT_PG_URL`. */
+  /**
+   * The store port. Defaults to a pool over `ACOS_AUDIT_PG_URL`, which must be the ingress ROLE's
+   * own URL (`evidenceIngressPool.ts`); any other role refuses startup.
+   */
   readonly persist?: BatchPersister;
   readonly log?: (record: IngressLogRecord) => void;
   readonly now?: () => Date;
@@ -185,10 +195,13 @@ export async function startProviderEvidenceIngress(
     return refuse('LISTEN_ADDRESS_INVALID', 'the listen port is not a port number');
   }
 
+  // THE STORE CREDENTIAL: the ingress role's own URL, verbatim, or no listener at all.
   let pool: Pool | null = null;
   let persist = options.persist;
   if (persist === undefined) {
-    pool = createAuditEvidenceIngressPool();
+    const credential = evidenceIngressUrl(env);
+    if (!credential.ok) return refuse('AUDIT_STORE_CREDENTIAL_INVALID', credential.refusal);
+    pool = createEvidenceIngressPool(credential.url);
     persist = poolPersister(pool);
   }
 

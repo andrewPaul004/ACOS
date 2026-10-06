@@ -1,0 +1,19 @@
+{
+  // S1P-WD — compiles ONLY the provider-evidence ingress entry point (and what it imports) to
+  // JavaScript for the container image. The repository otherwise runs TypeScript under `tsx`
+  // and never emits; this project exists so the runtime image needs neither `tsx` nor
+  // `typescript`. `tools/deploy/ingressImage.ts` stages exactly the ingress closure from the
+  // output, so a file emitted here for a type-only import is never copied into the image.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "../..",
+    "outDir": "../../build/provider-evidence-ingress",
+    "sourceMap": false,
+    "declaration": false,
+    "removeComments": true,
+    "incremental": false
+  },
+  "files": ["../../src/audit/providerEvidence/ingressMain.ts"],
+  "include": []
+}

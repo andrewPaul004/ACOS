@@ -1,0 +1,13 @@
+{
+  "_comment": "S1P-WD — EXAMPLE ONLY. Every value here is a non-secret placeholder. Copy to a file OUTSIDE the repository (or *.local.json, which is git-ignored), fill it in, and run `npm run deploy:render-ingress -- <params.json> <out.json>`. No database password, storage key or SendGrid credential is ever a parameter: the database URL is a Key Vault secret URI, and the storage key is supplied to `az` from the operator's shell.",
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "environmentDefaultDomain": "thankfulbay-82c0739d.centralus.azurecontainerapps.io",
+  "registryLoginServer": "<registry>.azurecr.io",
+  "imageTag": "<40-hex git commit sha>",
+  "webhookIdentityResourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-acos-s1p-nonprod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-acos-s1p-webhook",
+  "auditPgUrlSecretUri": "https://<audit-vault>.vault.azure.net/secrets/acos-audit-evidence-ingress-pg-url",
+  "environmentStorageName": "acos-audit-control-artifacts",
+  "ownerRootPublicKeyHex": "<64 hex: the owner PRIMARY Ed25519 public key>",
+  "ownerSecondFactorPublicKeyHex": "<64 hex: the owner SECOND-FACTOR Ed25519 public key>",
+  "expectedActiveManifestId": "<64 hex: the released manifest_id the deployment pins>"
+}

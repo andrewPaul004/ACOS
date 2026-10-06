@@ -1,4 +1,5 @@
 import { auditUrl, createPool } from '../../db/pool.js';
+import { validateRoleScopedUrl } from './roleScopedUrl.js';
 import type { Pool } from '../../db/pool.js';
 
 /**
@@ -80,8 +81,31 @@ export function auditReplicationUrl(): string {
 }
 
 /** The AUDIT plane's own credential. Read the holdings, write findings. */
+/**
+ * The evaluator's credential.
+ *
+ * S1P-WD — A URL THAT ALREADY NAMES `acos_audit_evaluator` IS THAT ROLE'S OWN DEPLOYMENT
+ * CREDENTIAL. It is used verbatim ONLY if it passes `roleScopedUrl.ts` — host, database, password,
+ * and exactly one `sslmode=verify-full` — and otherwise this THROWS: a role-specific credential
+ * with weaker TLS is refused, never repaired. A live S1P validation run is therefore handed the
+ * evaluator's rotated credential over verified TLS and never the audit OWNER URL.
+ *
+ * Any other user is the LOCAL DEVELOPMENT owner URL, from which the role is derived with its
+ * committed development password exactly as before (no TLS requirement on 127.0.0.1).
+ */
 export function auditEvaluatorUrl(): string {
-  return asRole(auditUrl(), EVALUATOR_ROLE, EVALUATOR_PASSWORD);
+  const url = auditUrl();
+  if (decodeURIComponent(new URL(url).username) === EVALUATOR_ROLE) return auditEvaluatorDeploymentUrl(url);
+  return asRole(url, EVALUATOR_ROLE, EVALUATOR_PASSWORD);
+}
+
+/** The evaluator's role-specific deployment URL, validated and returned UNCHANGED, or a throw. */
+export function auditEvaluatorDeploymentUrl(url: string): string {
+  const checked = validateRoleScopedUrl(url, EVALUATOR_ROLE);
+  if (!checked.ok) {
+    throw new Error(`the evaluator's role-specific audit-store URL is refused: ${checked.refusal}`);
+  }
+  return checked.url;
 }
 
 export function createAuditReplicationPool(): Pool {
@@ -116,7 +140,14 @@ export function createAuditSignalReaderPool(): Pool {
   });
 }
 
-/** v1.3.8 — the provider-evidence ingress's own credential. `A0009`'s grants are the scope. */
+/**
+ * v1.3.8 — the provider-evidence ingress's own credential. `A0009`'s grants are the scope.
+ *
+ * LOCAL DEVELOPMENT AND TESTS ONLY (S1P-WD). The deployed ingress does not import this module:
+ * it uses `src/audit/providerEvidence/evidenceIngressPool.ts`, which accepts only a supplied
+ * role-specific URL and contains no password, so the development passwords above never enter
+ * the ingress image.
+ */
 export function auditEvidenceIngressUrl(): string {
   return asRole(auditUrl(), EVIDENCE_INGRESS_ROLE, EVIDENCE_INGRESS_PASSWORD);
 }

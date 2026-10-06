@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# S1P-WD: the provider-evidence ingress image's compiled closure (deploy/provider-evidence-ingress).
+/build/
 coverage/
 *.log
 .env
@@ -18,3 +20,8 @@ validation/sendgrid/**/*.local.json
 # S1P validation evidence. Sanitized by construction, and still a RUN ARTIFACT rather than a
 # source file: it is written per run, named by timestamp, and reviewed by being read.
 artifacts/s1p-validation/
+
+# Generated review artifacts. Written per review for out-of-band reading; never committed (the
+# .diff reproduces test fixtures that secret scanners flag).
+S1P-webhook-deployment-review.md
+S1P-webhook-deployment-review.diff

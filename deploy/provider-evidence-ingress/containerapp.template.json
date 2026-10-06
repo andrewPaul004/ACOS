@@ -1,0 +1,138 @@
+{
+  "name": "ca-acos-s1p-webhook",
+  "location": "centralus",
+  "type": "Microsoft.App/containerApps",
+  "identity": {
+    "type": "UserAssigned",
+    "userAssignedIdentities": {
+      "<WEBHOOK_IDENTITY_RESOURCE_ID>": {}
+    }
+  },
+  "properties": {
+    "environmentId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-acos-s1p-nonprod/providers/Microsoft.App/managedEnvironments/cae-acos-s1p-audit",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "ingress": {
+        "external": true,
+        "targetPort": 8080,
+        "transport": "http",
+        "allowInsecure": false,
+        "clientCertificateMode": "ignore",
+        "traffic": [
+          {
+            "latestRevision": true,
+            "weight": 100
+          }
+        ]
+      },
+      "registries": [
+        {
+          "server": "<REGISTRY_LOGIN_SERVER>",
+          "identity": "<WEBHOOK_IDENTITY_RESOURCE_ID>"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "audit-pg-url",
+          "keyVaultUrl": "<AUDIT_PG_URL_SECRET_URI>",
+          "identity": "<WEBHOOK_IDENTITY_RESOURCE_ID>"
+        }
+      ]
+    },
+    "template": {
+      "containers": [
+        {
+          "name": "provider-evidence-ingress",
+          "image": "<REGISTRY_LOGIN_SERVER>/acos-s1p-provider-evidence:<IMAGE_TAG>",
+          "resources": {
+            "cpu": 0.25,
+            "memory": "0.5Gi"
+          },
+          "env": [
+            {
+              "name": "ACOS_PROVIDER_EVIDENCE_PROVIDER",
+              "value": "twilio_sendgrid"
+            },
+            {
+              "name": "ACOS_PROVIDER_EVIDENCE_INGRESS_ECHO",
+              "value": "https://ca-acos-s1p-webhook.thankfulbay-82c0739d.centralus.azurecontainerapps.io/provider-evidence/sendgrid"
+            },
+            {
+              "name": "ACOS_PROVIDER_EVIDENCE_LISTEN_HOST",
+              "value": "0.0.0.0"
+            },
+            {
+              "name": "ACOS_PROVIDER_EVIDENCE_LISTEN_PORT",
+              "value": "8080"
+            },
+            {
+              "name": "ACOS_AUDIT_PG_URL",
+              "secretRef": "audit-pg-url"
+            },
+            {
+              "name": "ACOS_AUDIT_OWNER_ARTIFACT_ROOT_KEY",
+              "value": "<OWNER_ROOT_PUBLIC_KEY_HEX>"
+            },
+            {
+              "name": "ACOS_AUDIT_OWNER_ARTIFACT_SECOND_FACTOR_KEY",
+              "value": "<OWNER_SECOND_FACTOR_PUBLIC_KEY_HEX>"
+            },
+            {
+              "name": "ACOS_AUDIT_EXPECTED_ACTIVE_MANIFEST_ID",
+              "value": "<EXPECTED_ACTIVE_MANIFEST_ID>"
+            },
+            {
+              "name": "ACOS_AUDIT_CONTROL_ARTIFACT_ROOT",
+              "value": "/etc/acos/control-artifacts"
+            }
+          ],
+          "volumeMounts": [
+            {
+              "volumeName": "audit-control-artifacts",
+              "mountPath": "/etc/acos/control-artifacts"
+            }
+          ],
+          "probes": [
+            {
+              "type": "Startup",
+              "tcpSocket": {
+                "port": 8080
+              },
+              "initialDelaySeconds": 1,
+              "periodSeconds": 5,
+              "failureThreshold": 12
+            },
+            {
+              "type": "Readiness",
+              "tcpSocket": {
+                "port": 8080
+              },
+              "periodSeconds": 10,
+              "failureThreshold": 3
+            },
+            {
+              "type": "Liveness",
+              "tcpSocket": {
+                "port": 8080
+              },
+              "periodSeconds": 30,
+              "failureThreshold": 3
+            }
+          ]
+        }
+      ],
+      "scale": {
+        "minReplicas": 1,
+        "maxReplicas": 2
+      },
+      "volumes": [
+        {
+          "name": "audit-control-artifacts",
+          "storageType": "AzureFile",
+          "storageName": "<ENVIRONMENT_STORAGE_NAME>",
+          "mountOptions": "dir_mode=0555,file_mode=0444"
+        }
+      ]
+    }
+  }
+}

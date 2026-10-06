@@ -24,6 +24,7 @@ import {
   processedEvent,
   providerEvidenceArtifactFixture,
   signWebhook,
+  testIngressStore,
 } from '../support/providerEvidenceFixture.js';
 
 /**
@@ -295,6 +296,7 @@ describe('ADR-027 decision 7 — a VALID signed callback changes no control-plan
     const started = await startProviderEvidenceIngress({
       environment: ingressEnvironment(fixture),
       log: () => undefined,
+      ...testIngressStore(),
     });
     if (!started.ready) throw new Error(started.refusal);
     try {

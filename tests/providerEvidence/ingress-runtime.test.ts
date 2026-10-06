@@ -43,6 +43,7 @@ import {
   pushRecord,
   readRecord,
   signWebhook,
+  testIngressStore,
 } from '../support/providerEvidenceFixture.js';
 
 /**
@@ -148,7 +149,7 @@ async function startIngress(
   const started = await startProviderEvidenceIngress({
     environment: ingressEnvironment(fixture, overrides),
     log: (record) => logs.push(record),
-    ...(persist === undefined ? {} : { persist }),
+    persist: persist ?? testIngressStore().persist,
   });
   if (!started.ready) throw new Error(`ingress did not start: ${started.refusal}`);
   return started;

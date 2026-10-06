@@ -1,5 +1,8 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, sign, type KeyObject } from 'node:crypto';
 
+import { auditEvidenceIngressUrl, createAuditEvidenceIngressPool } from '../../src/audit/db/auditPool.js';
+import { poolPersister, type BatchPersister } from '../../src/audit/providerEvidence/evidenceStore.js';
+import type { Pool } from '../../src/db/pool.js';
 import {
   buildControlArtifactFixture,
   withArtifactBytes,
@@ -197,6 +200,21 @@ export function providerEvidenceArtifactFixture(
   });
 }
 
+let testStorePool: Pool | null = null;
+
+/**
+ * S1P-WD — THE TEST STORE PORT. The ingress's OWN default pool accepts only a role-specific URL with
+ * exactly `sslmode=verify-full` (`src/audit/db/roleScopedUrl.ts`); the local test PostgreSQL has no
+ * TLS, and that rule is deliberately not relaxed for it. So a test that needs the REAL audit store
+ * hands the ingress an explicit persister over the ingress ROLE, derived on the test side from the
+ * local owner URL (`auditPool.ts`, outside the image). The TLS default-pool path itself is proven
+ * against a TLS PostgreSQL in the S1P-WD container checks.
+ */
+export function testIngressStore(): { readonly persist: BatchPersister } {
+  testStorePool ??= createAuditEvidenceIngressPool();
+  return { persist: poolPersister(testStorePool) };
+}
+
 /** The deployment environment an ingress needs, for a fixture. None of it is authority. */
 export function ingressEnvironment(
   fixture: ControlArtifactFixture,
@@ -204,7 +222,13 @@ export function ingressEnvironment(
 ): Record<string, string | undefined> {
   return {
     ...fixture.auditEnv,
-    ACOS_AUDIT_PG_URL: process.env['ACOS_AUDIT_PG_URL'],
+    /*
+     * S1P-WD — the ingress connects ONLY as `acos_audit_evidence_ingress`, with that role's own
+     * URL used verbatim. The test-side derivation from the local OWNER URL lives in
+     * `auditPool.ts`, which the deployed ingress does not import.
+     */
+    ACOS_AUDIT_PG_URL:
+      process.env['ACOS_AUDIT_PG_URL'] === undefined ? undefined : auditEvidenceIngressUrl(),
     ACOS_PROVIDER_EVIDENCE_PROVIDER: TEST_PROVIDER,
     ACOS_PROVIDER_EVIDENCE_INGRESS_ECHO: TEST_INGRESS_IDENTITY,
     ACOS_PROVIDER_EVIDENCE_LISTEN_HOST: '127.0.0.1',
